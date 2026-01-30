@@ -3,8 +3,8 @@
 import asyncio
 import hashlib
 import secrets
+from collections.abc import AsyncGenerator, Generator
 from datetime import datetime, timedelta
-from typing import AsyncGenerator, Generator
 from uuid import uuid4
 
 import pytest

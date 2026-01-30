@@ -72,7 +72,7 @@ class TestAuthentication:
     async def test_expired_api_key(self, client, db_session):
         """Test request with expired API key."""
         # Create expired API key
-        api_key = f"eki_expired_key"
+        api_key = "eki_expired_key"
         key_hash = hashlib.sha256(api_key.encode()).hexdigest()
 
         expired_key = ApiKeyModel(
@@ -105,7 +105,7 @@ class TestAuthentication:
     async def test_inactive_api_key(self, client, db_session):
         """Test request with inactive API key."""
         # Create inactive API key
-        api_key = f"eki_inactive_key"
+        api_key = "eki_inactive_key"
         key_hash = hashlib.sha256(api_key.encode()).hexdigest()
 
         inactive_key = ApiKeyModel(

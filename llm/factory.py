@@ -1,12 +1,11 @@
 """Factory for creating LLM providers."""
 
 import logging
-from typing import Any
 
 from api.config import Settings
 from llm.base import BaseLLMProvider
-from llm.mistral_cloud import MistralCloudProvider
 from llm.local_mistral import LocalMistralProvider
+from llm.mistral_cloud import MistralCloudProvider
 from llm.ollama import OllamaProvider
 
 logger = logging.getLogger(__name__)

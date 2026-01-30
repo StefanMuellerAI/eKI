@@ -180,7 +180,7 @@ class SecurityCheckRequest(BaseModel):
                         raise ValueError(
                             f"Metadata value too long for key '{key}' (max 1000 chars)"
                         )
-                elif not isinstance(value, (int, float, bool)):
+                elif not isinstance(value, int | float | bool):
                     raise ValueError(
                         f"Invalid metadata value type for key '{key}'. "
                         "Allowed: string, number, boolean, null"

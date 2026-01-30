@@ -129,10 +129,14 @@ ignore = [
     "E501",  # line too long (handled by formatter)
     "B008",  # do not perform function calls in argument defaults
     "C901",  # too complex
+    "B904",  # raise from within except without from clause
 ]
 
 [tool.ruff.per-file-ignores]
 "__init__.py" = ["F401"]
+"db/migrations/versions/*.py" = ["UP007"]  # Allow Union in Alembic migrations
+"scripts/*.py" = ["E402"]  # Allow imports after sys.path manipulation
+"worker/main.py" = ["E402"]  # Allow imports after sys.path manipulation
 
 [tool.mypy]
 python_version = "3.11"

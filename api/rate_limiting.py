@@ -1,8 +1,9 @@
 """Rate limiting middleware using Redis."""
 
 import hashlib
-from fastapi import Depends, HTTPException, Request, status
+
 import redis.asyncio as aioredis
+from fastapi import Depends, HTTPException, Request, status
 
 from api.config import Settings, get_settings
 from api.dependencies import get_redis

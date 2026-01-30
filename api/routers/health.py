@@ -90,6 +90,5 @@ async def readiness_check(
     )
 
     # Return 503 if not all services are ready
-    status_code = status.HTTP_200_OK if all_ready else status.HTTP_503_SERVICE_UNAVAILABLE
 
     return response

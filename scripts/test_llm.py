@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from api.config import get_settings
-from llm.factory import get_llm_provider, test_llm_provider
+from llm.factory import get_llm_provider
 
 
 async def main() -> None:
@@ -17,7 +17,7 @@ async def main() -> None:
     settings = get_settings()
 
     print(f"🔧 Testing LLM Provider: {settings.llm_provider}")
-    print(f"=" * 60)
+    print("=" * 60)
 
     try:
         # Create provider
@@ -25,16 +25,16 @@ async def main() -> None:
         print(f"✅ Provider initialized: {provider.provider_name}")
 
         # Health check
-        print(f"\n🏥 Running health check...")
+        print("\n🏥 Running health check...")
         is_healthy = await provider.health_check()
         if is_healthy:
-            print(f"✅ Provider is healthy")
+            print("✅ Provider is healthy")
         else:
-            print(f"❌ Provider health check failed")
+            print("❌ Provider health check failed")
             return
 
         # Test simple generation
-        print(f"\n🤖 Testing text generation...")
+        print("\n🤖 Testing text generation...")
         response = await provider.generate(
             prompt="Say 'Hello from eKI!' and nothing else.",
             temperature=0.1,
@@ -43,7 +43,7 @@ async def main() -> None:
         print(f"Response: {response}")
 
         # Test with system prompt
-        print(f"\n🤖 Testing with system prompt...")
+        print("\n🤖 Testing with system prompt...")
         response = await provider.generate(
             prompt="What is 2+2?",
             system_prompt="You are a helpful math assistant. Answer concisely.",
@@ -53,7 +53,7 @@ async def main() -> None:
         print(f"Response: {response}")
 
         # Test structured generation
-        print(f"\n📊 Testing structured generation...")
+        print("\n📊 Testing structured generation...")
         schema = {
             "type": "object",
             "properties": {
@@ -72,7 +72,7 @@ async def main() -> None:
 
         # If Ollama, show available models
         if provider.provider_name == "ollama":
-            print(f"\n📋 Available Ollama models:")
+            print("\n📋 Available Ollama models:")
             models = await provider.list_models()
             if models:
                 for model in models:
@@ -81,7 +81,7 @@ async def main() -> None:
                 print("  No models found. Pull a model first:")
                 print("  docker exec -it eki-ollama ollama pull mistral")
 
-        print(f"\n✅ All tests passed!")
+        print("\n✅ All tests passed!")
 
     except Exception as e:
         print(f"\n❌ Error: {e}")

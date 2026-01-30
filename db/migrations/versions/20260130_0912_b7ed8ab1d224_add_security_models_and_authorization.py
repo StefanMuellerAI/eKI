@@ -1,15 +1,15 @@
 """add_security_models_and_authorization
 
 Revision ID: b7ed8ab1d224
-Revises: 
+Revises:
 Create Date: 2026-01-30 09:12:44.529972
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
+from typing import Union
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = 'b7ed8ab1d224'
