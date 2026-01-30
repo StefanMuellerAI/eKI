@@ -20,7 +20,7 @@ Die API implementiert Enterprise-Grade-Sicherheit:
 - ✅ **Secrets Management**: Docker Secrets, keine hardcoded Credentials
 - ✅ **Production Hardening**: Debug-Mode aus, Swagger UI versteckt
 
-📖 Details: [SECURITY_AUDIT_SUMMARY.md](SECURITY_AUDIT_SUMMARY.md)
+📖 Details: [SECURITY_AUDIT_SUMMARY.md](docs/SECURITY_AUDIT_SUMMARY.md)
 
 ## Kernprinzipien
 
@@ -108,7 +108,7 @@ docker compose exec api alembic upgrade head
 python scripts/create_api_key.py
 ```
 
-📖 Vollständige Anleitung: [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)
+📖 Vollständige Anleitung: [DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md)
 
 ## LLM Provider konfigurieren
 
@@ -202,7 +202,7 @@ open htmlcov/index.html
 - Services: TBD
 - Workflows: TBD
 
-📖 Vollständige Anleitung: [TESTING_GUIDE.md](TESTING_GUIDE.md)
+📖 Vollständige Anleitung: [TESTING_GUIDE.md](docs/TESTING_GUIDE.md)
 
 ## Projektstruktur
 
@@ -393,11 +393,11 @@ pytest tests/ -v -s --tb=long
 ## Dokumentation
 
 - **README.md** - Dieses Dokument
-- **DEPLOYMENT_GUIDE.md** - Production Deployment
-- **TESTING_GUIDE.md** - Testing & Test Development
-- **SECURITY_AUDIT_SUMMARY.md** - Security Audit Ergebnisse
-- **SECURITY_IMPLEMENTATION_COMPLETE.md** - Security Implementation Details
-- **M01_COMPLETION_REPORT.md** - M01 Milestone Report
+- **docs/DEPLOYMENT_GUIDE.md** - Production Deployment
+- **docs/TESTING_GUIDE.md** - Testing & Test Development
+- **docs/SECURITY_AUDIT_SUMMARY.md** - Security Audit Ergebnisse
+- **docs/SECURITY_IMPLEMENTATION_COMPLETE.md** - Security Implementation Details
+- **docs/M01_COMPLETION_REPORT.md** - M01 Milestone Report
 - **FINAL_SUMMARY.md** - Vollständige Zusammenfassung
 
 ## Meilensteine
