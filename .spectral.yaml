@@ -10,9 +10,6 @@ rules:
   operation-tags: warn
   operation-success-response: error
 
-  # Require examples
-  operation-example-response: off
-
   # Security
   operation-security-defined: error
 
