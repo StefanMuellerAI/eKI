@@ -320,7 +320,11 @@ class TestInputValidation:
             response = client.post("/v1/security/check", json=payload, headers=auth_headers)
             assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
             response_str = str(response.json()).lower()
-            assert "whitelist" in response_str or "domain" in response_str or "callback" in response_str
+            assert (
+                "whitelist" in response_str
+                or "domain" in response_str
+                or "callback" in response_str
+            )
 
     @pytest.mark.asyncio
     async def test_ssrf_domain_whitelist(self, client, auth_headers):
