@@ -17,7 +17,7 @@ class PromptSanitizer:
             r"ignore\s+(previous|all|above|prior)\s+(instructions?|prompts?|rules?)", re.IGNORECASE
         ),
         re.compile(
-            r"disregard\s+(previous|all|above|prior)\s+(instructions?|prompts?|rules?)",
+            r"disregard\s+.{0,50}(instructions?|prompts?|rules?)",
             re.IGNORECASE,
         ),
         re.compile(r"forget\s+(previous|all|everything)", re.IGNORECASE),
