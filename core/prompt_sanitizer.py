@@ -14,7 +14,7 @@ class PromptSanitizer:
     DANGEROUS_PATTERNS: list[Pattern[str]] = [
         # Direct system prompt override attempts
         re.compile(r"ignore\s+(previous|all|above|prior)\s+(instructions?|prompts?|rules?)", re.IGNORECASE),
-        re.compile(r"disregard\s+(previous|all|above|prior)\s+(instructions?|prompts?)", re.IGNORECASE),
+        re.compile(r"disregard\s+(previous|all|above|prior)\s+(instructions?|prompts?|rules?)", re.IGNORECASE),
         re.compile(r"forget\s+(previous|all|everything)", re.IGNORECASE),
 
         # Role switching attempts

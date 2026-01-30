@@ -5,6 +5,7 @@ from datetime import timedelta
 from typing import Any
 
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
     from workflows.activities import (
@@ -58,7 +59,7 @@ class SecurityCheckWorkflow:
                 parse_script_activity,
                 job_data,
                 start_to_close_timeout=timedelta(minutes=10),
-                retry_policy=workflow.RetryPolicy(
+                retry_policy=RetryPolicy(
                     maximum_attempts=3,
                     initial_interval=timedelta(seconds=1),
                     maximum_interval=timedelta(seconds=30),
@@ -73,7 +74,7 @@ class SecurityCheckWorkflow:
                 analyze_risks_activity,
                 parsed_data,
                 start_to_close_timeout=timedelta(minutes=15),
-                retry_policy=workflow.RetryPolicy(
+                retry_policy=RetryPolicy(
                     maximum_attempts=3,
                     initial_interval=timedelta(seconds=2),
                     maximum_interval=timedelta(minutes=1),
@@ -95,7 +96,7 @@ class SecurityCheckWorkflow:
                 generate_report_activity,
                 args=[analysis_data, job_metadata],
                 start_to_close_timeout=timedelta(minutes=5),
-                retry_policy=workflow.RetryPolicy(
+                retry_policy=RetryPolicy(
                     maximum_attempts=3,
                     initial_interval=timedelta(seconds=1),
                     maximum_interval=timedelta(seconds=20),
@@ -110,7 +111,7 @@ class SecurityCheckWorkflow:
                 deliver_report_activity,
                 args=[report, job_data.get("callback_url")],
                 start_to_close_timeout=timedelta(minutes=5),
-                retry_policy=workflow.RetryPolicy(
+                retry_policy=RetryPolicy(
                     maximum_attempts=5,
                     initial_interval=timedelta(seconds=2),
                     maximum_interval=timedelta(minutes=1),
