@@ -56,11 +56,8 @@ async def main() -> None:
         print("\n📊 Testing structured generation...")
         schema = {
             "type": "object",
-            "properties": {
-                "answer": {"type": "string"},
-                "confidence": {"type": "number"}
-            },
-            "required": ["answer", "confidence"]
+            "properties": {"answer": {"type": "string"}, "confidence": {"type": "number"}},
+            "required": ["answer", "confidence"],
         }
 
         structured_response = await provider.generate_structured(
@@ -86,6 +83,7 @@ async def main() -> None:
     except Exception as e:
         print(f"\n❌ Error: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 

@@ -13,30 +13,30 @@ class PromptSanitizer:
     # Patterns that indicate potential prompt injection
     DANGEROUS_PATTERNS: list[Pattern[str]] = [
         # Direct system prompt override attempts
-        re.compile(r"ignore\s+(previous|all|above|prior)\s+(instructions?|prompts?|rules?)", re.IGNORECASE),
-        re.compile(r"disregard\s+(previous|all|above|prior)\s+(instructions?|prompts?|rules?)", re.IGNORECASE),
+        re.compile(
+            r"ignore\s+(previous|all|above|prior)\s+(instructions?|prompts?|rules?)", re.IGNORECASE
+        ),
+        re.compile(
+            r"disregard\s+(previous|all|above|prior)\s+(instructions?|prompts?|rules?)",
+            re.IGNORECASE,
+        ),
         re.compile(r"forget\s+(previous|all|everything)", re.IGNORECASE),
-
         # Role switching attempts
         re.compile(r"(you\s+are\s+now|now\s+you\s+are|act\s+as)\s+", re.IGNORECASE),
         re.compile(r"(system|assistant|user)\s*:\s*", re.IGNORECASE),
-
         # Instruction injection
         re.compile(r"new\s+instructions?:", re.IGNORECASE),
         re.compile(r"updated\s+rules?:", re.IGNORECASE),
         re.compile(r"override\s+(instructions?|rules?)", re.IGNORECASE),
-
         # Code execution attempts
         re.compile(r"<\s*script[^>]*>", re.IGNORECASE),
         re.compile(r"javascript:", re.IGNORECASE),
         re.compile(r"eval\s*\(", re.IGNORECASE),
         re.compile(r"exec\s*\(", re.IGNORECASE),
-
         # Data exfiltration attempts
         re.compile(r"show\s+(me\s+)?(your|the)\s+(system|prompt|instructions?)", re.IGNORECASE),
         re.compile(r"reveal\s+(your|the)\s+(system|prompt)", re.IGNORECASE),
         re.compile(r"what\s+(are|is)\s+your\s+(system|instructions?)", re.IGNORECASE),
-
         # Delimiter escape attempts
         re.compile(r"['\"`]{3,}"),  # Triple quotes
         re.compile(r"---+"),  # Multiple dashes
@@ -92,7 +92,9 @@ class PromptSanitizer:
         return prompt.strip()
 
     @classmethod
-    def validate_and_sanitize(cls, prompt: str, max_length: int = 10000, raise_on_unsafe: bool = False) -> str:
+    def validate_and_sanitize(
+        cls, prompt: str, max_length: int = 10000, raise_on_unsafe: bool = False
+    ) -> str:
         """
         Validate and sanitize a prompt.
 

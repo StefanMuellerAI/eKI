@@ -52,7 +52,9 @@ def main() -> None:
     print("Next steps:")
     print("  1. Copy .env.example to .env.local")
     print("  2. Update .env.local with the secrets above")
-    print("  3. Deploy using: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d")
+    print(
+        "  3. Deploy using: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d"
+    )
 
 
 if __name__ == "__main__":

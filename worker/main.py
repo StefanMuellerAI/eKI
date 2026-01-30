@@ -58,9 +58,7 @@ async def main() -> None:
             max_concurrent_activities=20,
         )
 
-        logger.info(
-            f"Starting worker on task queue: {settings.temporal_task_queue}"
-        )
+        logger.info(f"Starting worker on task queue: {settings.temporal_task_queue}")
 
         # Run worker
         await worker.run()

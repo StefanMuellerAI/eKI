@@ -40,7 +40,9 @@ class MistralCloudProvider(BaseLLMProvider):
 
         # Use default system prompt if none provided
         if system_prompt is None:
-            system_prompt = "You are a helpful film safety assistant analyzing scripts for potential risks."
+            system_prompt = (
+                "You are a helpful film safety assistant analyzing scripts for potential risks."
+            )
 
         # Lock system prompt to prevent override
         locked_system, final_prompt = PromptSanitizer.wrap_with_system_lock(
@@ -102,6 +104,7 @@ class MistralCloudProvider(BaseLLMProvider):
 
         # Parse JSON response
         import json
+
         try:
             return json.loads(response)
         except json.JSONDecodeError as e:

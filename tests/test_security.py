@@ -174,9 +174,10 @@ class TestAuthorization:
         # User 2 tries to access User 1's job
         response = client.get(f"/v1/security/jobs/{job_id}", headers=auth_headers_user2)
         assert response.status_code == status.HTTP_404_NOT_FOUND
-        assert "not found" in response.json()["detail"].lower() or "denied" in response.json()[
-            "detail"
-        ].lower()
+        assert (
+            "not found" in response.json()["detail"].lower()
+            or "denied" in response.json()["detail"].lower()
+        )
 
     @pytest.mark.asyncio
     async def test_user_can_access_own_job(self, client, db_session, auth_headers):
@@ -317,9 +318,10 @@ class TestInputValidation:
 
             response = client.post("/v1/security/check", json=payload, headers=auth_headers)
             assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
-            assert "private" in str(response.json()).lower() or "internal" in str(
-                response.json()
-            ).lower()
+            assert (
+                "private" in str(response.json()).lower()
+                or "internal" in str(response.json()).lower()
+            )
 
     @pytest.mark.asyncio
     async def test_ssrf_domain_whitelist(self, client, auth_headers):
@@ -336,9 +338,10 @@ class TestInputValidation:
 
         response = client.post("/v1/security/check", json=payload, headers=auth_headers)
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
-        assert "not allowed" in str(response.json()).lower() or "whitelist" in str(
-            response.json()
-        ).lower()
+        assert (
+            "not allowed" in str(response.json()).lower()
+            or "whitelist" in str(response.json()).lower()
+        )
 
     @pytest.mark.asyncio
     async def test_project_id_sql_injection_prevention(self, client, auth_headers):

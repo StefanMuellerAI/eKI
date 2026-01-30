@@ -33,9 +33,7 @@ class Settings(BaseSettings):
         description="PostgreSQL connection URL",
     )
     database_pool_size: int = Field(default=20, description="Database connection pool size")
-    database_max_overflow: int = Field(
-        default=10, description="Max overflow for connection pool"
-    )
+    database_max_overflow: int = Field(default=10, description="Max overflow for connection pool")
 
     # Redis
     redis_url: RedisDsn = Field(
@@ -58,9 +56,7 @@ class Settings(BaseSettings):
         default="change-me-in-production-min-32-chars",
         description="Secret key for token generation",
     )
-    api_token_expire_minutes: int = Field(
-        default=60, description="Access token expiration time"
-    )
+    api_token_expire_minutes: int = Field(default=60, description="Access token expiration time")
     cors_origins: list[str] = Field(
         default=["http://localhost:3000", "http://localhost:8000"],
         description="Allowed CORS origins",
@@ -68,9 +64,7 @@ class Settings(BaseSettings):
 
     # Rate Limiting
     rate_limit_enabled: bool = Field(default=True, description="Enable rate limiting")
-    rate_limit_per_minute: int = Field(
-        default=60, description="API calls per minute per client"
-    )
+    rate_limit_per_minute: int = Field(default=60, description="API calls per minute per client")
     rate_limit_per_hour: int = Field(default=1000, description="API calls per hour per client")
 
     # eProjekt Integration (for future milestones)
@@ -86,15 +80,11 @@ class Settings(BaseSettings):
         description="LLM provider: mistral_cloud, local_mistral, or ollama",
     )
     mistral_api_key: str = Field(default="", description="Mistral API key")
-    mistral_model: str = Field(
-        default="mistral-large-latest", description="Mistral model name"
-    )
+    mistral_model: str = Field(default="mistral-large-latest", description="Mistral model name")
     mistral_timeout: int = Field(default=120, description="Mistral request timeout in seconds")
 
     # Ollama Configuration
-    ollama_base_url: str = Field(
-        default="http://ollama:11434", description="Ollama base URL"
-    )
+    ollama_base_url: str = Field(default="http://ollama:11434", description="Ollama base URL")
     ollama_model: str = Field(
         default="mistral", description="Ollama model name (e.g., mistral, llama2, codellama)"
     )

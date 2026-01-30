@@ -192,9 +192,7 @@ class SecurityCheckRequest(BaseModel):
 class AsyncSecurityCheckRequest(SecurityCheckRequest):
     """Request model for async security check endpoint."""
 
-    priority: int = Field(
-        default=5, ge=1, le=10, description="Job priority (1=highest, 10=lowest)"
-    )
+    priority: int = Field(default=5, ge=1, le=10, description="Job priority (1=highest, 10=lowest)")
 
 
 # Response Models
@@ -206,9 +204,7 @@ class HealthResponse(BaseModel):
     model_config = ConfigDict(json_encoders={datetime: lambda v: v.isoformat()})
 
     status: str = Field(default="healthy", description="Service health status")
-    timestamp: datetime = Field(
-        default_factory=datetime.utcnow, description="Response timestamp"
-    )
+    timestamp: datetime = Field(default_factory=datetime.utcnow, description="Response timestamp")
     version: str = Field(default="0.1.0", description="API version")
 
 
@@ -216,9 +212,7 @@ class ReadinessResponse(BaseModel):
     """Readiness check response with dependency status."""
 
     status: str = Field(..., description="Overall readiness status")
-    timestamp: datetime = Field(
-        default_factory=datetime.utcnow, description="Response timestamp"
-    )
+    timestamp: datetime = Field(default_factory=datetime.utcnow, description="Response timestamp")
     services: dict[str, bool] = Field(..., description="Service availability status")
 
 
@@ -231,9 +225,7 @@ class RiskFinding(BaseModel):
     category: str = Field(..., description="Risk category")
     description: str = Field(..., description="Human-readable description")
     recommendation: str = Field(..., description="Mitigation recommendation")
-    confidence: float = Field(
-        ..., ge=0.0, le=1.0, description="Confidence score of the finding"
-    )
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score of the finding")
     line_reference: str | None = Field(None, description="Specific line or dialogue reference")
 
 
@@ -246,15 +238,11 @@ class SecurityReport(BaseModel):
     created_at: datetime = Field(
         default_factory=datetime.utcnow, description="Report creation timestamp"
     )
-    risk_summary: dict[RiskLevel, int] = Field(
-        ..., description="Count of findings per risk level"
-    )
+    risk_summary: dict[RiskLevel, int] = Field(..., description="Count of findings per risk level")
     total_findings: int = Field(..., description="Total number of findings")
     findings: list[RiskFinding] = Field(default_factory=list, description="List of findings")
     processing_time_seconds: float = Field(..., description="Time taken to process")
-    metadata: dict[str, Any] = Field(
-        default_factory=dict, description="Additional metadata"
-    )
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
 
 
 class SyncSecurityCheckResponse(BaseModel):
@@ -325,6 +313,4 @@ class ErrorResponse(BaseModel):
     message: str = Field(..., description="Human-readable error message")
     details: list[ErrorDetail] = Field(default_factory=list, description="Detailed error info")
     request_id: str | None = Field(None, description="Request tracking ID")
-    timestamp: datetime = Field(
-        default_factory=datetime.utcnow, description="Error timestamp"
-    )
+    timestamp: datetime = Field(default_factory=datetime.utcnow, description="Error timestamp")

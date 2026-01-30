@@ -86,7 +86,7 @@ def main() -> None:
     print("=" * 60)
 
     print("\nTo insert this key, run:")
-    print('docker compose exec -e PGPASSWORD=<db_password> postgres \\')
+    print("docker compose exec -e PGPASSWORD=<db_password> postgres \\")
     print('  psql -U eki_user -d eki_db -c "' + sql.replace('"', '\\"') + '"')
 
     print("\n⚠️  IMPORTANT:")
