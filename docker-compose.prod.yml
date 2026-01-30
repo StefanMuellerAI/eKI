@@ -1,0 +1,45 @@
+# Production Docker Compose Configuration
+# Use: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+
+  temporal:
+    environment:
+      - POSTGRES_PWD_FILE=/run/secrets/db_password
+    secrets:
+      - db_password
+
+  api:
+    environment:
+      - ENV=production
+      - DEBUG=false
+    env_file:
+      - .env.local
+    secrets:
+      - db_password
+      - api_secret_key
+    # Remove development volume mounts for production
+    volumes: []
+
+  worker:
+    environment:
+      - ENV=production
+      - DEBUG=false
+    env_file:
+      - .env.local
+    secrets:
+      - db_password
+      - api_secret_key
+    # Remove development volume mounts for production
+    volumes: []
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+  api_secret_key:
+    file: ./secrets/api_secret_key.txt

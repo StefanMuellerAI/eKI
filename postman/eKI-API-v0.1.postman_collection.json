@@ -1,0 +1,504 @@
+{
+  "info": {
+    "name": "eKI API v0.1 - Security Enhanced",
+    "description": "KI-gestützte Sicherheitsprüfung für Drehbücher - Filmakademie Baden-Württemberg\n\n**Security Features:**\n- Database-backed API Key Authentication\n- IDOR Prevention with Ownership Checks\n- Rate Limiting (60/min IP, 1000/hour API Key)\n- Input Validation (Base64, SSRF, SQL Injection)\n- Prompt Injection Protection\n\n**Setup:**\n1. Start services: `docker compose up -d`\n2. Create API Key: `python scripts/create_api_key.py`\n3. Set API_KEY variable in Postman\n4. Test endpoints",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "eki-api",
+    "version": "0.1.0-security"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{API_KEY}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "BASE_URL",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "API_KEY",
+      "value": "eki_your_api_key_here",
+      "type": "string",
+      "description": "Create with: python scripts/create_api_key.py"
+    },
+    {
+      "key": "API_KEY_USER2",
+      "value": "eki_second_user_api_key",
+      "type": "string",
+      "description": "Second user for IDOR testing"
+    },
+    {
+      "key": "ACTOR_USER_ID",
+      "value": "test-user-123",
+      "type": "string"
+    },
+    {
+      "key": "ACTOR_PROJECT_ID",
+      "value": "test-project-456",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Health & System",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/health",
+              "host": ["{{BASE_URL}}"],
+              "path": ["health"]
+            },
+            "description": "Liveness probe - simple health check\n\n**Expected:** 200 OK\n**Auth:** None required"
+          },
+          "response": []
+        },
+        {
+          "name": "Readiness Check",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/ready",
+              "host": ["{{BASE_URL}}"],
+              "path": ["ready"]
+            },
+            "description": "Readiness probe - checks all dependencies\n\n**Expected:** 200 OK (if all services ready) or 503\n**Auth:** None required"
+          },
+          "response": []
+        },
+        {
+          "name": "Root Endpoint",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/",
+              "host": ["{{BASE_URL}}"],
+              "path": [""]
+            },
+            "description": "Root endpoint with API information\n\n**Expected:** 200 OK with links to docs"
+          },
+          "response": []
+        }
+      ],
+      "description": "System health and information endpoints"
+    },
+    {
+      "name": "2. Security Checks (Authenticated)",
+      "item": [
+        {
+          "name": "Synchronous Security Check",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Generate base64-encoded test script content",
+                  "const testScript = \"INT. FILM STUDIO - DAY\\n\\nA production meeting is taking place.\\nThe director discusses the upcoming stunt scene.\";",
+                  "const base64Script = CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(testScript));",
+                  "pm.environment.set(\"SCRIPT_CONTENT\", base64Script);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Actor-User-Id",
+                "value": "{{ACTOR_USER_ID}}",
+                "type": "text",
+                "description": "Actor information for audit trail"
+              },
+              {
+                "key": "X-Actor-Project-Id",
+                "value": "{{ACTOR_PROJECT_ID}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"{{SCRIPT_CONTENT}}\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test-project-123\",\n  \"metadata\": {\n    \"source\": \"postman-test\",\n    \"version\": \"1.0\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check"]
+            },
+            "description": "Synchronous security check for scripts ≤1MB or ≤50 scenes\n\n**Expected:** 200 OK with SecurityReport\n**Auth:** Bearer token required\n**Rate Limit:** 60/min (IP), 1000/hour (API Key)"
+          },
+          "response": []
+        },
+        {
+          "name": "Asynchronous Security Check",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Save job_id for status check",
+                  "const response = pm.response.json();",
+                  "if (response.job_id) {",
+                  "    pm.environment.set(\"JOB_ID\", response.job_id);",
+                  "    console.log('Job ID saved:', response.job_id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Generate base64-encoded test script content",
+                  "const testScript = \"INT. LARGE FILM STUDIO - DAY\\n\\nA large production with many complex scenes.\";",
+                  "const base64Script = CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(testScript));",
+                  "pm.environment.set(\"SCRIPT_CONTENT\", base64Script);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Actor-User-Id",
+                "value": "{{ACTOR_USER_ID}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Actor-Project-Id",
+                "value": "{{ACTOR_PROJECT_ID}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"{{SCRIPT_CONTENT}}\",\n  \"script_format\": \"pdf\",\n  \"project_id\": \"test-project-async-456\",\n  \"priority\": 5,\n  \"callback_url\": \"https://epro.filmakademie.de/api/callback\",\n  \"metadata\": {\n    \"source\": \"postman-test\",\n    \"async\": true\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check:async",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check:async"]
+            },
+            "description": "Asynchronous security check for large scripts\n\n**Expected:** 202 Accepted with job_id\n**Auth:** Bearer token required\n**Temporal:** Creates workflow\n**Note:** callback_url must be whitelisted domain"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Job Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/jobs/{{JOB_ID}}",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "jobs", "{{JOB_ID}}"]
+            },
+            "description": "Query the status of an asynchronous security check job\n\n**Expected:** 200 OK with JobStatusResponse\n**Auth:** Bearer token required\n**IDOR Protection:** User can only access own jobs"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Report (One-Shot)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Use a sample UUID if REPORT_ID is not set",
+                  "if (!pm.environment.get(\"REPORT_ID\")) {",
+                  "    pm.environment.set(\"REPORT_ID\", \"123e4567-e89b-12d3-a456-426614174000\");",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/reports/{{REPORT_ID}}",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "reports", "{{REPORT_ID}}"]
+            },
+            "description": "Retrieve a security report (one-shot, URL invalidated after retrieval)\n\n**Expected:** \n- First call: 200 OK with report\n- Second call: 410 Gone\n**Auth:** Bearer token required\n**IDOR Protection:** User can only access own reports"
+          },
+          "response": []
+        }
+      ],
+      "description": "Main security check endpoints with authentication"
+    },
+    {
+      "name": "3. Security Tests",
+      "item": [
+        {
+          "name": "Test: Missing Authentication",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"dGVzdA==\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check"]
+            },
+            "description": "Test authentication requirement\n\n**Expected:** 401 Unauthorized\n**Test:** No Authorization header"
+          },
+          "response": []
+        },
+        {
+          "name": "Test: Invalid API Key",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "eki_invalid_key_12345",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"dGVzdA==\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check"]
+            },
+            "description": "Test invalid API key rejection\n\n**Expected:** 401 Unauthorized\n**Test:** Invalid API key"
+          },
+          "response": []
+        },
+        {
+          "name": "Test: Invalid Base64",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"not-valid-base64!!!\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check"]
+            },
+            "description": "Test Base64 validation\n\n**Expected:** 422 Validation Error\n**Test:** Invalid base64 encoding"
+          },
+          "response": []
+        },
+        {
+          "name": "Test: SSRF - Private IP",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"dGVzdA==\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test123\",\n  \"callback_url\": \"http://192.168.1.1/admin\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check"]
+            },
+            "description": "Test SSRF prevention (private IP)\n\n**Expected:** 422 Validation Error\n**Test:** Callback URL with private IP"
+          },
+          "response": []
+        },
+        {
+          "name": "Test: SSRF - Non-Whitelisted Domain",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"dGVzdA==\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test123\",\n  \"callback_url\": \"https://evil.com/callback\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check"]
+            },
+            "description": "Test SSRF prevention (domain whitelist)\n\n**Expected:** 422 Validation Error\n**Test:** Callback URL with non-whitelisted domain"
+          },
+          "response": []
+        },
+        {
+          "name": "Test: SQL Injection in Project ID",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"dGVzdA==\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"'; DROP TABLE users; --\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check"]
+            },
+            "description": "Test SQL injection prevention\n\n**Expected:** 422 Validation Error\n**Test:** SQL injection pattern in project_id"
+          },
+          "response": []
+        },
+        {
+          "name": "Test: IDOR - Access Other User Job",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{API_KEY_USER2}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/jobs/{{JOB_ID}}",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "jobs", "{{JOB_ID}}"]
+            },
+            "description": "Test IDOR prevention\n\n**Expected:** 404 Not Found\n**Test:** User 2 tries to access User 1's job\n**Setup:** Create job with API_KEY, then access with API_KEY_USER2"
+          },
+          "response": []
+        }
+      ],
+      "description": "Security feature tests (authentication, validation, IDOR)"
+    },
+    {
+      "name": "4. Documentation",
+      "item": [
+        {
+          "name": "OpenAPI Spec (Development Only)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/openapi.json",
+              "host": ["{{BASE_URL}}"],
+              "path": ["openapi.json"]
+            },
+            "description": "OpenAPI specification in JSON format\n\n**Note:** Hidden in production (DEBUG=false)"
+          },
+          "response": []
+        },
+        {
+          "name": "Swagger UI (Development Only)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/docs",
+              "host": ["{{BASE_URL}}"],
+              "path": ["docs"]
+            },
+            "description": "Interactive API documentation\n\n**Note:** Hidden in production (DEBUG=false)"
+          },
+          "response": []
+        },
+        {
+          "name": "Metrics (Prometheus)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/metrics",
+              "host": ["{{BASE_URL}}"],
+              "path": ["metrics"]
+            },
+            "description": "Prometheus metrics endpoint"
+          },
+          "response": []
+        }
+      ],
+      "description": "API documentation and metrics endpoints"
+    }
+  ]
+}

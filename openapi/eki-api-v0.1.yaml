@@ -1,0 +1,547 @@
+openapi: 3.1.1
+info:
+  title: eKI API
+  version: 0.1.0
+  description: |
+    KI-gestützte Sicherheitsprüfung für Drehbücher - Filmakademie Baden-Württemberg
+
+    Die eKI ist eine modulare REST-API, die Drehbücher aus dem eProjekt-System entgegennimmt,
+    KI-gestützt auf Sicherheitsrisiken analysiert und strukturierte Reports zurückliefert.
+
+    ## Kernprinzipien
+    - **Design-First:** Diese OpenAPI-Spezifikation ist die Single Source of Truth
+    - **Processing-Only:** Keine persistente Speicherung von Drehbüchern/Reports (nur Audit-Metadaten)
+    - **Write-Through:** Ergebnisse werden sofort an eProjekt zurückgespielt
+    - **Minimalinvasiv:** Integration nur über REST, keine direkten DB-Zugriffe
+
+  contact:
+    name: Filmakademie Baden-Württemberg
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:8000
+    description: Local development
+  - url: https://eki-stage.filmakademie.de
+    description: Staging environment
+  - url: https://eki.filmakademie.de
+    description: Production environment
+
+tags:
+  - name: Health
+    description: Health and readiness checks
+  - name: Security
+    description: Security check operations
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Liveness probe
+      description: Simple health check that returns 200 if the service is running
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /ready:
+    get:
+      tags:
+        - Health
+      summary: Readiness probe
+      description: Checks if the service is ready to handle requests by verifying all dependencies
+      operationId: readinessCheck
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+        '503':
+          description: Service is not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+
+  /v1/security/check:
+    post:
+      tags:
+        - Security
+      summary: Synchronous security check
+      description: Perform a synchronous security check for scripts ≤1MB or ≤50 scenes
+      operationId: securityCheckSync
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ActorUserId'
+        - $ref: '#/components/parameters/ActorProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SecurityCheckRequest'
+      responses:
+        '200':
+          description: Security check completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncSecurityCheckResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/security/check:async:
+    post:
+      tags:
+        - Security
+      summary: Asynchronous security check
+      description: Start an asynchronous security check for large scripts
+      operationId: securityCheckAsync
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ActorUserId'
+        - $ref: '#/components/parameters/ActorProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AsyncSecurityCheckRequest'
+      responses:
+        '202':
+          description: Security check job created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsyncSecurityCheckResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/security/jobs/{job_id}:
+    get:
+      tags:
+        - Security
+      summary: Get job status
+      description: Query the status of an asynchronous security check job
+      operationId: getJobStatus
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          description: Job ID to query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Job status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobStatusResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/security/reports/{report_id}:
+    get:
+      tags:
+        - Security
+      summary: Retrieve report (one-shot)
+      description: Retrieve a security report. URL is invalidated after retrieval
+      operationId: getReport
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: report_id
+          in: path
+          required: true
+          description: Report ID to retrieve
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Report retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Report already retrieved (URL invalidated)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    ActorUserId:
+      name: X-Actor-User-Id
+      in: header
+      description: Actor user ID for audit logging
+      required: false
+      schema:
+        type: string
+
+    ActorProjectId:
+      name: X-Actor-Project-Id
+      in: header
+      description: Actor project ID for audit logging
+      required: false
+      schema:
+        type: string
+
+  schemas:
+    ScriptFormat:
+      type: string
+      enum: [fdx, pdf]
+      description: Supported script formats
+
+    JobStatus:
+      type: string
+      enum: [pending, running, completed, failed, cancelled]
+      description: Status of an async security check job
+
+    RiskLevel:
+      type: string
+      enum: [critical, high, medium, low, info]
+      description: Risk level classification
+
+    SecurityCheckRequest:
+      type: object
+      required:
+        - script_content
+        - script_format
+        - project_id
+      properties:
+        script_content:
+          type: string
+          description: Base64-encoded script content
+          minLength: 1
+          maxLength: 10485760
+        script_format:
+          $ref: '#/components/schemas/ScriptFormat'
+        project_id:
+          type: string
+          description: eProjekt project ID
+          minLength: 1
+        callback_url:
+          type: string
+          format: uri
+          description: Optional callback URL for async results
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Additional metadata for audit trail
+
+    AsyncSecurityCheckRequest:
+      allOf:
+        - $ref: '#/components/schemas/SecurityCheckRequest'
+        - type: object
+          properties:
+            priority:
+              type: integer
+              minimum: 1
+              maximum: 10
+              default: 5
+              description: Job priority (1=highest, 10=lowest)
+
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - timestamp
+        - version
+      properties:
+        status:
+          type: string
+          example: healthy
+        timestamp:
+          type: string
+          format: date-time
+        version:
+          type: string
+          example: 0.1.0
+
+    ReadinessResponse:
+      type: object
+      required:
+        - status
+        - timestamp
+        - services
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        timestamp:
+          type: string
+          format: date-time
+        services:
+          type: object
+          additionalProperties:
+            type: boolean
+          example:
+            database: true
+            redis: true
+            temporal: true
+
+    RiskFinding:
+      type: object
+      required:
+        - id
+        - risk_level
+        - category
+        - description
+        - recommendation
+        - confidence
+      properties:
+        id:
+          type: string
+          description: Unique finding ID
+        scene_number:
+          type: string
+          nullable: true
+          description: Scene number where risk was found
+        risk_level:
+          $ref: '#/components/schemas/RiskLevel'
+        category:
+          type: string
+          description: Risk category
+        description:
+          type: string
+          description: Human-readable description
+        recommendation:
+          type: string
+          description: Mitigation recommendation
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: Confidence score of the finding
+        line_reference:
+          type: string
+          nullable: true
+          description: Specific line or dialogue reference
+
+    SecurityReport:
+      type: object
+      required:
+        - report_id
+        - project_id
+        - script_format
+        - created_at
+        - risk_summary
+        - total_findings
+        - findings
+        - processing_time_seconds
+      properties:
+        report_id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+        script_format:
+          $ref: '#/components/schemas/ScriptFormat'
+        created_at:
+          type: string
+          format: date-time
+        risk_summary:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Count of findings per risk level
+        total_findings:
+          type: integer
+        findings:
+          type: array
+          items:
+            $ref: '#/components/schemas/RiskFinding'
+        processing_time_seconds:
+          type: number
+          format: float
+        metadata:
+          type: object
+          additionalProperties: true
+
+    SyncSecurityCheckResponse:
+      type: object
+      required:
+        - report
+        - message
+      properties:
+        report:
+          $ref: '#/components/schemas/SecurityReport'
+        message:
+          type: string
+          example: Security check completed successfully
+
+    AsyncSecurityCheckResponse:
+      type: object
+      required:
+        - job_id
+        - status
+        - message
+        - status_url
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        message:
+          type: string
+          example: Security check job created successfully
+        status_url:
+          type: string
+          description: URL to check job status
+        estimated_completion_seconds:
+          type: integer
+          nullable: true
+
+    JobStatusResponse:
+      type: object
+      required:
+        - job_id
+        - status
+        - created_at
+        - updated_at
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        progress_percentage:
+          type: integer
+          minimum: 0
+          maximum: 100
+          nullable: true
+        report_id:
+          type: string
+          format: uuid
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+
+    ReportResponse:
+      type: object
+      required:
+        - report
+        - message
+      properties:
+        report:
+          $ref: '#/components/schemas/SecurityReport'
+        message:
+          type: string
+          example: Report retrieved successfully. This URL is now invalidated.
+
+    ErrorDetail:
+      type: object
+      required:
+        - message
+      properties:
+        field:
+          type: string
+          nullable: true
+        message:
+          type: string
+        error_code:
+          type: string
+          nullable: true
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - message
+        - timestamp
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorDetail'
+        request_id:
+          type: string
+          nullable: true
+        timestamp:
+          type: string
+          format: date-time
+
+  responses:
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    ValidationError:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

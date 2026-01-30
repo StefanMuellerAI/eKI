@@ -1,0 +1,32 @@
+extends: ["spectral:oas", "spectral:asyncapi"]
+
+rules:
+  # OpenAPI specific rules
+  info-contact: warn
+  info-description: warn
+  info-license: warn
+  operation-description: warn
+  operation-operationId: error
+  operation-tags: warn
+  operation-success-response: error
+
+  # Require examples
+  operation-example-response: off
+
+  # Security
+  operation-security-defined: error
+
+  # Paths
+  path-params: error
+  path-declarations-must-exist: error
+  path-keys-no-trailing-slash: error
+
+  # Parameters
+  parameter-description: warn
+
+  # Schema rules
+  typed-enum: error
+
+  # Tags
+  openapi-tags: warn
+  tag-description: off

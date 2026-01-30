@@ -1,0 +1,34 @@
+# Docker Compose Override Example
+#
+# Copy this file to docker-compose.override.yml to customize your setup
+# cp docker-compose.override.yml.example docker-compose.override.yml
+
+services:
+  # Disable Ollama if using Mistral Cloud
+  # ollama:
+  #   profiles:
+  #     - ollama
+
+  # Enable GPU for Ollama (NVIDIA)
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # API with Ollama environment
+  api:
+    environment:
+      - LLM_PROVIDER=ollama
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_MODEL=mistral
+
+  # Worker with Ollama environment
+  worker:
+    environment:
+      - LLM_PROVIDER=ollama
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_MODEL=mistral

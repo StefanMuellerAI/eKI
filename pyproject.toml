@@ -1,0 +1,153 @@
+[project]
+name = "eki-api"
+version = "0.1.0"
+description = "KI-gestützte Sicherheitsprüfung für Drehbücher - Filmakademie Baden-Württemberg"
+authors = [
+    {name = "Filmakademie Baden-Württemberg"}
+]
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "Proprietary"}
+
+dependencies = [
+    # Web Framework
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "gunicorn>=21.2.0",
+    "python-multipart>=0.0.6",
+
+    # Validation & Settings
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "email-validator>=2.1.0",
+
+    # Database
+    "sqlalchemy>=2.0.25",
+    "asyncpg>=0.29.0",
+    "psycopg2-binary>=2.9.9",
+    "alembic>=1.13.0",
+    "pgvector>=0.2.4",
+
+    # Redis
+    "redis>=5.0.1",
+    "hiredis>=2.3.2",
+
+    # Temporal Workflow Engine
+    "temporalio>=1.5.0",
+
+    # HTTP Client
+    "httpx>=0.26.0",
+    "aiohttp>=3.9.1",
+
+    # Security
+    "PyJWT>=2.8.0",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "bcrypt>=4.1.2",
+
+    # Observability
+    "prometheus-client>=0.19.0",
+    "opentelemetry-api>=1.22.0",
+    "opentelemetry-sdk>=1.22.0",
+    "opentelemetry-instrumentation-fastapi>=0.43b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.43b0",
+    "opentelemetry-exporter-prometheus>=0.43b0",
+
+    # Logging
+    "python-json-logger>=2.0.7",
+    "structlog>=24.1.0",
+
+    # Utilities
+    "python-dateutil>=2.8.2",
+    "pytz>=2023.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    # Testing
+    "pytest>=7.4.4",
+    "pytest-asyncio>=0.23.3",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "httpx>=0.26.0",
+    "faker>=22.0.0",
+
+    # Linting & Formatting
+    "ruff>=0.1.14",
+    "mypy>=1.8.0",
+
+    # Type Stubs
+    "types-redis>=4.6.0",
+    "types-python-dateutil>=2.8.19",
+
+    # Security Scanning
+    "bandit>=1.7.6",
+    "safety>=3.0.1",
+
+    # Documentation
+    "mkdocs>=1.5.3",
+    "mkdocs-material>=9.5.3",
+]
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers --cov=api --cov=core --cov=services --cov=workflows"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["."]
+
+[tool.coverage.run]
+source = ["api", "core", "services", "workflows", "worker"]
+omit = ["tests/*", "*/migrations/*"]
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_covered = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "C",   # flake8-comprehensions
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_any_unimported = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+check_untyped_defs = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "temporalio.*",
+    "prometheus_client.*",
+    "pgvector.*",
+]
+ignore_missing_imports = true
