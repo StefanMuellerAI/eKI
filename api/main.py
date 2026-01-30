@@ -103,7 +103,7 @@ async def validation_exception_handler(
             message="Request validation failed",
             details=details,
             request_id=request.headers.get("X-Request-ID"),
-        ).model_dump(),
+        ).model_dump(mode="json"),
     )
 
 
@@ -118,7 +118,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
             error="InternalServerError",
             message="An unexpected error occurred",
             request_id=request.headers.get("X-Request-ID"),
-        ).model_dump(),
+        ).model_dump(mode="json"),
     )
 
 
