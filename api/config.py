@@ -1,11 +1,12 @@
 """Application configuration using Pydantic Settings."""
 
+import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import Field, PostgresDsn, RedisDsn, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 def _read_secret_file(path: str, env_name: str) -> str:
@@ -79,7 +80,7 @@ class Settings(BaseSettings):
         description="Optional file path containing API_SECRET_KEY (Docker secret pattern)",
     )
     api_token_expire_minutes: int = Field(default=60, description="Access token expiration time")
-    cors_origins: list[str] = Field(
+    cors_origins: Annotated[list[str], NoDecode] = Field(
         default=["http://localhost:3000", "http://localhost:8000"],
         description="Allowed CORS origins",
     )
@@ -92,7 +93,7 @@ class Settings(BaseSettings):
         default=False,
         description="Trust X-Forwarded-For headers from trusted proxy IPs only",
     )
-    trusted_proxy_ips: list[str] = Field(
+    trusted_proxy_ips: Annotated[list[str], NoDecode] = Field(
         default_factory=list,
         description="Comma-separated list of trusted reverse proxy IP addresses",
     )
@@ -148,7 +149,17 @@ class Settings(BaseSettings):
     def parse_cors_origins(cls, v: Any) -> list[str]:
         """Parse CORS origins from string or list."""
         if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
+            value = v.strip()
+            if not value:
+                return []
+            if value.startswith("["):
+                parsed = json.loads(value)
+                if not isinstance(parsed, list):
+                    raise ValueError("CORS_ORIGINS JSON value must be a list")
+                return [str(origin).strip() for origin in parsed if str(origin).strip()]
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        if isinstance(v, list):
+            return [str(origin).strip() for origin in v if str(origin).strip()]
         return v
 
     @field_validator("trusted_proxy_ips", mode="before")
@@ -156,7 +167,17 @@ class Settings(BaseSettings):
     def parse_trusted_proxy_ips(cls, v: Any) -> list[str]:
         """Parse trusted proxy IPs from comma-separated string or list."""
         if isinstance(v, str):
-            return [ip.strip() for ip in v.split(",") if ip.strip()]
+            value = v.strip()
+            if not value:
+                return []
+            if value.startswith("["):
+                parsed = json.loads(value)
+                if not isinstance(parsed, list):
+                    raise ValueError("TRUSTED_PROXY_IPS JSON value must be a list")
+                return [str(ip).strip() for ip in parsed if str(ip).strip()]
+            return [ip.strip() for ip in value.split(",") if ip.strip()]
+        if isinstance(v, list):
+            return [str(ip).strip() for ip in v if str(ip).strip()]
         return v
 
     @model_validator(mode="before")

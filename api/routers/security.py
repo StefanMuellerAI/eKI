@@ -1,13 +1,14 @@
 """Security check endpoints."""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from temporalio.client import Client as TemporalClient
 
+from api.config import get_settings
 from api.dependencies import get_actor_headers, get_db, get_temporal_client, verify_api_key
 from api.rate_limiting import rate_limit_combined
 from core.db_models import ApiKeyModel, JobMetadata, ReportMetadata
@@ -22,6 +23,7 @@ from core.models import (
     SecurityReport,
     SyncSecurityCheckResponse,
 )
+from workflows.security_check import SecurityCheckWorkflow
 
 router = APIRouter()
 
@@ -102,28 +104,39 @@ async def security_check_async(
     actor_info: dict[str, str | None] = Depends(get_actor_headers),
 ) -> AsyncSecurityCheckResponse:
     """
-    Asynchronous security check endpoint (stub for M01).
+    Asynchronous security check endpoint.
 
     Starts a Temporal workflow for processing large scripts.
     Returns a job ID for tracking progress.
-
-    In M01, this creates a workflow but returns stub data. Real workflow execution
-    in later milestones.
     """
+    settings = get_settings()
     job_id = uuid.uuid4()
+    report_id = uuid.uuid4()
 
-    # Stub: In real implementation, start Temporal workflow here
-    # workflow_handle = await temporal_client.start_workflow(
-    #     SecurityCheckWorkflow.run,
-    #     args=[request.dict()],
-    #     id=str(job_id),
-    #     task_queue=settings.temporal_task_queue,
-    # )
+    job_data = {
+        "script_content": request.script_content,
+        "script_format": request.script_format.value,
+        "project_id": request.project_id,
+        "job_id": str(job_id),
+        "report_id": str(report_id),
+        "callback_url": str(request.callback_url) if request.callback_url else None,
+        "user_id": actor_info.get("user_id"),
+        "priority": request.priority,
+        "metadata": request.metadata,
+    }
+
+    await temporal_client.start_workflow(
+        SecurityCheckWorkflow.run,
+        job_data,
+        id=str(job_id),
+        task_queue=settings.temporal_task_queue,
+        execution_timeout=timedelta(seconds=settings.temporal_workflow_execution_timeout),
+    )
 
     return AsyncSecurityCheckResponse(
         job_id=job_id,
         status=JobStatus.PENDING,
-        message="Security check job created successfully (M01 stub)",
+        message="Security check job started via Temporal workflow",
         status_url=f"/v1/security/jobs/{job_id}",
         estimated_completion_seconds=120,
     )

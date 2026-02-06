@@ -6,9 +6,6 @@ services:
     env_file:
       - .env.local
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-eki_db}
-      POSTGRES_USER: ${POSTGRES_USER:-eki_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_INITDB_ARGS: "-A md5"
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -66,8 +63,6 @@ services:
     environment:
       - DB=postgresql
       - DB_PORT=5432
-      - POSTGRES_USER=${POSTGRES_USER:-eki_user}
-      - POSTGRES_PWD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - POSTGRES_SEEDS=postgres
     depends_on:
       postgres:
@@ -85,9 +80,11 @@ services:
   temporal-ui:
     image: temporalio/ui:2.23.0
     container_name: eki-temporal-ui
+    ports:
+      - "8080:8080"
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
-      - TEMPORAL_CORS_ORIGINS=http://localhost:8000
+      - TEMPORAL_CORS_ORIGINS=http://localhost:8000,http://localhost:8080
     depends_on:
       - temporal
     networks:
@@ -103,15 +100,6 @@ services:
       - "8000:8000"
     env_file:
       - .env.local
-    environment:
-      - ENV=${ENV:-development}
-      - DEBUG=${DEBUG:-true}
-      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL is required}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-      - TEMPORAL_HOST=${TEMPORAL_HOST:-temporal:7233}
-      - TEMPORAL_NAMESPACE=${TEMPORAL_NAMESPACE:-default}
-      - TEMPORAL_TASK_QUEUE=${TEMPORAL_TASK_QUEUE:-security-check}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:
       postgres:
         condition: service_healthy
@@ -125,6 +113,8 @@ services:
       - ./services:/app/services
       - ./workflows:/app/workflows
       - ./db:/app/db
+      - ./llm:/app/llm
+      - ./scripts:/app/scripts
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
@@ -143,15 +133,6 @@ services:
     container_name: eki-worker
     env_file:
       - .env.local
-    environment:
-      - ENV=${ENV:-development}
-      - DEBUG=${DEBUG:-true}
-      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL is required}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-      - TEMPORAL_HOST=${TEMPORAL_HOST:-temporal:7233}
-      - TEMPORAL_NAMESPACE=${TEMPORAL_NAMESPACE:-default}
-      - TEMPORAL_TASK_QUEUE=${TEMPORAL_TASK_QUEUE:-security-check}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:
       postgres:
         condition: service_healthy
@@ -166,6 +147,7 @@ services:
       - ./workflows:/app/workflows
       - ./worker:/app/worker
       - ./db:/app/db
+      - ./llm:/app/llm
     networks:
       - eki-network
     restart: unless-stopped

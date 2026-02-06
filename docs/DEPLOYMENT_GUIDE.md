@@ -95,6 +95,7 @@ DEBUG=false
 
 # Use the generated secrets
 POSTGRES_PASSWORD=<from secrets/db_password.txt>
+POSTGRES_PWD=<from secrets/db_password.txt>
 DATABASE_URL=postgresql+asyncpg://eki_user:<db_password>@postgres:5432/eki_db
 API_SECRET_KEY=<from secrets/api_secret_key.txt>
 

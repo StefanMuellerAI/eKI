@@ -44,10 +44,7 @@ async def get_temporal_client() -> TemporalClient:
     """Get Temporal client."""
     settings = get_settings()
     client = await TemporalClient.connect(settings.temporal_host)
-    try:
-        yield client
-    finally:
-        await client.close()
+    yield client
 
 
 async def verify_api_key(
