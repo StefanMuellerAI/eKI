@@ -1,10 +1,24 @@
 """Application configuration using Pydantic Settings."""
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from pydantic import Field, PostgresDsn, RedisDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _read_secret_file(path: str, env_name: str) -> str:
+    """Read a secret value from file and return stripped content."""
+    try:
+        value = Path(path).read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ValueError(f"{env_name} points to unreadable file: {path}") from exc
+
+    if not value:
+        raise ValueError(f"{env_name} points to empty file: {path}")
+
+    return value
 
 
 class Settings(BaseSettings):
@@ -32,6 +46,10 @@ class Settings(BaseSettings):
         default="postgresql+asyncpg://eki_user:replace-me@localhost:5432/eki_db",
         description="PostgreSQL connection URL",
     )
+    database_url_file: str | None = Field(
+        default=None,
+        description="Optional file path containing full DATABASE_URL (Docker secret pattern)",
+    )
     database_pool_size: int = Field(default=20, description="Database connection pool size")
     database_max_overflow: int = Field(default=10, description="Max overflow for connection pool")
 
@@ -55,6 +73,10 @@ class Settings(BaseSettings):
     api_secret_key: str = Field(
         default="replace-this-secret-key-with-at-least-32-characters",
         description="Secret key for token generation",
+    )
+    api_secret_key_file: str | None = Field(
+        default=None,
+        description="Optional file path containing API_SECRET_KEY (Docker secret pattern)",
     )
     api_token_expire_minutes: int = Field(default=60, description="Access token expiration time")
     cors_origins: list[str] = Field(
@@ -83,6 +105,10 @@ class Settings(BaseSettings):
         default="https://epro-stage.filmakademie.de/api", description="eProjekt base URL"
     )
     epro_auth_token: str = Field(default="", description="eProjekt authentication token")
+    epro_auth_token_file: str | None = Field(
+        default=None,
+        description="Optional file path containing eProjekt auth token",
+    )
     epro_timeout: int = Field(default=30, description="eProjekt API timeout in seconds")
 
     # LLM Provider (for future milestones)
@@ -91,6 +117,10 @@ class Settings(BaseSettings):
         description="LLM provider: mistral_cloud, local_mistral, or ollama",
     )
     mistral_api_key: str = Field(default="", description="Mistral API key")
+    mistral_api_key_file: str | None = Field(
+        default=None,
+        description="Optional file path containing Mistral API key",
+    )
     mistral_model: str = Field(default="mistral-large-latest", description="Mistral model name")
     mistral_timeout: int = Field(default=120, description="Mistral request timeout in seconds")
 
@@ -128,6 +158,28 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return [ip.strip() for ip in v.split(",") if ip.strip()]
         return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def load_secrets_from_files(cls, data: Any) -> Any:
+        """Allow *_FILE settings to populate sensitive values from mounted secrets."""
+        if not isinstance(data, dict):
+            return data
+
+        settings = dict(data)
+        file_mapping = {
+            "database_url_file": "database_url",
+            "api_secret_key_file": "api_secret_key",
+            "epro_auth_token_file": "epro_auth_token",
+            "mistral_api_key_file": "mistral_api_key",
+        }
+
+        for file_field, target_field in file_mapping.items():
+            file_path = settings.get(file_field)
+            if file_path:
+                settings[target_field] = _read_secret_file(file_path, file_field.upper())
+
+        return settings
 
     @property
     def is_production(self) -> bool:

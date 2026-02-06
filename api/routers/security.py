@@ -32,7 +32,7 @@ router = APIRouter()
     status_code=status.HTTP_200_OK,
     summary="Synchronous security check",
     description="Perform a synchronous security check for scripts ≤1MB or ≤50 scenes.",
-    dependencies=[Depends(verify_api_key), Depends(rate_limit_combined)],
+    dependencies=[Depends(rate_limit_combined)],
 )
 async def security_check_sync(
     request: SecurityCheckRequest,
@@ -94,7 +94,7 @@ async def security_check_sync(
     status_code=status.HTTP_202_ACCEPTED,
     summary="Asynchronous security check",
     description="Start an asynchronous security check for large scripts.",
-    dependencies=[Depends(verify_api_key), Depends(rate_limit_combined)],
+    dependencies=[Depends(rate_limit_combined)],
 )
 async def security_check_async(
     request: AsyncSecurityCheckRequest,

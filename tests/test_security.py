@@ -152,6 +152,23 @@ class TestAuthorization:
     """Tests for authorization and IDOR prevention."""
 
     @pytest.mark.asyncio
+    async def test_actor_user_header_must_match_authenticated_user(self, client, auth_headers):
+        """Test that X-Actor-User-Id cannot spoof another user."""
+        script_content = base64.b64encode(b"Test script").decode()
+        payload = {
+            "script_content": script_content,
+            "script_format": "fdx",
+            "project_id": "test123",
+        }
+
+        mismatched_headers = dict(auth_headers)
+        mismatched_headers["X-Actor-User-Id"] = "different-user"
+
+        response = client.post("/v1/security/check", json=payload, headers=mismatched_headers)
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert "does not match" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
     async def test_idor_job_access_prevention(
         self, client, db_session, auth_headers, auth_headers_user2
     ):
@@ -325,6 +342,21 @@ class TestInputValidation:
                 or "domain" in response_str
                 or "callback" in response_str
             )
+
+    @pytest.mark.asyncio
+    async def test_ssrf_private_https_ip_blocked_before_domain_check(self, client, auth_headers):
+        """Test private HTTPS IPs are rejected explicitly as internal addresses."""
+        script_content = base64.b64encode(b"Test").decode()
+        payload = {
+            "script_content": script_content,
+            "script_format": "fdx",
+            "project_id": "test123",
+            "callback_url": "https://192.168.1.10/callback",
+        }
+
+        response = client.post("/v1/security/check", json=payload, headers=auth_headers)
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert "private/internal" in str(response.json()).lower()
 
     @pytest.mark.asyncio
     async def test_ssrf_domain_whitelist(self, client, auth_headers):

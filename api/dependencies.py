@@ -119,13 +119,22 @@ async def verify_api_key(
 def get_actor_headers(
     x_actor_user_id: str | None = Header(None, description="Actor user ID"),
     x_actor_project_id: str | None = Header(None, description="Actor project ID"),
+    api_key: ApiKeyModel = Depends(verify_api_key),
 ) -> dict[str, str | None]:
     """
     Extract actor information from headers for audit logging.
 
-    Returns dict with user_id and project_id for audit trail.
+    Security:
+    - user_id is always derived from the authenticated API key
+    - optional X-Actor-User-Id must match the authenticated user
     """
+    if x_actor_user_id and x_actor_user_id != api_key.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="X-Actor-User-Id does not match authenticated API key user",
+        )
+
     return {
-        "user_id": x_actor_user_id,
+        "user_id": api_key.user_id,
         "project_id": x_actor_project_id,
     }

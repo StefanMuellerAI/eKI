@@ -207,13 +207,14 @@ components:
     BearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: JWT
+      bearerFormat: APIKey
+      description: Opaque API key transmitted as `Authorization: Bearer eki_<token>`
 
   parameters:
     ActorUserId:
       name: X-Actor-User-Id
       in: header
-      description: Actor user ID for audit logging
+      description: Optional actor user ID for audit logging (must match authenticated API-key user if provided)
       required: false
       schema:
         type: string
@@ -263,7 +264,7 @@ components:
         callback_url:
           type: string
           format: uri
-          description: Optional callback URL for async results
+          description: Optional HTTPS callback URL for async results (allowlisted eProjekt domains only)
         metadata:
           type: object
           additionalProperties: true

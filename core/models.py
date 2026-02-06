@@ -108,40 +108,35 @@ class SecurityCheckRequest(BaseModel):
 
         parsed = urlparse(str(v))
 
-        # Only allow HTTPS in production (configurable)
-        if parsed.scheme not in ["https", "http"]:
-            raise ValueError("Callback URL must use HTTP or HTTPS")
+        # Enforce TLS for callback delivery.
+        if parsed.scheme != "https":
+            raise ValueError("Callback URL must use HTTPS")
 
         # Block private/internal IP ranges
-        try:
-            hostname = parsed.hostname
-            if hostname:
-                try:
-                    ip = ipaddress.ip_address(hostname)
-                    if (
-                        ip.is_private
-                        or ip.is_loopback
-                        or ip.is_link_local
-                        or ip.is_multicast
-                        or ip.is_reserved
-                    ):
-                        raise ValueError(
-                            "Callback URL cannot point to private/internal IP addresses"
-                        )
-                except ValueError:
-                    pass  # Not an IP, it's a hostname
-        except Exception:
+        hostname = parsed.hostname
+        if not hostname:
             raise ValueError("Invalid callback URL hostname")
 
+        try:
+            ip = ipaddress.ip_address(hostname)
+        except ValueError:
+            ip = None
+
+        if ip and (
+            ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved
+        ):
+            raise ValueError("Callback URL cannot point to private/internal IP addresses")
+
         # Whitelist of allowed domains
-        allowed_domains = [
+        allowed_domains = {
             "epro.filmakademie.de",
             "epro-stage.filmakademie.de",
-        ]
+        }
 
-        if parsed.hostname and parsed.hostname not in allowed_domains:
+        if hostname.lower().rstrip(".") not in allowed_domains:
             raise ValueError(
-                f"Callback URL domain not allowed. Allowed: {', '.join(allowed_domains)}"
+                "Callback URL domain not allowed. "
+                f"Allowed: {', '.join(sorted(allowed_domains))}"
             )
 
         return v

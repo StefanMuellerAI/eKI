@@ -29,10 +29,12 @@ services:
     environment:
       - ENV=production
       - DEBUG=false
+      - DATABASE_URL_FILE=/run/secrets/database_url
+      - API_SECRET_KEY_FILE=/run/secrets/api_secret_key
     env_file:
       - .env.local
     secrets:
-      - db_password
+      - database_url
       - api_secret_key
     # Remove development volume mounts for production
     volumes: []
@@ -41,10 +43,12 @@ services:
     environment:
       - ENV=production
       - DEBUG=false
+      - DATABASE_URL_FILE=/run/secrets/database_url
+      - API_SECRET_KEY_FILE=/run/secrets/api_secret_key
     env_file:
       - .env.local
     secrets:
-      - db_password
+      - database_url
       - api_secret_key
     # Remove development volume mounts for production
     volumes: []
@@ -52,5 +56,7 @@ services:
 secrets:
   db_password:
     file: ./secrets/db_password.txt
+  database_url:
+    file: ./secrets/database_url.txt
   api_secret_key:
     file: ./secrets/api_secret_key.txt
