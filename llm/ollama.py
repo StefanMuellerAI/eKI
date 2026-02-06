@@ -33,7 +33,13 @@ class OllamaProvider(BaseLLMProvider):
     ) -> str:
         """Generate text using Ollama API with prompt injection protection."""
         # Sanitize and validate prompt
-        clean_prompt = PromptSanitizer.validate_and_sanitize(prompt, raise_on_unsafe=False)
+        try:
+            clean_prompt = PromptSanitizer.validate_and_sanitize(prompt, raise_on_unsafe=True)
+        except ValueError as e:
+            raise LLMException(
+                "Prompt blocked by security policy",
+                details={"provider": "ollama", "reason": str(e)},
+            )
 
         # Use default system prompt if none provided
         if system_prompt is None:
@@ -134,15 +140,30 @@ class OllamaProvider(BaseLLMProvider):
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Generate structured output using Ollama API."""
+        try:
+            clean_prompt = PromptSanitizer.validate_and_sanitize(prompt, raise_on_unsafe=True)
+        except ValueError as e:
+            raise LLMException(
+                "Prompt blocked by security policy",
+                details={"provider": "ollama", "reason": str(e)},
+            )
+
         # Build messages for chat endpoint
         messages = []
 
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
+        effective_system_prompt = system_prompt
+        if effective_system_prompt is None:
+            effective_system_prompt = (
+                "You are a helpful film safety assistant analyzing scripts for potential risks."
+            )
+        locked_system, final_prompt = PromptSanitizer.wrap_with_system_lock(
+            clean_prompt, effective_system_prompt
+        )
+        messages.append({"role": "system", "content": locked_system})
 
         # Enhance prompt with JSON schema instruction
         enhanced_prompt = (
-            f"{prompt}\n\n"
+            f"{final_prompt}\n\n"
             f"Respond with valid JSON matching this schema:\n"
             f"```json\n{json.dumps(schema, indent=2)}\n```\n\n"
             f"Response (JSON only, no explanations):"

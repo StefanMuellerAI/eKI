@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from temporalio.client import Client as TemporalClient
 
@@ -135,6 +135,7 @@ async def security_check_async(
     status_code=status.HTTP_200_OK,
     summary="Get job status",
     description="Query the status of an asynchronous security check job.",
+    dependencies=[Depends(rate_limit_combined)],
 )
 async def get_job_status(
     job_id: uuid.UUID = Path(..., description="Job ID to query"),
@@ -182,6 +183,7 @@ async def get_job_status(
     status_code=status.HTTP_200_OK,
     summary="Retrieve report (one-shot)",
     description="Retrieve a security report. URL is invalidated after retrieval (pull mode).",
+    dependencies=[Depends(rate_limit_combined)],
 )
 async def get_report(
     report_id: uuid.UUID = Path(..., description="Report ID to retrieve"),
@@ -197,30 +199,41 @@ async def get_report(
 
     In M01, this returns stub data. Real report storage/retrieval in later milestones.
     """
-    # Check ownership to prevent IDOR
-    stmt = select(ReportMetadata).where(
-        ReportMetadata.report_id == report_id,
-        ReportMetadata.user_id == api_key.user_id,
-    )
-    result = await db.execute(stmt)
-    report_meta = result.scalar_one_or_none()
-
-    if not report_meta:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Report not found or access denied",
+    # Atomically enforce one-shot retrieval to avoid race conditions.
+    retrieved_at = datetime.utcnow()
+    update_stmt = (
+        update(ReportMetadata)
+        .where(
+            ReportMetadata.report_id == report_id,
+            ReportMetadata.user_id == api_key.user_id,
+            ReportMetadata.is_retrieved.is_(False),
         )
+        .values(
+            is_retrieved=True,
+            retrieved_at=retrieved_at,
+        )
+    )
+    update_result = await db.execute(update_stmt)
 
-    # Check if already retrieved (one-shot enforcement)
-    if report_meta.is_retrieved:
+    if not update_result.rowcount:
+        state_stmt = select(ReportMetadata.is_retrieved).where(
+            ReportMetadata.report_id == report_id,
+            ReportMetadata.user_id == api_key.user_id,
+        )
+        state_result = await db.execute(state_stmt)
+        is_retrieved = state_result.scalar_one_or_none()
+
+        if is_retrieved is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Report not found or access denied",
+            )
+
         raise HTTPException(
             status_code=status.HTTP_410_GONE,
             detail="Report already retrieved. URL is no longer valid.",
         )
 
-    # Mark as retrieved to enforce one-shot behavior
-    report_meta.is_retrieved = True
-    report_meta.retrieved_at = datetime.utcnow()
     await db.commit()
 
     # Stub: Return mock report (in real implementation, fetch from Redis/storage)

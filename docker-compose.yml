@@ -3,17 +3,17 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     container_name: eki-postgres
+    env_file:
+      - .env.local
     environment:
-      POSTGRES_DB: eki_db
-      POSTGRES_USER: eki_user
-      POSTGRES_PASSWORD: eki_password
+      POSTGRES_DB: ${POSTGRES_DB:-eki_db}
+      POSTGRES_USER: ${POSTGRES_USER:-eki_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_INITDB_ARGS: "-A md5"
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U eki_user -d eki_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-eki_user} -d ${POSTGRES_DB:-eki_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -24,8 +24,6 @@ services:
   redis:
     image: redis:7-alpine
     container_name: eki-redis
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -40,8 +38,6 @@ services:
   ollama:
     image: ollama/ollama:latest
     container_name: eki-ollama
-    ports:
-      - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
     healthcheck:
@@ -65,13 +61,13 @@ services:
   temporal:
     image: temporalio/auto-setup:1.23.0
     container_name: eki-temporal
-    ports:
-      - "7233:7233"
+    env_file:
+      - .env.local
     environment:
       - DB=postgresql
       - DB_PORT=5432
-      - POSTGRES_USER=eki_user
-      - POSTGRES_PWD=eki_password
+      - POSTGRES_USER=${POSTGRES_USER:-eki_user}
+      - POSTGRES_PWD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - POSTGRES_SEEDS=postgres
     depends_on:
       postgres:
@@ -89,8 +85,6 @@ services:
   temporal-ui:
     image: temporalio/ui:2.23.0
     container_name: eki-temporal-ui
-    ports:
-      - "8080:8080"
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
       - TEMPORAL_CORS_ORIGINS=http://localhost:8000
@@ -107,15 +101,17 @@ services:
     container_name: eki-api
     ports:
       - "8000:8000"
+    env_file:
+      - .env.local
     environment:
-      - ENV=development
-      - DEBUG=true
-      - DATABASE_URL=postgresql+asyncpg://eki_user:eki_password@postgres:5432/eki_db
-      - REDIS_URL=redis://redis:6379/0
-      - TEMPORAL_HOST=temporal:7233
-      - TEMPORAL_NAMESPACE=default
-      - TEMPORAL_TASK_QUEUE=security-check
-      - LOG_LEVEL=INFO
+      - ENV=${ENV:-development}
+      - DEBUG=${DEBUG:-true}
+      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL is required}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - TEMPORAL_HOST=${TEMPORAL_HOST:-temporal:7233}
+      - TEMPORAL_NAMESPACE=${TEMPORAL_NAMESPACE:-default}
+      - TEMPORAL_TASK_QUEUE=${TEMPORAL_TASK_QUEUE:-security-check}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:
       postgres:
         condition: service_healthy
@@ -145,15 +141,17 @@ services:
       context: .
       dockerfile: docker/Dockerfile.worker
     container_name: eki-worker
+    env_file:
+      - .env.local
     environment:
-      - ENV=development
-      - DEBUG=true
-      - DATABASE_URL=postgresql+asyncpg://eki_user:eki_password@postgres:5432/eki_db
-      - REDIS_URL=redis://redis:6379/0
-      - TEMPORAL_HOST=temporal:7233
-      - TEMPORAL_NAMESPACE=default
-      - TEMPORAL_TASK_QUEUE=security-check
-      - LOG_LEVEL=INFO
+      - ENV=${ENV:-development}
+      - DEBUG=${DEBUG:-true}
+      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL is required}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - TEMPORAL_HOST=${TEMPORAL_HOST:-temporal:7233}
+      - TEMPORAL_NAMESPACE=${TEMPORAL_NAMESPACE:-default}
+      - TEMPORAL_TASK_QUEUE=${TEMPORAL_TASK_QUEUE:-security-check}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:
       postgres:
         condition: service_healthy

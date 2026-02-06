@@ -18,9 +18,10 @@ class TestHealthEndpoints:
         assert "timestamp" in data
         assert data["version"] == "0.1.0"
 
-    def test_readiness_check(self, client):
+    @pytest.mark.asyncio
+    async def test_readiness_check(self, client, auth_headers):
         """Test readiness check endpoint."""
-        response = client.get("/ready")
+        response = client.get("/ready", headers=auth_headers)
         # May be 200 or 503 depending on mock services
         assert response.status_code in [status.HTTP_200_OK, status.HTTP_503_SERVICE_UNAVAILABLE]
         data = response.json()

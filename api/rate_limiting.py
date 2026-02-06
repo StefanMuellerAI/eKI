@@ -1,12 +1,40 @@
 """Rate limiting middleware using Redis."""
 
 import hashlib
+import ipaddress
 
 import redis.asyncio as aioredis
 from fastapi import Depends, HTTPException, Request, status
 
 from api.config import Settings, get_settings
 from api.dependencies import get_redis
+
+
+def _client_ip_from_request(request: Request, settings: Settings) -> str:
+    """
+    Resolve client IP using a trusted-proxy model.
+
+    X-Forwarded-For is only honored if the immediate peer is a trusted proxy.
+    """
+    direct_peer = request.client.host if request.client else "unknown"
+
+    if not settings.trust_proxy_headers:
+        return direct_peer
+
+    if direct_peer not in settings.trusted_proxy_ips:
+        return direct_peer
+
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    forwarded_ip = forwarded_for.split(",")[0].strip()
+    if not forwarded_ip:
+        return direct_peer
+
+    try:
+        ipaddress.ip_address(forwarded_ip)
+    except ValueError:
+        return direct_peer
+
+    return forwarded_ip
 
 
 async def rate_limit_by_ip(
@@ -25,14 +53,11 @@ async def rate_limit_by_ip(
     if not settings.rate_limit_enabled:
         return
 
-    # Get client IP (check X-Forwarded-For for proxies)
-    client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-    if not client_ip:
-        client_ip = request.client.host if request.client else "unknown"
+    client_ip = _client_ip_from_request(request, settings)
 
     # Create rate limit key
     key = f"rate_limit:ip:{client_ip}"
-    limit = 60  # requests per minute
+    limit = max(1, settings.rate_limit_per_minute)
     window = 60  # seconds
 
     # Increment counter
@@ -84,7 +109,7 @@ async def rate_limit_by_api_key(
 
     # Create rate limit key
     key = f"rate_limit:api_key:{key_hash}"
-    limit = 1000  # requests per hour
+    limit = max(1, settings.rate_limit_per_hour)
     window = 3600  # seconds (1 hour)
 
     # Increment counter

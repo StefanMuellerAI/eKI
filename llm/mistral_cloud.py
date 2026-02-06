@@ -36,7 +36,13 @@ class MistralCloudProvider(BaseLLMProvider):
     ) -> str:
         """Generate text using Mistral Cloud API with prompt injection protection."""
         # Sanitize and validate prompt
-        clean_prompt = PromptSanitizer.validate_and_sanitize(prompt, raise_on_unsafe=False)
+        try:
+            clean_prompt = PromptSanitizer.validate_and_sanitize(prompt, raise_on_unsafe=True)
+        except ValueError as e:
+            raise LLMException(
+                "Prompt blocked by security policy",
+                details={"provider": "mistral_cloud", "reason": str(e)},
+            )
 
         # Use default system prompt if none provided
         if system_prompt is None:

@@ -5,14 +5,25 @@ services:
   postgres:
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    ports: []
     secrets:
       - db_password
+
+  redis:
+    ports: []
 
   temporal:
     environment:
       - POSTGRES_PWD_FILE=/run/secrets/db_password
+    ports: []
     secrets:
       - db_password
+
+  temporal-ui:
+    ports: []
+
+  ollama:
+    ports: []
 
   api:
     environment:

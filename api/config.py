@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Any
 
-from pydantic import Field, PostgresDsn, RedisDsn, field_validator
+from pydantic import Field, PostgresDsn, RedisDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,7 +29,7 @@ class Settings(BaseSettings):
 
     # Database
     database_url: PostgresDsn = Field(
-        default="postgresql+asyncpg://eki_user:eki_password@localhost:5432/eki_db",
+        default="postgresql+asyncpg://eki_user:replace-me@localhost:5432/eki_db",
         description="PostgreSQL connection URL",
     )
     database_pool_size: int = Field(default=20, description="Database connection pool size")
@@ -53,7 +53,7 @@ class Settings(BaseSettings):
 
     # Security
     api_secret_key: str = Field(
-        default="change-me-in-production-min-32-chars",
+        default="replace-this-secret-key-with-at-least-32-characters",
         description="Secret key for token generation",
     )
     api_token_expire_minutes: int = Field(default=60, description="Access token expiration time")
@@ -66,6 +66,17 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = Field(default=True, description="Enable rate limiting")
     rate_limit_per_minute: int = Field(default=60, description="API calls per minute per client")
     rate_limit_per_hour: int = Field(default=1000, description="API calls per hour per client")
+    trust_proxy_headers: bool = Field(
+        default=False,
+        description="Trust X-Forwarded-For headers from trusted proxy IPs only",
+    )
+    trusted_proxy_ips: list[str] = Field(
+        default_factory=list,
+        description="Comma-separated list of trusted reverse proxy IP addresses",
+    )
+
+    # Operational endpoint controls
+    metrics_enabled: bool = Field(default=True, description="Enable Prometheus metrics endpoint")
 
     # eProjekt Integration (for future milestones)
     epro_base_url: str = Field(
@@ -110,15 +121,45 @@ class Settings(BaseSettings):
             return [origin.strip() for origin in v.split(",")]
         return v
 
+    @field_validator("trusted_proxy_ips", mode="before")
+    @classmethod
+    def parse_trusted_proxy_ips(cls, v: Any) -> list[str]:
+        """Parse trusted proxy IPs from comma-separated string or list."""
+        if isinstance(v, str):
+            return [ip.strip() for ip in v.split(",") if ip.strip()]
+        return v
+
     @property
     def is_production(self) -> bool:
         """Check if running in production."""
-        return self.env == "prod"
+        return self.env in {"prod", "production"}
 
     @property
     def is_development(self) -> bool:
         """Check if running in development."""
         return self.env == "development"
+
+    @model_validator(mode="after")
+    def validate_production_security(self) -> "Settings":
+        """Enforce secure settings when running in production."""
+        if not self.is_production:
+            return self
+
+        insecure_defaults = {
+            "replace-this-secret-key-with-at-least-32-characters",
+            "change-me-in-production-min-32-chars",
+        }
+        if len(self.api_secret_key) < 32 or self.api_secret_key in insecure_defaults:
+            raise ValueError("API_SECRET_KEY must be a strong non-default secret in production")
+
+        database_url_str = str(self.database_url)
+        if "eki_password" in database_url_str or "replace-me" in database_url_str:
+            raise ValueError("DATABASE_URL contains insecure placeholder credentials")
+
+        if self.debug:
+            raise ValueError("DEBUG must be false in production")
+
+        return self
 
 
 @lru_cache

@@ -4,15 +4,17 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, status
+from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from prometheus_client import make_asgi_app
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from api.config import get_settings
+from api.dependencies import verify_api_key
 from api.routers import health, security
 from core.exceptions import EKIException
+from core.db_models import ApiKeyModel
 from core.models import ErrorDetail, ErrorResponse
 
 # Configure logging
@@ -126,9 +128,12 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
 app.include_router(health.router, tags=["Health"])
 app.include_router(security.router, prefix="/v1/security", tags=["Security"])
 
-# Mount Prometheus metrics endpoint
-metrics_app = make_asgi_app()
-app.mount("/metrics", metrics_app)
+if settings.metrics_enabled:
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics_endpoint(_api_key: ApiKeyModel = Depends(verify_api_key)) -> Response:
+        """Prometheus metrics endpoint protected by API key authentication."""
+        return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/", include_in_schema=False)

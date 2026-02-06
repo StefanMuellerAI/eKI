@@ -3,11 +3,13 @@
 from datetime import datetime
 
 import redis.asyncio as aioredis
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from temporalio.client import Client as TemporalClient
 
-from api.dependencies import get_db, get_redis, get_temporal_client
+from api.dependencies import get_db, get_redis, get_temporal_client, verify_api_key
+from core.db_models import ApiKeyModel
 from core.models import HealthResponse, ReadinessResponse
 
 router = APIRouter()
@@ -42,9 +44,11 @@ async def health_check() -> HealthResponse:
     description="Checks if the service is ready to handle requests by verifying all dependencies.",
 )
 async def readiness_check(
+    http_response: Response,
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis),
     temporal: TemporalClient = Depends(get_temporal_client),
+    _api_key: ApiKeyModel = Depends(verify_api_key),
 ) -> ReadinessResponse:
     """
     Readiness probe endpoint.
@@ -60,7 +64,7 @@ async def readiness_check(
 
     # Check database
     try:
-        await db.execute("SELECT 1")
+        await db.execute(text("SELECT 1"))
         services_status["database"] = True
     except Exception:
         services_status["database"] = False
@@ -83,12 +87,15 @@ async def readiness_check(
     all_ready = all(services_status.values())
     overall_status = "ready" if all_ready else "not_ready"
 
-    response = ReadinessResponse(
+    readiness_response = ReadinessResponse(
         status=overall_status,
         timestamp=datetime.utcnow(),
         services=services_status,
     )
 
-    # Return 503 if not all services are ready
+    if not all_ready:
+        # Liveness stays public; readiness is an authenticated operator endpoint.
+        # Return 503 to integrate with health checks.
+        http_response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
-    return response
+    return readiness_response
