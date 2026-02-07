@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FinalDraft DocumentType="Script" Template="No" Version="4">
+  <Content>
+    <Paragraph Type="Scene Heading" Number="1">
+      <Text>INT. OFFICE - DAY</Text>
+      <SceneProperties Title="OFFICE" />
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>A woman sits at her desk, reviewing documents.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>ANNA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>We need to finish this before the deadline.</Text>
+    </Paragraph>
+  </Content>
+</FinalDraft>

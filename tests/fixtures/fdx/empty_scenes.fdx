@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FinalDraft DocumentType="Script" Template="No" Version="4">
+  <Content>
+    <Paragraph Type="Scene Heading" Number="1">
+      <Text>INT. EMPTY ROOM - DAY</Text>
+    </Paragraph>
+
+    <Paragraph Type="Scene Heading" Number="2">
+      <Text>EXT. EMPTY FIELD - NIGHT</Text>
+    </Paragraph>
+
+    <Paragraph Type="Scene Heading" Number="3">
+      <Text>INT. EMPTY HALLWAY - DAWN</Text>
+    </Paragraph>
+  </Content>
+</FinalDraft>

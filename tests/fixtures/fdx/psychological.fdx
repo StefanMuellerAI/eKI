@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FinalDraft DocumentType="Script" Template="No" Version="4">
+  <Content>
+    <Paragraph Type="Scene Heading" Number="1">
+      <Text>INT. THERAPIST OFFICE - DAY</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>SARAH sits across from her therapist, tears streaming down her face. She describes the abuse she suffered as a child.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>SARAH</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>He hit me every time I spoke up. I was only seven.</Text>
+    </Paragraph>
+
+    <Paragraph Type="Scene Heading" Number="2">
+      <Text>INT. HOSPITAL ROOM - NIGHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>A family gathers around a dying man. The heart monitor beeps slowly, then flatlines. The wife collapses in grief. Children cry.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>WIFE</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Please don't leave me. Please.</Text>
+    </Paragraph>
+
+    <Paragraph Type="Scene Heading" Number="3">
+      <Text>INT. BEDROOM - NIGHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>An intimate scene between two characters. This requires an intimacy coordinator on set. Closed set protocol must be observed. Only essential crew present.</Text>
+    </Paragraph>
+
+    <Paragraph Type="Scene Heading" Number="4">
+      <Text>EXT. CEMETERY - DAY</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>A funeral service. Rain falls on the mourners. A child places a flower on the casket.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>CHILD</Text>
+    </Paragraph>
+    <Paragraph Type="Parenthetical">
+      <Text>(whispering)</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Goodbye, Mama.</Text>
+    </Paragraph>
+  </Content>
+</FinalDraft>

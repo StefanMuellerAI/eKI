@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FinalDraft DocumentType="Script" Template="No" Version="4">
+  <Content>
+    <Paragraph Type="Scene Heading" Number="1">
+      <Text>EXT. PARK - DAY</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Children play on the swings while parents watch from benches.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>MARIA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>It's such a beautiful day.</Text>
+    </Paragraph>
+
+    <Paragraph Type="Scene Heading" Number="2">
+      <Text>INT. RESTAURANT - EVENING</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>A couple sits at a candlelit table near the window.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>DAVID</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>I have something important to tell you.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>MARIA</Text>
+    </Paragraph>
+    <Paragraph Type="Parenthetical">
+      <Text>(nervous)</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>What is it?</Text>
+    </Paragraph>
+
+    <Paragraph Type="Scene Heading" Number="3">
+      <Text>EXT. STREET - NIGHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Rain pours down on the empty street. A lone figure walks under an umbrella.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>DAVID</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>I should have told her sooner.</Text>
+    </Paragraph>
+
+    <Paragraph Type="Scene Heading" Number="4">
+      <Text>INT. APARTMENT - NIGHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Maria sits on the couch, staring at her phone.</Text>
+    </Paragraph>
+
+    <Paragraph Type="Scene Heading" Number="5">
+      <Text>EXT. BEACH - DAWN</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>The sun rises over the ocean. Maria and David walk along the shore.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>MARIA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Let's start over.</Text>
+    </Paragraph>
+  </Content>
+</FinalDraft>

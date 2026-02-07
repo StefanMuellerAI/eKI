@@ -57,6 +57,9 @@ secrets/*.pem
 # Logs
 *.log
 
+# PDF documents (Pflichtenheft etc. -- nicht ins Repo)
+*.pdf
+
 # OS
 .DS_Store
 Thumbs.db

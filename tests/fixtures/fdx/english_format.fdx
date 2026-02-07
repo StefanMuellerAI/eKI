@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FinalDraft DocumentType="Script" Template="No" Version="4">
+  <Content>
+    <Paragraph Type="Scene Heading" Number="1">
+      <Text>INT. POLICE STATION - DAY</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Detective JONES reviews case files at his desk.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>JONES</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Something doesn't add up here.</Text>
+    </Paragraph>
+
+    <Paragraph Type="Scene Heading" Number="2">
+      <Text>EXT. ALLEY - NIGHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Jones follows a suspect into a dark alley.</Text>
+    </Paragraph>
+    <Paragraph Type="Transition">
+      <Text>CUT TO:</Text>
+    </Paragraph>
+
+    <Paragraph Type="Scene Heading" Number="3">
+      <Text>INT./EXT. CAR - CONTINUOUS</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Jones gets into his car and starts the engine.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>JONES</Text>
+    </Paragraph>
+    <Paragraph Type="Parenthetical">
+      <Text>(into radio)</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Dispatch, I need backup at the corner of 5th and Main.</Text>
+    </Paragraph>
+  </Content>
+</FinalDraft>

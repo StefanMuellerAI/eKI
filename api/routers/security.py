@@ -1,15 +1,40 @@
-"""Security check endpoints."""
+"""Security check endpoints.
 
+Supports both JSON (base64-encoded script_content) and multipart/form-data
+file uploads.  Sensitive data is stored in the encrypted SecureBuffer (Redis)
+and only opaque reference keys are passed to Temporal workflows.
+"""
+
+import base64
+import logging
 import uuid
 from datetime import datetime, timedelta
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+import redis.asyncio as aioredis
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Path,
+    Request,
+    UploadFile,
+    status,
+)
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from temporalio.client import Client as TemporalClient
 
 from api.config import get_settings
-from api.dependencies import get_actor_headers, get_db, get_temporal_client, verify_api_key
+from api.dependencies import (
+    get_actor_headers,
+    get_db,
+    get_redis,
+    get_temporal_client,
+    verify_api_key,
+)
 from api.rate_limiting import rate_limit_combined
 from core.db_models import ApiKeyModel, JobMetadata, ReportMetadata
 from core.models import (
@@ -19,13 +44,110 @@ from core.models import (
     JobStatusResponse,
     ReportResponse,
     RiskLevel,
+    ScriptFormat,
     SecurityCheckRequest,
     SecurityReport,
     SyncSecurityCheckResponse,
 )
+from services.secure_buffer import SecureBuffer
 from workflows.security_check import SecurityCheckWorkflow
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+_MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _get_buffer(redis_client: aioredis.Redis) -> SecureBuffer:
+    settings = get_settings()
+    return SecureBuffer(
+        redis_client,
+        secret_key=settings.api_secret_key,
+        default_ttl=settings.buffer_ttl_seconds,
+    )
+
+
+async def _resolve_request(
+    request: Request,
+) -> tuple[str, ScriptFormat, str, dict[str, Any], int]:
+    """Inspect Content-Type and return (b64_content, format, project_id, metadata, priority).
+
+    Supports:
+    - ``application/json``: expects ``SecurityCheckRequest`` / ``AsyncSecurityCheckRequest``
+    - ``multipart/form-data``: expects ``file`` field + optional form fields
+    """
+    ct = (request.headers.get("content-type") or "").lower()
+
+    if "multipart/form-data" in ct:
+        return await _resolve_multipart(request)
+    # Default: JSON body
+    return await _resolve_json(request)
+
+
+async def _resolve_json(
+    request: Request,
+) -> tuple[str, ScriptFormat, str, dict[str, Any], int]:
+    body = await request.json()
+    # Validate through Pydantic
+    req = SecurityCheckRequest(**body)
+    priority = body.get("priority", 5)
+    return req.script_content, req.script_format, req.project_id, req.metadata, priority
+
+
+async def _resolve_multipart(
+    request: Request,
+) -> tuple[str, ScriptFormat, str, dict[str, Any], int]:
+    form = await request.form()
+    upload = form.get("file")
+    if upload is None or not hasattr(upload, "read"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Multipart request must include a 'file' field",
+        )
+
+    raw = await upload.read()
+
+    if len(raw) > _MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File exceeds maximum size of {_MAX_UPLOAD_SIZE} bytes",
+        )
+    if not raw:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded file is empty",
+        )
+
+    filename = (getattr(upload, "filename", "") or "").lower()
+    if filename.endswith(".fdx"):
+        fmt = ScriptFormat.FDX
+    elif filename.endswith(".pdf"):
+        fmt = ScriptFormat.PDF
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported file type. Allowed: .fdx, .pdf",
+        )
+
+    b64 = base64.b64encode(raw).decode("ascii")
+    project_id = str(form.get("project_id", ""))
+    sf = str(form.get("script_format", ""))
+    if sf:
+        fmt = ScriptFormat(sf)
+    priority = int(form.get("priority", 5))
+
+    return b64, fmt, project_id, {}, priority
+
+
+# ---------------------------------------------------------------------------
+# Sync endpoint
+# ---------------------------------------------------------------------------
 
 
 @router.post(
@@ -33,28 +155,28 @@ router = APIRouter()
     response_model=SyncSecurityCheckResponse,
     status_code=status.HTTP_200_OK,
     summary="Synchronous security check",
-    description="Perform a synchronous security check for scripts ≤1MB or ≤50 scenes.",
+    description=(
+        "Perform a synchronous security check for scripts ≤1 MB or ≤50 scenes. "
+        "Accepts JSON (base64 script_content) or multipart/form-data file upload."
+    ),
     dependencies=[Depends(rate_limit_combined)],
 )
 async def security_check_sync(
-    request: SecurityCheckRequest,
+    request: Request,
     actor_info: dict[str, str | None] = Depends(get_actor_headers),
 ) -> SyncSecurityCheckResponse:
-    """
-    Synchronous security check endpoint (stub for M01).
+    """Synchronous security check endpoint.
 
     Accepts a script and returns a security analysis report immediately.
-    Suitable for small scripts (≤1MB, ≤50 scenes).
-
-    In M01, this returns a mock report. Real implementation in later milestones.
     """
-    # Stub: Create a mock report
+    b64_content, fmt, proj_id, metadata, _ = await _resolve_request(request)
+
     report_id = uuid.uuid4()
 
     mock_report = SecurityReport(
         report_id=report_id,
-        project_id=request.project_id,
-        script_format=request.script_format,
+        project_id=proj_id or "unknown",
+        script_format=fmt,
         created_at=datetime.utcnow(),
         risk_summary={
             RiskLevel.CRITICAL: 0,
@@ -70,7 +192,7 @@ async def security_check_sync(
                 "scene_number": None,
                 "risk_level": RiskLevel.INFO,
                 "category": "stub",
-                "description": "This is a stub response for M01. Real analysis in later milestones.",
+                "description": "Stub response. Real analysis in later milestones.",
                 "recommendation": "No action required for stub data.",
                 "confidence": 1.0,
                 "line_reference": None,
@@ -90,39 +212,54 @@ async def security_check_sync(
     )
 
 
+# ---------------------------------------------------------------------------
+# Async endpoint
+# ---------------------------------------------------------------------------
+
+
 @router.post(
     "/check:async",
     response_model=AsyncSecurityCheckResponse,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Asynchronous security check",
-    description="Start an asynchronous security check for large scripts.",
+    description=(
+        "Start an asynchronous security check for large scripts. "
+        "Accepts JSON (base64 script_content) or multipart/form-data file upload."
+    ),
     dependencies=[Depends(rate_limit_combined)],
 )
 async def security_check_async(
-    request: AsyncSecurityCheckRequest,
+    request: Request,
     temporal_client: TemporalClient = Depends(get_temporal_client),
+    redis_client: aioredis.Redis = Depends(get_redis),
     actor_info: dict[str, str | None] = Depends(get_actor_headers),
 ) -> AsyncSecurityCheckResponse:
-    """
-    Asynchronous security check endpoint.
+    """Asynchronous security check endpoint.
 
-    Starts a Temporal workflow for processing large scripts.
-    Returns a job ID for tracking progress.
+    Stores script content in an encrypted Redis buffer and starts a
+    Temporal workflow that receives only the buffer reference key.
     """
     settings = get_settings()
+    buffer = _get_buffer(redis_client)
+
+    b64_content, fmt, proj_id, metadata, priority = await _resolve_request(request)
+
     job_id = uuid.uuid4()
     report_id = uuid.uuid4()
 
+    # Store script content encrypted in Redis -- NOT in Temporal
+    ref_key = await buffer.store({"script_content": b64_content})
+
+    # Temporal receives only metadata + ref_key
     job_data = {
-        "script_content": request.script_content,
-        "script_format": request.script_format.value,
-        "project_id": request.project_id,
+        "ref_key": ref_key,
+        "script_format": fmt.value,
+        "project_id": proj_id or "unknown",
         "job_id": str(job_id),
         "report_id": str(report_id),
-        "callback_url": str(request.callback_url) if request.callback_url else None,
         "user_id": actor_info.get("user_id"),
-        "priority": request.priority,
-        "metadata": request.metadata,
+        "priority": priority,
+        "metadata": metadata,
     }
 
     await temporal_client.start_workflow(
@@ -142,6 +279,11 @@ async def security_check_async(
     )
 
 
+# ---------------------------------------------------------------------------
+# Job status & report endpoints (unchanged from M01)
+# ---------------------------------------------------------------------------
+
+
 @router.get(
     "/jobs/{job_id}",
     response_model=JobStatusResponse,
@@ -155,15 +297,7 @@ async def get_job_status(
     api_key: ApiKeyModel = Depends(verify_api_key),
     db: AsyncSession = Depends(get_db),
 ) -> JobStatusResponse:
-    """
-    Get job status endpoint with ownership verification.
-
-    Returns the current status of an asynchronous security check job.
-    Only the user who created the job can access it (prevents IDOR attacks).
-
-    In M01, this returns stub data. Real status tracking in later milestones.
-    """
-    # Check ownership to prevent IDOR
+    """Get job status endpoint with ownership verification."""
     stmt = select(JobMetadata).where(
         JobMetadata.job_id == job_id,
         JobMetadata.user_id == api_key.user_id,
@@ -177,7 +311,6 @@ async def get_job_status(
             detail="Job not found or access denied",
         )
 
-    # Stub: Return mock job status (in real implementation, use job data)
     return JobStatusResponse(
         job_id=job_id,
         status=JobStatus.COMPLETED,
@@ -203,16 +336,7 @@ async def get_report(
     api_key: ApiKeyModel = Depends(verify_api_key),
     db: AsyncSession = Depends(get_db),
 ) -> ReportResponse:
-    """
-    Get report endpoint with ownership verification and one-shot enforcement.
-
-    Retrieves a security report by ID. This is a one-shot operation -
-    the URL becomes invalid after the first successful retrieval.
-    Only the user who created the report can access it (prevents IDOR attacks).
-
-    In M01, this returns stub data. Real report storage/retrieval in later milestones.
-    """
-    # Atomically enforce one-shot retrieval to avoid race conditions.
+    """Get report endpoint with ownership verification and one-shot enforcement."""
     retrieved_at = datetime.utcnow()
     update_stmt = (
         update(ReportMetadata)
@@ -221,10 +345,7 @@ async def get_report(
             ReportMetadata.user_id == api_key.user_id,
             ReportMetadata.is_retrieved.is_(False),
         )
-        .values(
-            is_retrieved=True,
-            retrieved_at=retrieved_at,
-        )
+        .values(is_retrieved=True, retrieved_at=retrieved_at)
     )
     update_result = await db.execute(update_stmt)
 
@@ -241,7 +362,6 @@ async def get_report(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Report not found or access denied",
             )
-
         raise HTTPException(
             status_code=status.HTTP_410_GONE,
             detail="Report already retrieved. URL is no longer valid.",
@@ -249,7 +369,6 @@ async def get_report(
 
     await db.commit()
 
-    # Stub: Return mock report (in real implementation, fetch from Redis/storage)
     mock_report = SecurityReport(
         report_id=report_id,
         project_id="stub-project-id",

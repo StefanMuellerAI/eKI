@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FinalDraft DocumentType="Script" Template="No" Version="4">
+  <Content>
+    <Paragraph Type="Scene Heading" Number="1">
+      <Text>INNEN. BUERO - TAG</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Ein Mann sitzt am Schreibtisch und telefoniert.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>KARL</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Ja, ich bin gleich fertig.</Text>
+    </Paragraph>
+
+    <Paragraph Type="Scene Heading" Number="2">
+      <Text>AUSSEN. WALD - NACHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Eine Frau rennt durch den dunklen Wald. Zweige peitschen ihr ins Gesicht.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>LENA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Hilfe! Ist da jemand?</Text>
+    </Paragraph>
+
+    <Paragraph Type="Scene Heading" Number="3">
+      <Text>INNEN/AUSSEN. AUTO - DAEMMERUNG</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Karl faehrt durch die Daemmerung. Im Rueckspiegel sieht er einen Verfolger.</Text>
+    </Paragraph>
+  </Content>
+</FinalDraft>

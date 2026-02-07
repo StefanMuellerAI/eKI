@@ -1,0 +1,665 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FinalDraft DocumentType="Script" Template="No" Version="4">
+  <Content>
+    <Paragraph Type="Scene Heading" Number="1">
+      <Text>INT. PRISON CELL - DUSK</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>The camera pans across the scene, revealing hidden details.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>MARIA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>It's too dangerous. We go back.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="2">
+      <Text>INT. BEDROOM - NIGHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>People hurry past, lost in their own thoughts.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>DAVID</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Trust me on this one.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="3">
+      <Text>EXT. FOREST - NIGHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Wind howls through the space, carrying dust and debris.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>SARAH</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>There's something you should know.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="4">
+      <Text>INT. HALLWAY - NIGHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>A tense atmosphere fills the air as everyone waits.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>DAVID</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>I didn't expect to see you here.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="5">
+      <Text>EXT. GARDEN - NIGHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>The camera pans across the scene, revealing hidden details.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>MAX</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>We need to move now.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="6">
+      <Text>EXT. STREET - MORNING</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Wind howls through the space, carrying dust and debris.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>MARIA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>It's too dangerous. We go back.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="7">
+      <Text>EXT. GARDEN - DAY</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>A tense atmosphere fills the air as everyone waits.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>ANNA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Trust me on this one.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="8">
+      <Text>EXT. ROOFTOP - DAY</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>The camera pans across the scene, revealing hidden details.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>ANNA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>We need to move now.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="9">
+      <Text>INT. LIVING ROOM - DUSK</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Wind howls through the space, carrying dust and debris.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>LENA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>I didn't expect to see you here.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="10">
+      <Text>EXT. BRIDGE - EVENING</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>A tense atmosphere fills the air as everyone waits.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>MAX</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>It's too dangerous. We go back.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="11">
+      <Text>EXT. PARKING LOT - MORNING</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>People hurry past, lost in their own thoughts.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>LENA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Trust me on this one.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="12">
+      <Text>INT. LIBRARY - EVENING</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>The room is quiet. Only the ticking of a clock breaks the silence.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>MAX</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>I didn't expect to see you here.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="13">
+      <Text>INT. LIVING ROOM - NIGHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>A tense atmosphere fills the air as everyone waits.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>MARIA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>We need to move now.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="14">
+      <Text>INT. PRISON CELL - DUSK</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>The camera pans across the scene, revealing hidden details.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>LENA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Everything is going to be fine.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="15">
+      <Text>EXT. GARDEN - DAWN</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Wind howls through the space, carrying dust and debris.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>LENA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>We need to move now.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="16">
+      <Text>INT. LIBRARY - NIGHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>People hurry past, lost in their own thoughts.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>LENA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>It's too dangerous. We go back.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="17">
+      <Text>INT. OFFICE - DAY</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>People hurry past, lost in their own thoughts.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>KARL</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Everything is going to be fine.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="18">
+      <Text>EXT. GARDEN - DAWN</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Wind howls through the space, carrying dust and debris.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>DAVID</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>We need to move now.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="19">
+      <Text>EXT. BRIDGE - NIGHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>A tense atmosphere fills the air as everyone waits.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>LENA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>I didn't expect to see you here.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="20">
+      <Text>INT. OFFICE - DAY</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>A tense atmosphere fills the air as everyone waits.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>KARL</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>There's something you should know.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="21">
+      <Text>EXT. BRIDGE - DAWN</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>A tense atmosphere fills the air as everyone waits.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>MARIA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>We don't have much time left.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="22">
+      <Text>EXT. STREET - EVENING</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>People hurry past, lost in their own thoughts.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>LENA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>There's something you should know.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="23">
+      <Text>INT. BEDROOM - NIGHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>A tense atmosphere fills the air as everyone waits.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>ANNA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>I didn't expect to see you here.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="24">
+      <Text>EXT. STREET - MORNING</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>A tense atmosphere fills the air as everyone waits.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>ANNA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Everything is going to be fine.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="25">
+      <Text>EXT. GARDEN - DUSK</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>People hurry past, lost in their own thoughts.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>MARIA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Everything is going to be fine.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="26">
+      <Text>INT. LIVING ROOM - DUSK</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>People hurry past, lost in their own thoughts.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>KARL</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Everything is going to be fine.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="27">
+      <Text>EXT. PARK - EVENING</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>A tense atmosphere fills the air as everyone waits.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>SARAH</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Everything is going to be fine.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="28">
+      <Text>INT. HOSPITAL - NIGHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>A tense atmosphere fills the air as everyone waits.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>MARIA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Trust me on this one.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="29">
+      <Text>INT. ELEVATOR - NIGHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>The camera pans across the scene, revealing hidden details.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>DAVID</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>It's too dangerous. We go back.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="30">
+      <Text>INT. HALLWAY - MORNING</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>A tense atmosphere fills the air as everyone waits.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>LENA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>There's something you should know.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="31">
+      <Text>EXT. STREET - DAY</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>People hurry past, lost in their own thoughts.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>ANNA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>I didn't expect to see you here.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="32">
+      <Text>INT. CLASSROOM - NIGHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Wind howls through the space, carrying dust and debris.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>MAX</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>I didn't expect to see you here.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="33">
+      <Text>EXT. ROOFTOP - MORNING</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>A tense atmosphere fills the air as everyone waits.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>MAX</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>It's too dangerous. We go back.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="34">
+      <Text>INT. LIVING ROOM - NIGHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>The camera pans across the scene, revealing hidden details.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>ANNA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>It's too dangerous. We go back.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="35">
+      <Text>INT. KITCHEN - DUSK</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>The room is quiet. Only the ticking of a clock breaks the silence.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>LENA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Trust me on this one.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="36">
+      <Text>INT. KITCHEN - EVENING</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Wind howls through the space, carrying dust and debris.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>SARAH</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>We don't have much time left.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="37">
+      <Text>EXT. ROOFTOP - DAWN</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Wind howls through the space, carrying dust and debris.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>DAVID</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>We don't have much time left.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="38">
+      <Text>EXT. STREET - MORNING</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Wind howls through the space, carrying dust and debris.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>MAX</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>It's too dangerous. We go back.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="39">
+      <Text>INT. PRISON CELL - MORNING</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>People hurry past, lost in their own thoughts.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>MARIA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>There's something you should know.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="40">
+      <Text>EXT. BRIDGE - DAWN</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>The room is quiet. Only the ticking of a clock breaks the silence.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>SARAH</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>There's something you should know.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="41">
+      <Text>INT. KITCHEN - MORNING</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>The camera pans across the scene, revealing hidden details.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>ANNA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>We need to move now.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="42">
+      <Text>INT. LIVING ROOM - EVENING</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>A tense atmosphere fills the air as everyone waits.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>KARL</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>It's too dangerous. We go back.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="43">
+      <Text>INT. HALLWAY - MORNING</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>People hurry past, lost in their own thoughts.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>LENA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>There's something you should know.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="44">
+      <Text>EXT. STREET - DUSK</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>The room is quiet. Only the ticking of a clock breaks the silence.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>JONES</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>I didn't expect to see you here.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="45">
+      <Text>INT. KITCHEN - EVENING</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Wind howls through the space, carrying dust and debris.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>MAX</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>It's too dangerous. We go back.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="46">
+      <Text>EXT. PARKING LOT - NIGHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>People hurry past, lost in their own thoughts.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>LENA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>We don't have much time left.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="47">
+      <Text>EXT. GARDEN - EVENING</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>People hurry past, lost in their own thoughts.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>MARIA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>There's something you should know.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="48">
+      <Text>EXT. BEACH - MORNING</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>People hurry past, lost in their own thoughts.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>MARIA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>We don't have much time left.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="49">
+      <Text>EXT. STREET - DAY</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>The room is quiet. Only the ticking of a clock breaks the silence.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>MARIA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>There's something you should know.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="50">
+      <Text>INT. LIVING ROOM - MORNING</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Wind howls through the space, carrying dust and debris.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>JONES</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>There's something you should know.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="51">
+      <Text>EXT. FOREST - DAY</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>The room is quiet. Only the ticking of a clock breaks the silence.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>SARAH</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>We don't have much time left.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="52">
+      <Text>EXT. GARDEN - DAWN</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Wind howls through the space, carrying dust and debris.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>MARIA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>We don't have much time left.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="53">
+      <Text>INT. ELEVATOR - MORNING</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>A tense atmosphere fills the air as everyone waits.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>JONES</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>It's too dangerous. We go back.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="54">
+      <Text>EXT. FOREST - DUSK</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>People hurry past, lost in their own thoughts.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>JONES</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>We don't have much time left.</Text>
+    </Paragraph>
+    <Paragraph Type="Scene Heading" Number="55">
+      <Text>EXT. STREET - DAY</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Wind howls through the space, carrying dust and debris.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>LENA</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>I didn't expect to see you here.</Text>
+    </Paragraph>
+  </Content>
+</FinalDraft>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FinalDraft DocumentType="Script">
+  <Content>
+    <Paragraph Type="Scene Heading">
+      <Text>INT. ROOM - DAY</Text>
+    </Paragraph>
+    <!-- Missing closing tag for Content -->
+    <Paragraph Type="Action">
+      <Text>This XML is malformed.</Text>
+</FinalDraft>

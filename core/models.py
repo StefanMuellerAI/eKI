@@ -39,6 +39,80 @@ class ScriptFormat(str, Enum):
     PDF = "pdf"  # PDF with OCR support
 
 
+# ---------------------------------------------------------------------------
+# Transient Scene Models (M02) -- never persisted to DB
+# ---------------------------------------------------------------------------
+
+
+class TimeOfDay(str, Enum):
+    """Time-of-day designation extracted from scene headings."""
+
+    DAY = "DAY"
+    NIGHT = "NIGHT"
+    DAWN = "DAWN"
+    DUSK = "DUSK"
+    MORNING = "MORNING"
+    EVENING = "EVENING"
+    CONTINUOUS = "CONTINUOUS"
+    UNKNOWN = "UNKNOWN"
+
+
+class LocationType(str, Enum):
+    """Interior/exterior designation from scene headings."""
+
+    INT = "INT"
+    EXT = "EXT"
+    INT_EXT = "INT/EXT"
+    UNKNOWN = "UNKNOWN"
+
+
+class DialogueLine(BaseModel):
+    """A single dialogue line spoken by a character."""
+
+    character: str = Field(..., description="Speaking character name")
+    parenthetical: str | None = Field(None, description="Parenthetical direction")
+    text: str = Field(..., description="Dialogue text")
+
+
+class ParsedScene(BaseModel):
+    """A single parsed scene from a screenplay."""
+
+    scene_id: UUID = Field(..., description="Unique scene identifier")
+    number: str | None = Field(None, description="Scene number from FDX")
+    heading: str = Field(..., description="Original scene heading text")
+    location: str = Field(..., description="Extracted location name")
+    location_type: LocationType = Field(..., description="INT/EXT designation")
+    time_of_day: TimeOfDay = Field(..., description="Time of day")
+    characters: list[str] = Field(default_factory=list, description="Speaking characters")
+    action_text: str = Field(default="", description="Combined action/description text")
+    dialogue: list[DialogueLine] = Field(default_factory=list, description="Dialogue lines")
+    text: str = Field(default="", description="Full scene text (heading + action + dialogue)")
+
+
+class CharacterInfo(BaseModel):
+    """Aggregated character information across the script."""
+
+    name: str = Field(..., description="Character name")
+    scene_appearances: list[str] = Field(
+        default_factory=list, description="Scene IDs where character appears"
+    )
+
+
+class ParsedScript(BaseModel):
+    """Complete parsed screenplay -- transient, never persisted."""
+
+    script_id: UUID = Field(..., description="Unique script identifier")
+    title: str | None = Field(None, description="Script title if available")
+    format: ScriptFormat = Field(..., description="Source format (fdx/pdf)")
+    total_scenes: int = Field(..., description="Total number of scenes")
+    scenes: list[ParsedScene] = Field(default_factory=list, description="Parsed scenes")
+    characters: list[CharacterInfo] = Field(
+        default_factory=list, description="Character index"
+    )
+    parsing_time_seconds: float = Field(..., description="Time taken to parse")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Parser metadata")
+
+
 # Request Models
 
 

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FinalDraft DocumentType="Script" Template="No" Version="4">
+  <Content>
+    <Paragraph Type="Scene Heading">
+      <Text>INT. KITCHEN - MORNING</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>A man makes coffee.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>TOM</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Good morning.</Text>
+    </Paragraph>
+
+    <Paragraph Type="Scene Heading">
+      <Text>EXT. GARDEN - DAY</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Tom steps outside and stretches.</Text>
+    </Paragraph>
+  </Content>
+</FinalDraft>

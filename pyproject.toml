@@ -56,6 +56,12 @@ dependencies = [
     "python-json-logger>=2.0.7",
     "structlog>=24.1.0",
 
+    # XML Security
+    "defusedxml>=0.7.1",
+
+    # Encryption (Fernet for SecureBuffer)
+    "cryptography>=42.0.0",
+
     # Utilities
     "python-dateutil>=2.8.2",
     "pytz>=2023.3",
@@ -95,18 +101,18 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["api*", "core*", "services*", "workflows*", "worker*", "llm*", "db*"]
+include = ["api*", "core*", "services*", "workflows*", "worker*", "llm*", "db*", "parsers*"]
 exclude = ["tests*", "docker*", "postman*", "secrets*", "openapi*", "scripts*"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = "-ra -q --strict-markers --cov=api --cov=core --cov=services --cov=workflows"
+addopts = "-ra -q --strict-markers --cov=api --cov=core --cov=services --cov=workflows --cov=parsers"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 pythonpath = ["."]
 
 [tool.coverage.run]
-source = ["api", "core", "services", "workflows", "worker"]
+source = ["api", "core", "services", "workflows", "worker", "parsers"]
 omit = ["tests/*", "*/migrations/*"]
 
 [tool.coverage.report]

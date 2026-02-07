@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FinalDraft DocumentType="Script" Template="No" Version="4">
+  <Content>
+    <Paragraph Type="Scene Heading" Number="1">
+      <Text>EXT. CLIFF EDGE - NIGHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>A stunt performer stands at the edge of a 15-meter cliff. Below, the dark water churns. Safety divers are positioned in the water. The performer checks the harness one last time, then jumps.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>STUNT COORDINATOR</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Clear the zone! Jump on my mark!</Text>
+    </Paragraph>
+
+    <Paragraph Type="Scene Heading" Number="2">
+      <Text>EXT. HIGHWAY - DAY</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Three cars race at high speed along the highway. The lead car swerves, narrowly avoiding a truck. Sparks fly as metal scrapes the guardrail. A massive explosion erupts behind them as a fuel tanker ignites.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>DRIVER</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Hold on tight!</Text>
+    </Paragraph>
+
+    <Paragraph Type="Scene Heading" Number="3">
+      <Text>INT. BURNING BUILDING - NIGHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Flames engulf the hallway. Smoke makes visibility near zero. A firefighter carries an unconscious child through the inferno. The ceiling collapses behind them. Fire special effects rigs line the walls.</Text>
+    </Paragraph>
+
+    <Paragraph Type="Scene Heading" Number="4">
+      <Text>EXT. ROOFTOP - DAY</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Two fighters engage in hand-to-hand combat on the roof of a 20-story building. One performer is thrown near the edge. A wire rig catches them at the last moment. Weapons are drawn - prop knives and a replica firearm.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>HERO</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>This ends now.</Text>
+    </Paragraph>
+  </Content>
+</FinalDraft>

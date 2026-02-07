@@ -1,4 +1,8 @@
-"""Temporal workflow for security check processing."""
+"""Temporal workflow for security check processing.
+
+Activities exchange encrypted Redis reference keys -- never raw screenplay
+content -- so that Temporal's workflow history contains only metadata.
+"""
 
 import logging
 from datetime import timedelta
@@ -20,8 +24,7 @@ logger = logging.getLogger(__name__)
 
 @workflow.defn(name="SecurityCheckWorkflow")
 class SecurityCheckWorkflow:
-    """
-    Main workflow for processing security checks.
+    """Main workflow for processing security checks.
 
     Orchestrates the following steps:
     1. Parse script content (FDX or PDF)
@@ -29,33 +32,30 @@ class SecurityCheckWorkflow:
     3. Generate structured report
     4. Deliver report to eProjekt (write-through)
 
-    Workflow execution timeout: 40 minutes (configurable)
+    All steps pass only Redis reference keys for sensitive data.
     """
 
     @workflow.run
     async def run(self, job_data: dict[str, Any]) -> dict[str, Any]:
-        """
-        Execute the security check workflow.
+        """Execute the security check workflow.
 
         Args:
             job_data: Dict containing:
-                - script_content: Base64-encoded script
+                - ref_key: Redis reference to encrypted script content
                 - script_format: 'fdx' or 'pdf'
                 - project_id: eProjekt project ID
                 - job_id: Unique job identifier
+                - report_id: Pre-generated report ID
                 - callback_url: Optional callback URL
                 - user_id: Actor user ID
                 - metadata: Additional metadata
-
-        Returns:
-            Dict with workflow execution results.
         """
         workflow_id = workflow.info().workflow_id
-        logger.info(f"Starting security check workflow: {workflow_id}")
+        logger.info("Starting security check workflow: %s", workflow_id)
 
         try:
-            # Step 1: Parse script
-            parsed_data = await workflow.execute_activity(
+            # Step 1: Parse script (fetch from Redis, parse, store result in Redis)
+            parsed_result = await workflow.execute_activity(
                 parse_script_activity,
                 job_data,
                 start_to_close_timeout=timedelta(minutes=10),
@@ -67,12 +67,21 @@ class SecurityCheckWorkflow:
                 ),
             )
 
-            logger.info(f"Parsed {parsed_data.get('total_scenes', 0)} scenes")
+            logger.info(
+                "Parsed %d scenes in %.2fs",
+                parsed_result.get("total_scenes", 0),
+                parsed_result.get("parsing_time_seconds", 0),
+            )
 
             # Step 2: Analyze risks
-            analysis_data = await workflow.execute_activity(
+            analysis_input = {
+                "parsed_ref_key": parsed_result["parsed_ref_key"],
+                "project_id": job_data.get("project_id"),
+                "user_id": job_data.get("user_id"),
+            }
+            analysis_result = await workflow.execute_activity(
                 analyze_risks_activity,
-                parsed_data,
+                analysis_input,
                 start_to_close_timeout=timedelta(minutes=15),
                 retry_policy=RetryPolicy(
                     maximum_attempts=3,
@@ -82,7 +91,7 @@ class SecurityCheckWorkflow:
                 ),
             )
 
-            logger.info(f"Found {analysis_data.get('total_findings', 0)} risk findings")
+            logger.info("Found %d risk findings", analysis_result.get("total_findings", 0))
 
             # Step 3: Generate report
             job_metadata = {
@@ -91,10 +100,9 @@ class SecurityCheckWorkflow:
                 "user_id": job_data.get("user_id"),
                 "script_format": job_data.get("script_format"),
             }
-
-            report = await workflow.execute_activity(
+            report_result = await workflow.execute_activity(
                 generate_report_activity,
-                args=[analysis_data, job_metadata],
+                args=[analysis_result, job_metadata],
                 start_to_close_timeout=timedelta(minutes=5),
                 retry_policy=RetryPolicy(
                     maximum_attempts=3,
@@ -104,12 +112,12 @@ class SecurityCheckWorkflow:
                 ),
             )
 
-            logger.info(f"Generated report: {report.get('report_id')}")
+            logger.info("Generated report: %s", report_result.get("report_id"))
 
             # Step 4: Deliver report to eProjekt
             delivery_result = await workflow.execute_activity(
                 deliver_report_activity,
-                args=[report, job_data.get("callback_url")],
+                args=[report_result, job_data.get("callback_url")],
                 start_to_close_timeout=timedelta(minutes=5),
                 retry_policy=RetryPolicy(
                     maximum_attempts=5,
@@ -119,19 +127,18 @@ class SecurityCheckWorkflow:
                 ),
             )
 
-            logger.info(f"Report delivered: {delivery_result.get('delivered')}")
+            logger.info("Report delivered: %s", delivery_result.get("delivered"))
 
-            # Return workflow result
             return {
                 "status": "completed",
-                "report_id": report.get("report_id"),
-                "total_findings": report.get("total_findings"),
+                "report_id": report_result.get("report_id"),
+                "total_findings": report_result.get("total_findings"),
                 "delivered": delivery_result.get("delivered"),
                 "workflow_id": workflow_id,
             }
 
         except Exception as e:
-            logger.error(f"Workflow failed: {str(e)}", exc_info=True)
+            logger.error("Workflow failed: %s", str(e), exc_info=True)
             return {
                 "status": "failed",
                 "error": str(e),
