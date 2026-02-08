@@ -1,10 +1,10 @@
 {
   "info": {
-    "name": "eKI API v0.1 - Security Enhanced",
-    "description": "KI-gestützte Sicherheitsprüfung für Drehbücher - Filmakademie Baden-Württemberg\n\n**Security Features:**\n- Database-backed API Key Authentication\n- IDOR Prevention with Ownership Checks\n- Rate Limiting (60/min IP, 1000/hour API Key)\n- Input Validation (Base64, SSRF, SQL Injection)\n- Prompt Injection Protection\n\n**Setup:**\n1. Start services: `docker compose up -d`\n2. Create API Key: `python scripts/create_api_key.py`\n3. Set API_KEY variable in Postman\n4. Test endpoints",
+    "name": "eKI API v0.5 - Complete Security Analysis",
+    "description": "KI-gestuetzte Sicherheitspruefung fuer Drehbuecher - Filmakademie Baden-Wuerttemberg\n\n**Features (M01-M05):**\n- FDX + PDF Drehbuch-Parsing\n- LLM-gestuetzte Risikoanalyse (Ollama/Mistral)\n- Risiko-Taxonomie mit 23 Klassen und Scoring\n- JSON + PDF Report-Erzeugung\n- One-Shot Report-Abholung (Pull) oder Push an ePro\n- Idempotenz und Job-Status-Tracking\n\n**Setup:**\n1. Start services: docker compose up -d\n2. Run migration: docker compose exec api alembic upgrade head\n3. Create API Key: docker compose exec api python scripts/create_api_key.py --insert\n4. Set API_KEY variable in Postman",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
     "_exporter_id": "eki-api",
-    "version": "0.1.0-security"
+    "version": "0.5.0"
   },
   "auth": {
     "type": "bearer",
@@ -26,23 +26,19 @@
       "key": "API_KEY",
       "value": "eki_your_api_key_here",
       "type": "string",
-      "description": "Create with: python scripts/create_api_key.py"
+      "description": "Create with: docker compose exec api python scripts/create_api_key.py --insert"
     },
     {
-      "key": "API_KEY_USER2",
-      "value": "eki_second_user_api_key",
+      "key": "JOB_ID",
+      "value": "",
       "type": "string",
-      "description": "Second user for IDOR testing"
+      "description": "Auto-set by async check request"
     },
     {
-      "key": "ACTOR_USER_ID",
-      "value": "test-user-123",
-      "type": "string"
-    },
-    {
-      "key": "ACTOR_PROJECT_ID",
-      "value": "test-project-456",
-      "type": "string"
+      "key": "REPORT_ID",
+      "value": "",
+      "type": "string",
+      "description": "Auto-set from job status response"
     }
   ],
   "item": [
@@ -52,9 +48,7 @@
         {
           "name": "Health Check",
           "request": {
-            "auth": {
-              "type": "noauth"
-            },
+            "auth": { "type": "noauth" },
             "method": "GET",
             "header": [],
             "url": {
@@ -62,16 +56,12 @@
               "host": ["{{BASE_URL}}"],
               "path": ["health"]
             },
-            "description": "Liveness probe - simple health check\n\n**Expected:** 200 OK\n**Auth:** None required"
-          },
-          "response": []
+            "description": "Liveness probe\n\n**Expected:** 200 OK\n**Auth:** None"
+          }
         },
         {
           "name": "Readiness Check",
           "request": {
-            "auth": {
-              "type": "noauth"
-            },
             "method": "GET",
             "header": [],
             "url": {
@@ -79,94 +69,52 @@
               "host": ["{{BASE_URL}}"],
               "path": ["ready"]
             },
-            "description": "Readiness probe - checks all dependencies\n\n**Expected:** 200 OK (if all services ready) or 503\n**Auth:** None required"
-          },
-          "response": []
+            "description": "Readiness probe - checks DB, Redis, Temporal\n\n**Expected:** 200 OK\n**Auth:** Bearer token"
+          }
         },
         {
           "name": "Root Endpoint",
           "request": {
-            "auth": {
-              "type": "noauth"
-            },
+            "auth": { "type": "noauth" },
             "method": "GET",
             "header": [],
             "url": {
               "raw": "{{BASE_URL}}/",
               "host": ["{{BASE_URL}}"],
               "path": [""]
-            },
-            "description": "Root endpoint with API information\n\n**Expected:** 200 OK with links to docs"
-          },
-          "response": []
-        }
-      ],
-      "description": "System health and information endpoints"
-    },
-    {
-      "name": "2. Security Checks (Authenticated)",
-      "item": [
-        {
-          "name": "Synchronous Security Check",
-          "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "exec": [
-                  "// Generate base64-encoded test script content",
-                  "const testScript = \"INT. FILM STUDIO - DAY\\n\\nA production meeting is taking place.\\nThe director discusses the upcoming stunt scene.\";",
-                  "const base64Script = CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(testScript));",
-                  "pm.environment.set(\"SCRIPT_CONTENT\", base64Script);"
-                ],
-                "type": "text/javascript"
-              }
             }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "X-Actor-User-Id",
-                "value": "{{ACTOR_USER_ID}}",
-                "type": "text",
-                "description": "Actor information for audit trail"
-              },
-              {
-                "key": "X-Actor-Project-Id",
-                "value": "{{ACTOR_PROJECT_ID}}",
-                "type": "text"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"script_content\": \"{{SCRIPT_CONTENT}}\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test-project-123\",\n  \"metadata\": {\n    \"source\": \"postman-test\",\n    \"version\": \"1.0\"\n  }\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "url": {
-              "raw": "{{BASE_URL}}/v1/security/check",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check"]
-            },
-            "description": "Synchronous security check for scripts ≤1MB or ≤50 scenes\n\n**Expected:** 200 OK with SecurityReport\n**Auth:** Bearer token required\n**Rate Limit:** 60/min (IP), 1000/hour (API Key)"
-          },
-          "response": []
+          }
         },
         {
-          "name": "Asynchronous Security Check",
+          "name": "Metrics (Prometheus)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/metrics",
+              "host": ["{{BASE_URL}}"],
+              "path": ["metrics"]
+            },
+            "description": "Prometheus metrics\n\n**Auth:** Bearer token"
+          }
+        }
+      ],
+      "description": "System health and monitoring endpoints"
+    },
+    {
+      "name": "2. FDX Workflow (Complete)",
+      "item": [
+        {
+          "name": "Submit FDX Script (Async)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "exec": [
-                  "// Save job_id for status check",
-                  "const response = pm.response.json();",
-                  "if (response.job_id) {",
-                  "    pm.environment.set(\"JOB_ID\", response.job_id);",
-                  "    console.log('Job ID saved:', response.job_id);",
+                  "const resp = pm.response.json();",
+                  "if (resp.job_id) {",
+                  "    pm.collectionVariables.set('JOB_ID', resp.job_id);",
+                  "    console.log('JOB_ID saved:', resp.job_id);",
                   "}"
                 ],
                 "type": "text/javascript"
@@ -176,10 +124,16 @@
               "listen": "prerequest",
               "script": {
                 "exec": [
-                  "// Generate base64-encoded test script content",
-                  "const testScript = \"INT. LARGE FILM STUDIO - DAY\\n\\nA large production with many complex scenes.\";",
-                  "const base64Script = CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(testScript));",
-                  "pm.environment.set(\"SCRIPT_CONTENT\", base64Script);"
+                  "const fdx = '<FinalDraft DocumentType=\"Script\"><Content>'+",
+                  "'<Paragraph Type=\"Scene Heading\" Number=\"1\"><Text>EXT. CLIFF EDGE - NIGHT</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Action\"><Text>A stunt performer stands at the edge of a 15-meter cliff. Below, dark water churns.</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Character\"><Text>STUNT COORDINATOR</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Dialogue\"><Text>Jump on my mark!</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Scene Heading\" Number=\"2\"><Text>INT. BURNING BUILDING - NIGHT</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Action\"><Text>Flames engulf the hallway. A firefighter carries an unconscious child through the inferno.</Text></Paragraph>'+",
+                  "'</Content></FinalDraft>';",
+                  "const b64 = CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(fdx));",
+                  "pm.collectionVariables.set('SCRIPT_B64', b64);"
                 ],
                 "type": "text/javascript"
               }
@@ -187,38 +141,38 @@
           ],
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "X-Actor-User-Id",
-                "value": "{{ACTOR_USER_ID}}",
-                "type": "text"
-              },
-              {
-                "key": "X-Actor-Project-Id",
-                "value": "{{ACTOR_PROJECT_ID}}",
-                "type": "text"
-              }
-            ],
+            "header": [],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"script_content\": \"{{SCRIPT_CONTENT}}\",\n  \"script_format\": \"pdf\",\n  \"project_id\": \"test-project-async-456\",\n  \"priority\": 5,\n  \"callback_url\": \"https://epro.filmakademie.de/api/callback\",\n  \"metadata\": {\n    \"source\": \"postman-test\",\n    \"async\": true\n  }\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
+              "raw": "{\n  \"script_content\": \"{{SCRIPT_B64}}\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"postman-fdx-test\",\n  \"delivery\": \"pull\",\n  \"idempotency_key\": \"postman-fdx-{{$timestamp}}\"\n}",
+              "options": { "raw": { "language": "json" } }
             },
             "url": {
               "raw": "{{BASE_URL}}/v1/security/check:async",
               "host": ["{{BASE_URL}}"],
               "path": ["v1", "security", "check:async"]
             },
-            "description": "Asynchronous security check for large scripts\n\n**Expected:** 202 Accepted with job_id\n**Auth:** Bearer token required\n**Temporal:** Creates workflow\n**Note:** callback_url must be whitelisted domain"
-          },
-          "response": []
+            "description": "Submit an FDX script for async security analysis.\n\n**Expected:** 202 Accepted with job_id\n**Next:** Poll job status until completed, then fetch report"
+          }
         },
         {
-          "name": "Get Job Status",
+          "name": "Poll Job Status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const resp = pm.response.json();",
+                  "if (resp.report_id) {",
+                  "    pm.collectionVariables.set('REPORT_ID', resp.report_id);",
+                  "    console.log('REPORT_ID saved:', resp.report_id);",
+                  "}",
+                  "console.log('Status:', resp.status, 'Progress:', resp.progress_percentage);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
           "request": {
             "method": "GET",
             "header": [],
@@ -227,26 +181,11 @@
               "host": ["{{BASE_URL}}"],
               "path": ["v1", "security", "jobs", "{{JOB_ID}}"]
             },
-            "description": "Query the status of an asynchronous security check job\n\n**Expected:** 200 OK with JobStatusResponse\n**Auth:** Bearer token required\n**IDOR Protection:** User can only access own jobs"
-          },
-          "response": []
+            "description": "Poll until status=completed and report_id is set.\n\n**Repeat** every 10-30 seconds until status is 'completed'.\n**Then:** Fetch the report using the report_id."
+          }
         },
         {
-          "name": "Get Report (One-Shot)",
-          "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "exec": [
-                  "// Use a sample UUID if REPORT_ID is not set",
-                  "if (!pm.environment.get(\"REPORT_ID\")) {",
-                  "    pm.environment.set(\"REPORT_ID\", \"123e4567-e89b-12d3-a456-426614174000\");",
-                  "}"
-                ],
-                "type": "text/javascript"
-              }
-            }
-          ],
+          "name": "Fetch Report (One-Shot!)",
           "request": {
             "method": "GET",
             "header": [],
@@ -255,180 +194,100 @@
               "host": ["{{BASE_URL}}"],
               "path": ["v1", "security", "reports", "{{REPORT_ID}}"]
             },
-            "description": "Retrieve a security report (one-shot, URL invalidated after retrieval)\n\n**Expected:** \n- First call: 200 OK with report\n- Second call: 410 Gone\n**Auth:** Bearer token required\n**IDOR Protection:** User can only access own reports"
-          },
-          "response": []
+            "description": "ONE-SHOT: Fetches JSON report + PDF (base64).\n\n**WARNING:** This URL is invalidated after the first successful call!\n**Response contains:**\n- report: Full JSON with findings, measures, scores\n- pdf_base64: Base64-encoded PDF report\n\n**Second call returns:** 410 Gone"
+          }
+        },
+        {
+          "name": "Verify One-Shot (Expect 410)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/reports/{{REPORT_ID}}",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "reports", "{{REPORT_ID}}"]
+            },
+            "description": "Verify One-Shot enforcement.\n\n**Expected:** 410 Gone\n**Proves:** Report was deleted after first retrieval."
+          }
         }
       ],
-      "description": "Main security check endpoints with authentication"
+      "description": "Complete FDX workflow: Submit -> Poll -> Fetch Report -> Verify One-Shot"
     },
     {
-      "name": "3. Security Tests",
+      "name": "3. PDF Workflow (Complete)",
       "item": [
         {
-          "name": "Test: Missing Authentication",
+          "name": "Submit PDF Script (Multipart)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const resp = pm.response.json();",
+                  "if (resp.job_id) {",
+                  "    pm.collectionVariables.set('JOB_ID', resp.job_id);",
+                  "    console.log('PDF JOB_ID saved:', resp.job_id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
           "request": {
-            "auth": {
-              "type": "noauth"
-            },
             "method": "POST",
             "header": [],
             "body": {
-              "mode": "raw",
-              "raw": "{\n  \"script_content\": \"dGVzdA==\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test123\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "url": {
-              "raw": "{{BASE_URL}}/v1/security/check",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check"]
-            },
-            "description": "Test authentication requirement\n\n**Expected:** 401 Unauthorized\n**Test:** No Authorization header"
-          },
-          "response": []
-        },
-        {
-          "name": "Test: Invalid API Key",
-          "request": {
-            "auth": {
-              "type": "bearer",
-              "bearer": [
+              "mode": "formdata",
+              "formdata": [
                 {
-                  "key": "token",
-                  "value": "eki_invalid_key_12345",
-                  "type": "string"
+                  "key": "file",
+                  "type": "file",
+                  "src": "",
+                  "description": "Select a .pdf screenplay file"
+                },
+                {
+                  "key": "project_id",
+                  "value": "postman-pdf-test",
+                  "type": "text"
+                },
+                {
+                  "key": "script_format",
+                  "value": "pdf",
+                  "type": "text"
+                },
+                {
+                  "key": "delivery",
+                  "value": "pull",
+                  "type": "text"
                 }
               ]
             },
-            "method": "POST",
-            "header": [],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"script_content\": \"dGVzdA==\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test123\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
             "url": {
-              "raw": "{{BASE_URL}}/v1/security/check",
+              "raw": "{{BASE_URL}}/v1/security/check:async",
               "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check"]
+              "path": ["v1", "security", "check:async"]
             },
-            "description": "Test invalid API key rejection\n\n**Expected:** 401 Unauthorized\n**Test:** Invalid API key"
-          },
-          "response": []
+            "description": "Submit a PDF screenplay via multipart file upload.\n\n**How to use:**\n1. Click 'Select Files' next to the 'file' field\n2. Choose a .pdf screenplay file\n3. Send the request\n\n**Pipeline:** extract text -> split at INT/EXT -> LLM structuring -> risk analysis"
+          }
         },
         {
-          "name": "Test: Invalid Base64",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"script_content\": \"not-valid-base64!!!\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test123\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
+          "name": "Poll PDF Job Status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const resp = pm.response.json();",
+                  "if (resp.report_id) {",
+                  "    pm.collectionVariables.set('REPORT_ID', resp.report_id);",
+                  "    console.log('PDF REPORT_ID saved:', resp.report_id);",
+                  "}"
+                ],
+                "type": "text/javascript"
               }
-            },
-            "url": {
-              "raw": "{{BASE_URL}}/v1/security/check",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check"]
-            },
-            "description": "Test Base64 validation\n\n**Expected:** 422 Validation Error\n**Test:** Invalid base64 encoding"
-          },
-          "response": []
-        },
-        {
-          "name": "Test: SSRF - Private IP",
+            }
+          ],
           "request": {
-            "method": "POST",
-            "header": [],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"script_content\": \"dGVzdA==\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test123\",\n  \"callback_url\": \"http://192.168.1.1/admin\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "url": {
-              "raw": "{{BASE_URL}}/v1/security/check",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check"]
-            },
-            "description": "Test SSRF prevention (private IP)\n\n**Expected:** 422 Validation Error\n**Test:** Callback URL with private IP"
-          },
-          "response": []
-        },
-        {
-          "name": "Test: SSRF - Non-Whitelisted Domain",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"script_content\": \"dGVzdA==\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test123\",\n  \"callback_url\": \"https://evil.com/callback\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "url": {
-              "raw": "{{BASE_URL}}/v1/security/check",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check"]
-            },
-            "description": "Test SSRF prevention (domain whitelist)\n\n**Expected:** 422 Validation Error\n**Test:** Callback URL with non-whitelisted domain"
-          },
-          "response": []
-        },
-        {
-          "name": "Test: SQL Injection in Project ID",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"script_content\": \"dGVzdA==\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"'; DROP TABLE users; --\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "url": {
-              "raw": "{{BASE_URL}}/v1/security/check",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check"]
-            },
-            "description": "Test SQL injection prevention\n\n**Expected:** 422 Validation Error\n**Test:** SQL injection pattern in project_id"
-          },
-          "response": []
-        },
-        {
-          "name": "Test: IDOR - Access Other User Job",
-          "request": {
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{API_KEY_USER2}}",
-                  "type": "string"
-                }
-              ]
-            },
             "method": "GET",
             "header": [],
             "url": {
@@ -436,39 +295,217 @@
               "host": ["{{BASE_URL}}"],
               "path": ["v1", "security", "jobs", "{{JOB_ID}}"]
             },
-            "description": "Test IDOR prevention\n\n**Expected:** 404 Not Found\n**Test:** User 2 tries to access User 1's job\n**Setup:** Create job with API_KEY, then access with API_KEY_USER2"
-          },
-          "response": []
-        }
-      ],
-      "description": "Security feature tests (authentication, validation, IDOR)"
-    },
-    {
-      "name": "4. Documentation",
-      "item": [
+            "description": "Poll until completed. PDF workflows take longer due to LLM structuring."
+          }
+        },
         {
-          "name": "OpenAPI Spec (Development Only)",
+          "name": "Fetch PDF Report (One-Shot!)",
           "request": {
-            "auth": {
-              "type": "noauth"
-            },
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{BASE_URL}}/openapi.json",
+              "raw": "{{BASE_URL}}/v1/security/reports/{{REPORT_ID}}",
               "host": ["{{BASE_URL}}"],
-              "path": ["openapi.json"]
+              "path": ["v1", "security", "reports", "{{REPORT_ID}}"]
             },
-            "description": "OpenAPI specification in JSON format\n\n**Note:** Hidden in production (DEBUG=false)"
-          },
-          "response": []
+            "description": "ONE-SHOT: JSON report + PDF. Same as FDX report endpoint."
+          }
+        }
+      ],
+      "description": "Complete PDF workflow: Upload file -> Poll -> Fetch Report"
+    },
+    {
+      "name": "4. Sync Check (Quick Test)",
+      "item": [
+        {
+          "name": "Sync FDX Check (JSON)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const fdx = '<FinalDraft DocumentType=\"Script\"><Content>'+",
+                  "'<Paragraph Type=\"Scene Heading\" Number=\"1\"><Text>INT. OFFICE - DAY</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Action\"><Text>A woman reviews documents.</Text></Paragraph>'+",
+                  "'</Content></FinalDraft>';",
+                  "const b64 = CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(fdx));",
+                  "pm.collectionVariables.set('SCRIPT_B64', b64);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"{{SCRIPT_B64}}\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"postman-sync-test\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check"]
+            },
+            "description": "Quick synchronous check (returns stub report, no LLM)."
+          }
         },
         {
-          "name": "Swagger UI (Development Only)",
+          "name": "Sync PDF Check (Multipart)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "",
+                  "description": "Select a .pdf file"
+                },
+                {
+                  "key": "project_id",
+                  "value": "postman-sync-pdf",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check"]
+            },
+            "description": "Synchronous PDF check via file upload."
+          }
+        }
+      ],
+      "description": "Quick synchronous checks for testing"
+    },
+    {
+      "name": "5. Security Tests",
+      "item": [
+        {
+          "name": "Test: Missing Auth (401)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"dGVzdA==\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test123\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check"]
+            },
+            "description": "**Expected:** 401 Unauthorized"
+          }
+        },
+        {
+          "name": "Test: Invalid API Key (401)",
           "request": {
             "auth": {
-              "type": "noauth"
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "eki_invalid_key", "type": "string" }]
             },
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"dGVzdA==\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test123\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check"]
+            },
+            "description": "**Expected:** 401 Unauthorized"
+          }
+        },
+        {
+          "name": "Test: SQL Injection (422)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"dGVzdA==\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"'; DROP TABLE users; --\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check"]
+            },
+            "description": "**Expected:** 422 Validation Error (project_id format)"
+          }
+        },
+        {
+          "name": "Test: SSRF Prevention (422)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"dGVzdA==\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test123\",\n  \"callback_url\": \"http://192.168.1.1/admin\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check"]
+            },
+            "description": "**Expected:** 422 - Callback URL with private IP blocked"
+          }
+        },
+        {
+          "name": "Test: Idempotency (Same Key)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const fdx = '<FinalDraft DocumentType=\"Script\"><Content>'+",
+                  "'<Paragraph Type=\"Scene Heading\"><Text>INT. TEST - DAY</Text></Paragraph>'+",
+                  "'</Content></FinalDraft>';",
+                  "const b64 = CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(fdx));",
+                  "pm.collectionVariables.set('SCRIPT_B64', b64);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"{{SCRIPT_B64}}\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"idem-test\",\n  \"idempotency_key\": \"same-key-twice\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check:async",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check:async"]
+            },
+            "description": "Send twice with same idempotency_key.\n\n**Expected:** Second call returns same job_id (no duplicate)."
+          }
+        }
+      ],
+      "description": "Security and validation tests"
+    },
+    {
+      "name": "6. Documentation",
+      "item": [
+        {
+          "name": "Swagger UI",
+          "request": {
+            "auth": { "type": "noauth" },
             "method": "GET",
             "header": [],
             "url": {
@@ -476,29 +513,23 @@
               "host": ["{{BASE_URL}}"],
               "path": ["docs"]
             },
-            "description": "Interactive API documentation\n\n**Note:** Hidden in production (DEBUG=false)"
-          },
-          "response": []
+            "description": "Interactive API docs (development only)"
+          }
         },
         {
-          "name": "Metrics (Prometheus)",
+          "name": "OpenAPI Spec",
           "request": {
-            "auth": {
-              "type": "noauth"
-            },
+            "auth": { "type": "noauth" },
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{BASE_URL}}/metrics",
+              "raw": "{{BASE_URL}}/openapi.json",
               "host": ["{{BASE_URL}}"],
-              "path": ["metrics"]
-            },
-            "description": "Prometheus metrics endpoint"
-          },
-          "response": []
+              "path": ["openapi.json"]
+            }
+          }
         }
-      ],
-      "description": "API documentation and metrics endpoints"
+      ]
     }
   ]
 }
