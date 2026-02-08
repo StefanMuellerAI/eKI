@@ -1,0 +1,99 @@
+version: "1.0"
+
+# ==========================================================================
+# eKI Risk Taxonomy v1
+# ==========================================================================
+# Formalized risk classification for screenplay safety analysis.
+# Categories -> Classes -> Rule-IDs following the Pflichtenheft specification.
+# ==========================================================================
+
+categories:
+  PHYSICAL:
+    description: "Physische Gefaehrdungen fuer Cast und Crew"
+    classes:
+      STUNTS:
+        rule_id: "SEC-P-001"
+        description: "Stunts und akrobatische Aktionen"
+      FALLS:
+        rule_id: "SEC-P-002"
+        description: "Stuerze und Absturzgefahr"
+      FIGHTS:
+        rule_id: "SEC-P-003"
+        description: "Kampfszenen und koerperliche Auseinandersetzungen"
+      WEAPONS:
+        rule_id: "SEC-P-004"
+        description: "Waffen und gefaehrliche Requisiten"
+      VEHICLES:
+        rule_id: "SEC-P-005"
+        description: "Fahrzeuge und Fahrszenen"
+      HEIGHT:
+        rule_id: "SEC-P-006"
+        description: "Arbeiten in der Hoehe"
+      WATER:
+        rule_id: "SEC-P-007"
+        description: "Wasser, Eis, Unterwasser"
+      FIRE:
+        rule_id: "SEC-P-008"
+        description: "Feuer, Explosionen, SFX"
+      ELECTRICAL:
+        rule_id: "SEC-P-009"
+        description: "Elektrische Gefahren"
+      ANIMALS:
+        rule_id: "SEC-P-010"
+        description: "Tiere am Set"
+      WEATHER:
+        rule_id: "SEC-P-011"
+        description: "Wetter, Hitze, Kaelte"
+      FATIGUE:
+        rule_id: "SEC-P-012"
+        description: "Nachtdreh, Uebermuedung"
+      CROWD:
+        rule_id: "SEC-P-013"
+        description: "Massen, Gedraenge, Statisten"
+
+  ENVIRONMENTAL:
+    description: "Umgebungsbedingte Gefaehrdungen"
+    classes:
+      DANGEROUS_LOCATION:
+        rule_id: "SEC-E-001"
+        description: "Gefaehrliche Locations (Dach, Baustelle, Strasse, Gewaesser)"
+      CONFINED_SPACE:
+        rule_id: "SEC-E-002"
+        description: "Begrenzte und beengte Raeume"
+      SMOKE_DUST:
+        rule_id: "SEC-E-003"
+        description: "Rauch, Staub, eingeschraenkte Sicht"
+      NOISE:
+        rule_id: "SEC-E-004"
+        description: "Laerm und Gehoerschaeden"
+
+  PSYCHOLOGICAL:
+    description: "Psychische Belastungen"
+    classes:
+      VIOLENCE:
+        rule_id: "SEC-Y-001"
+        description: "Gewalt- und Missbrauchsdarstellungen"
+      DEATH_GRIEF:
+        rule_id: "SEC-Y-002"
+        description: "Tod, Trauer, Verlust"
+      TRAUMA:
+        rule_id: "SEC-Y-003"
+        description: "Traumareaktive Inhalte"
+      SEXUALIZED:
+        rule_id: "SEC-Y-004"
+        description: "Sexualisierte Inhalte, Jugendschutz"
+      DISCRIMINATION:
+        rule_id: "SEC-Y-005"
+        description: "Diskriminierung, belastende Sprache"
+      INTIMACY:
+        rule_id: "SEC-Y-006"
+        description: "Intimitaet, Nacktheit, Closed Set"
+
+# Severity calculation: likelihood x impact -> severity level
+severity_matrix:
+  thresholds:
+    critical: 16   # score >= 16 (e.g. 4x4, 4x5, 5x4, 5x5)
+    high: 10       # score >= 10 (e.g. 2x5, 3x4, 5x2)
+    medium: 5      # score >= 5  (e.g. 1x5, 3x2, 5x1)
+    low: 2         # score >= 2  (e.g. 1x2, 2x1)
+    info: 0        # score >= 0  (e.g. 1x1)

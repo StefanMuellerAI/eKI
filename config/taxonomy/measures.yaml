@@ -1,0 +1,132 @@
+version: "1.0"
+
+# ==========================================================================
+# eKI Measures Catalog v1
+# ==========================================================================
+# Codified safety measures mapped to risk classes.
+# Each measure has a code, title, responsible role, and due date template.
+# ==========================================================================
+
+measures:
+  # --- Physical Safety Measures ---
+  MAT-ANTI-SLIP:
+    title: "Rutschschutz-Matten"
+    responsible: "Set Safety"
+    due: "shooting-2d"
+    applies_to: [FALLS, WATER]
+
+  RIG-SAFETY:
+    title: "Rigging und Sicherungsseile"
+    responsible: "Stunt Coordination"
+    due: "shooting-3d"
+    applies_to: [HEIGHT, STUNTS, FALLS]
+
+  SFX-CLEARANCE:
+    title: "SFX-Freigabe und Sicherheitsabstaende"
+    responsible: "SFX Supervisor"
+    due: "shooting-5d"
+    applies_to: [FIRE, ELECTRICAL]
+
+  STUNT-REHEARSAL:
+    title: "Stuntproben mit Sicherheitsteam"
+    responsible: "Stunt Coordination"
+    due: "shooting-3d"
+    applies_to: [STUNTS, FIGHTS, FALLS, HEIGHT]
+
+  WEAPON-CHECK:
+    title: "Waffenkontrolle durch Weapons Master"
+    responsible: "Weapons Master"
+    due: "shooting-1d"
+    applies_to: [WEAPONS]
+
+  VEHICLE-SAFETY:
+    title: "Fahrzeuginspektion und Streckenabsicherung"
+    responsible: "Stunt Coordination"
+    due: "shooting-2d"
+    applies_to: [VEHICLES]
+
+  WATER-SAFETY:
+    title: "Rettungstaucher und Wassersicherheit"
+    responsible: "Set Safety"
+    due: "shooting-2d"
+    applies_to: [WATER]
+
+  FIRE-DEPT:
+    title: "Feuerwehr-Standby"
+    responsible: "Production"
+    due: "shooting-1d"
+    applies_to: [FIRE]
+
+  ANIMAL-HANDLER:
+    title: "Tiertrainer und Veterinaer"
+    responsible: "Production"
+    due: "shooting-3d"
+    applies_to: [ANIMALS]
+
+  WEATHER-PLAN:
+    title: "Wetter-Contingency-Plan"
+    responsible: "Production"
+    due: "shooting-1d"
+    applies_to: [WEATHER]
+
+  MEDICAL-STANDBY:
+    title: "Sanitaeter/Notarzt am Set"
+    responsible: "Production"
+    due: "shooting-1d"
+    applies_to: [STUNTS, FIRE, WATER, HEIGHT, VEHICLES]
+
+  FATIGUE-MGMT:
+    title: "Pausenmanagement und Erholungszeiten"
+    responsible: "Production"
+    due: "shooting-0d"
+    applies_to: [FATIGUE, CROWD]
+
+  # --- Environmental Safety Measures ---
+  LOCATION-ASSESSMENT:
+    title: "Location-Sicherheitsbewertung"
+    responsible: "Set Safety"
+    due: "shooting-5d"
+    applies_to: [DANGEROUS_LOCATION, CONFINED_SPACE]
+
+  HEARING-PROTECTION:
+    title: "Gehoerschutz fuer Crew"
+    responsible: "Set Safety"
+    due: "shooting-1d"
+    applies_to: [NOISE]
+
+  VENTILATION:
+    title: "Belueftung und Atemschutz"
+    responsible: "Set Safety"
+    due: "shooting-1d"
+    applies_to: [SMOKE_DUST, CONFINED_SPACE]
+
+  # --- Psychological Safety Measures ---
+  INTIMACY-COORD:
+    title: "Intimacy Coordinator"
+    responsible: "Intimacy Coordination"
+    due: "pre-production"
+    applies_to: [INTIMACY, SEXUALIZED]
+
+  CLOSED-SET:
+    title: "Closed-Set-Protokoll"
+    responsible: "Production"
+    due: "shooting-1d"
+    applies_to: [INTIMACY, SEXUALIZED, VIOLENCE]
+
+  PSY-BRIEFING:
+    title: "Psychologisches Briefing/Debriefing"
+    responsible: "Production"
+    due: "shooting-0d"
+    applies_to: [VIOLENCE, DEATH_GRIEF, TRAUMA, DISCRIMINATION]
+
+  CHILD-WELFARE:
+    title: "Kinderschutzbeauftragter am Set"
+    responsible: "Production"
+    due: "shooting-1d"
+    applies_to: [VIOLENCE, TRAUMA, SEXUALIZED]
+
+  BREAK-SCHEDULE:
+    title: "Pausenregelung und Erholungszeiten"
+    responsible: "Production"
+    due: "shooting-0d"
+    applies_to: [FATIGUE, CROWD]

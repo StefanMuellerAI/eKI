@@ -301,15 +301,37 @@ class ReadinessResponse(BaseModel):
     services: dict[str, bool] = Field(..., description="Service availability status")
 
 
+class MeasureItem(BaseModel):
+    """A codified safety measure from the measures catalog."""
+
+    code: str = Field(..., description="Measure code (e.g. RIG-SAFETY, PSY-BRIEFING)")
+    title: str = Field(..., description="Human-readable measure title")
+    responsible: str = Field(default="", description="Responsible role (e.g. Stunt Coordination)")
+    due: str = Field(default="", description="Due date template (e.g. shooting-3d)")
+
+
 class RiskFinding(BaseModel):
-    """Individual risk finding in a script."""
+    """Individual risk finding in a script (M04: extended with taxonomy and scoring)."""
 
     id: str = Field(..., description="Unique finding ID")
     scene_number: str | None = Field(None, description="Scene number where risk was found")
-    risk_level: RiskLevel = Field(..., description="Severity level")
-    category: str = Field(..., description="Risk category")
+    risk_level: RiskLevel = Field(..., description="Severity level (calculated from likelihood x impact)")
+    category: str = Field(..., description="Risk category: PHYSICAL, ENVIRONMENTAL, PSYCHOLOGICAL")
+    risk_class: str = Field(
+        default="", description="Specific risk class (e.g. FIRE, HEIGHT, INTIMACY)"
+    )
+    rule_id: str = Field(default="", description="Taxonomy rule ID (e.g. SEC-P-008)")
+    likelihood: int = Field(
+        default=0, ge=0, le=5, description="Likelihood of risk occurring (1-5, 0=unscored)"
+    )
+    impact: int = Field(
+        default=0, ge=0, le=5, description="Severity of impact if risk occurs (1-5, 0=unscored)"
+    )
     description: str = Field(..., description="Human-readable description")
     recommendation: str = Field(..., description="Mitigation recommendation")
+    measures: list[MeasureItem] = Field(
+        default_factory=list, description="Applicable safety measures from the catalog"
+    )
     confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score of the finding")
     line_reference: str | None = Field(None, description="Specific line or dialogue reference")
 

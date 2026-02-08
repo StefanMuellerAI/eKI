@@ -1,6 +1,6 @@
 # eKI API -- KI-gestuetzte Sicherheitspruefung fuer Drehbuecher
 
-**Version:** 0.3.0 (Meilenstein M03 abgeschlossen)
+**Version:** 0.4.0 (Meilenstein M04 abgeschlossen)
 **Auftraggeber:** Filmakademie Baden-Wuerttemberg
 **Auftragnehmer:** StefanAI -- Research & Development
 
@@ -188,15 +188,43 @@ Verarbeitet PDF-Drehbuecher in drei Schritten:
 
 IDs, Zaehler und der Character-Index werden programmatisch vergeben, nicht von der KI.
 
-## Risikoanalyse (M03)
+## Risikoanalyse mit Taxonomie (M04)
 
-Jede Szene wird **einzeln** per LLM auf Sicherheitsrisiken geprueft. Drei Kategorien:
+Jede Szene wird **einzeln** per LLM auf Sicherheitsrisiken geprueft. Das LLM bekommt die formalisierte Risiko-Taxonomie als Kontext und liefert strukturierte Findings zurueck.
 
-- **PHYSICAL**: Stunts, Hoehe, Wasser, Feuer, Fahrzeuge, Waffen, Nachtdreh
-- **ENVIRONMENTAL**: Gefaehrliche Locations, beengte Raeume, Rauch, Laerm
-- **PSYCHOLOGICAL**: Gewalt, Tod/Trauer, Missbrauch, sexualisierte Inhalte, Minderjaehrige
+### Risiko-Kategorien und Klassen (23 Klassen)
 
-Jedes Finding hat: `risk_level` (critical/high/medium/low/info), `category`, `description`, `recommendation`, `confidence`. Der Report aggregiert alle Findings programmatisch mit `risk_summary`.
+- **PHYSICAL** (13): STUNTS, FALLS, FIGHTS, WEAPONS, VEHICLES, HEIGHT, WATER, FIRE, ELECTRICAL, ANIMALS, WEATHER, FATIGUE, CROWD
+- **ENVIRONMENTAL** (4): DANGEROUS_LOCATION, CONFINED_SPACE, SMOKE_DUST, NOISE
+- **PSYCHOLOGICAL** (6): VIOLENCE, DEATH_GRIEF, TRAUMA, SEXUALIZED, DISCRIMINATION, INTIMACY
+
+### Scoring-Engine
+
+Severity wird aus `Likelihood x Impact` (je 1-5) berechnet:
+
+| Score | Severity |
+|---|---|
+| >= 16 | critical (z.B. 4x4, 5x5) |
+| >= 10 | high (z.B. 2x5, 3x4) |
+| >= 5 | medium (z.B. 1x5, 3x2) |
+| >= 2 | low (z.B. 2x1) |
+| < 2 | info (1x1) |
+
+### Massnahmenkatalog (20 kodifizierte Massnahmen)
+
+Jedes Finding enthaelt konkrete Massnahmen mit Code, Titel, verantwortlicher Rolle und Frist:
+
+```
+RIG-SAFETY      -> Stunt Coordination, shooting-3d
+SFX-CLEARANCE   -> SFX Supervisor, shooting-5d
+INTIMACY-COORD  -> Intimacy Coordination, pre-production
+PSY-BRIEFING    -> Production, shooting-0d
+WEAPON-CHECK    -> Weapons Master, shooting-1d
+MEDICAL-STANDBY -> Production, shooting-1d
+...
+```
+
+Taxonomie und Massnahmen liegen in `config/taxonomy/` als YAML und sind ohne Code-Aenderung anpassbar.
 
 ## Prompt-Management
 
@@ -251,8 +279,11 @@ eKI_API/
 │       ├── health.py             # Health & Readiness
 │       └── security.py           # Security Endpoints (JSON + Multipart)
 ├── config/
-│   └── prompts/
-│       └── prompts.yaml          # Zentrale LLM-Prompt-Verwaltung (M03)
+│   ├── prompts/
+│   │   └── prompts.yaml          # Zentrale LLM-Prompt-Verwaltung (M03)
+│   └── taxonomy/
+│       ├── taxonomy.yaml         # Risiko-Taxonomie: 23 Klassen, Rule-IDs (M04)
+│       └── measures.yaml         # Massnahmenkatalog: 20 Codes mit Rollen (M04)
 ├── core/                         # Kernkomponenten
 │   ├── models.py                 # Pydantic Schemas + Szenenmodell + Confidence
 │   ├── db_models.py              # SQLAlchemy Models
@@ -268,6 +299,7 @@ eKI_API/
 │   └── secure_xml.py             # defusedxml Wrapper
 ├── services/
 │   ├── secure_buffer.py          # AES-verschluesselter Redis-Buffer
+│   ├── taxonomy.py               # TaxonomyManager: Scoring, Validierung (M04)
 │   └── security_service.py       # Security Service
 ├── workflows/                    # Temporal Workflows
 │   ├── security_check.py         # FDX/PDF Workflow-Router (M03)
@@ -287,6 +319,7 @@ eKI_API/
 ├── tests/
 │   ├── test_fdx_parser.py        # 41 FDX/Security/Buffer Tests
 │   ├── test_pdf_parser.py        # 32 PDF/Splitter/LLM/PromptManager Tests
+│   ├── test_taxonomy.py          # 38 Taxonomie/Scoring/Measures/Validation Tests (M04)
 │   ├── test_api.py               # API Endpoint Tests
 │   ├── test_security.py          # Security Feature Tests
 │   ├── test_config.py            # Config Parsing Tests
@@ -327,8 +360,14 @@ pytest tests/ --cov --cov-report=html
 | PromptManager | 6 | YAML laden, Variablen, Fehlerbehandlung |
 | Parser Factory | 5 | FDX + PDF Routing |
 | SecureBuffer | 7 | Encrypt/Decrypt, TTL, Cleanup |
-| Integration | 4 | Base64-Roundtrip, Serialisierung, Benchmark |
-| **Gesamt** | **73** | Alle bestanden |
+| Taxonomy Loading | 6 | YAML laden, Klassen pruefen, Zaehlung |
+| Class Lookups | 4 | Rule-IDs, Kategorien, Case-Insensitive |
+| Measures Catalog | 6 | Lookup, Aufloesen, Klassen-Zuordnung |
+| Severity Scoring | 12 | Likelihood x Impact Matrix, Grenzwerte |
+| Finding Validation | 5 | Enrichment, Auto-Fill, Fallbacks |
+| Prompt Context | 4 | Taxonomie-Kontext fuer LLM |
+| Integration | 5 | Base64-Roundtrip, Serialisierung, Benchmark |
+| **Gesamt** | **111** | Alle bestanden |
 
 ---
 
@@ -354,7 +393,7 @@ MISTRAL_API_KEY=your-key
 | M01 | Projektgeruest & OpenAPI v0.1 | Abgeschlossen | API-Framework, Auth, CI/CD, Postman |
 | M02 | Parser Basis (FDX) & Testdataset | Abgeschlossen | FDX-Parser, Szenenmodell, SecureBuffer, 41 Tests |
 | M03 | PDF & Streaming-Parsing | Abgeschlossen | PDF-Parser, LLM-Strukturierung, Prompt-YAML, Workflow-Refactoring, Risikoanalyse pro Szene, 73 Tests |
-| M04 | Risiko-Taxonomie v1 & Scoring | Ausstehend | |
+| M04 | Risiko-Taxonomie v1 & Scoring | Abgeschlossen | 23 Risiko-Klassen, Scoring-Engine, 20 Massnahmen-Codes, TaxonomyManager, 111 Tests |
 | M05 | Reports (JSON/PDF) & One-Shot-GET | Ausstehend | |
 | M06 | LLM-Adapter (Mistral API) & KB | Ausstehend | |
 | M07 | Grossdokument-Optimierung | Ausstehend | |

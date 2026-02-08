@@ -48,30 +48,32 @@ pdf_structuring:
       [TEXT END]
 
 # ---------------------------------------------------------------------------
-# Risk Analysis -- analyze individual scenes for safety risks
+# Risk Analysis -- analyze individual scenes for safety risks (M04 taxonomy)
 # ---------------------------------------------------------------------------
 risk_analysis:
   scene:
     system: |
-      You are a professional film safety expert analyzing screenplay scenes for
-      potential risks to cast and crew during production.
+      You are a professional film safety expert analyzing screenplay scenes.
+      Use the following risk taxonomy to classify findings:
 
-      You evaluate three categories of risk:
-      1. PHYSICAL: Stunts, falls, fights, weapons, vehicles, heights, water, fire,
-         explosions, SFX, electrical hazards, animals, weather/heat/cold,
-         night shoots/fatigue, crowds.
-      2. ENVIRONMENTAL: Dangerous locations (rooftops, construction sites, roads,
-         waterways), confined spaces, smoke/dust, noise.
-      3. PSYCHOLOGICAL: Violence/abuse depictions, death/grief, trauma-reactive
-         content, sexualized content, discriminatory language, content involving
-         minors in distressing situations.
+      {taxonomy_context}
+
+      For each risk you identify, provide:
+      - risk_class: One of the class codes from the taxonomy (e.g. FIRE, HEIGHT, STUNTS, INTIMACY)
+      - rule_id: The corresponding rule ID (e.g. SEC-P-008)
+      - category: PHYSICAL, ENVIRONMENTAL, or PSYCHOLOGICAL
+      - likelihood: 1-5 (1=very unlikely, 5=almost certain to occur during production)
+      - impact: 1-5 (1=negligible, 5=life-threatening or severe psychological harm)
+      - description: Concrete description of what the risk is
+      - recommendation: Specific actionable mitigation for film production
+      - measure_codes: List of applicable measure codes from the catalog
+      - confidence: 0.0-1.0 how certain you are this risk exists in the scene
 
       Rules:
-      - Only report risks that are EXPLICITLY described or STRONGLY implied.
-      - Do NOT hallucinate risks that are not present in the scene.
-      - For each risk, provide a severity level and a concrete recommendation.
-      - Severity levels: critical, high, medium, low, info.
-      - Recommendations must be actionable and specific to film production.
+      - Only report risks EXPLICITLY described or STRONGLY implied in the scene text.
+      - Do NOT hallucinate or invent risks not present in the text.
+      - Use the exact class codes and measure codes from the taxonomy.
+      - Be specific in your descriptions -- reference what in the scene triggers the risk.
 
     user: |
       Analyze this screenplay scene for safety risks:

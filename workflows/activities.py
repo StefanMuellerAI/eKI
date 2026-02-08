@@ -335,19 +335,43 @@ _RISK_SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "risk_level": {
+                    "risk_class": {
                         "type": "string",
-                        "enum": ["critical", "high", "medium", "low", "info"],
+                        "description": "Risk class code from taxonomy (e.g. FIRE, HEIGHT, STUNTS)",
+                    },
+                    "rule_id": {
+                        "type": "string",
+                        "description": "Rule ID from taxonomy (e.g. SEC-P-008)",
                     },
                     "category": {
                         "type": "string",
                         "enum": ["PHYSICAL", "ENVIRONMENTAL", "PSYCHOLOGICAL"],
                     },
+                    "likelihood": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 5,
+                        "description": "Likelihood 1-5",
+                    },
+                    "impact": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 5,
+                        "description": "Impact severity 1-5",
+                    },
                     "description": {"type": "string"},
                     "recommendation": {"type": "string"},
+                    "measure_codes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Applicable measure codes from the catalog",
+                    },
                     "confidence": {"type": "number"},
                 },
-                "required": ["risk_level", "category", "description", "recommendation"],
+                "required": [
+                    "risk_class", "category", "likelihood", "impact",
+                    "description", "recommendation",
+                ],
             },
         },
     },
@@ -357,10 +381,14 @@ _RISK_SCHEMA: dict[str, Any] = {
 
 @activity.defn(name="analyze_scene_risk")
 async def analyze_scene_risk_activity(job_data: dict[str, Any]) -> dict[str, Any]:
-    """Analyze a single scene for safety risks using LLM (Ollama/Mistral).
+    """Analyze a single scene for safety risks using LLM with taxonomy context.
 
-    Fetches the scene from Redis, sends it to the LLM with the risk_analysis
-    prompt, and returns structured findings.
+    The LLM receives the full risk taxonomy and measures catalog in the prompt.
+    It returns structured findings with risk_class, likelihood, impact, and
+    measure_codes.  The TaxonomyManager then validates and enriches the results:
+    - Calculates severity from likelihood x impact
+    - Resolves measure codes to full measure objects
+    - Fills in missing rule_ids from the taxonomy
     """
     parsed_ref_key = job_data.get("parsed_ref_key", "")
     scene_index = job_data.get("scene_index", 0)
@@ -380,11 +408,14 @@ async def analyze_scene_risk_activity(job_data: dict[str, Any]) -> dict[str, Any
         from api.config import get_settings
         from llm.factory import get_llm_provider
         from llm.prompt_manager import get_prompt_manager
+        from services.taxonomy import get_taxonomy_manager
 
         settings = get_settings()
         llm = get_llm_provider(settings)
         pm = get_prompt_manager()
+        taxonomy = get_taxonomy_manager()
 
+        # Build prompt with taxonomy context
         system_prompt, user_prompt = pm.get(
             "risk_analysis", "scene",
             scene_number=scene_number,
@@ -392,6 +423,7 @@ async def analyze_scene_risk_activity(job_data: dict[str, Any]) -> dict[str, Any
             location_type=scene.get("location_type", "UNKNOWN"),
             time_of_day=scene.get("time_of_day", "UNKNOWN"),
             scene_text=scene.get("text", ""),
+            taxonomy_context=taxonomy.summary_for_prompt(),
         )
 
         result = await llm.generate_structured(
@@ -402,20 +434,36 @@ async def analyze_scene_risk_activity(job_data: dict[str, Any]) -> dict[str, Any
         )
 
         findings = result.get("findings", [])
-        # Tag each finding with scene reference
         from uuid import uuid4
+
+        enriched_findings = []
         for f in findings:
+            # Validate and enrich via TaxonomyManager
+            f = taxonomy.validate_finding(f)
             f["id"] = str(uuid4())
             f["scene_number"] = scene_number
             f["line_reference"] = None
-            if "confidence" not in f:
+            if "confidence" not in f or not f["confidence"]:
                 f["confidence"] = 0.8
 
-        logger.info("Scene %s: %d findings", scene_number, len(findings))
+            # Convert measures to serializable dicts
+            measures = f.get("measures", [])
+            f["measures"] = [
+                {
+                    "code": m.get("code", ""),
+                    "title": m.get("title", ""),
+                    "responsible": m.get("responsible", ""),
+                    "due": m.get("due", ""),
+                }
+                for m in measures
+            ]
+            enriched_findings.append(f)
+
+        logger.info("Scene %s: %d findings (taxonomy-enriched)", scene_number, len(enriched_findings))
         return {
             "scene_index": scene_index,
             "scene_number": scene_number,
-            "findings": findings,
+            "findings": enriched_findings,
         }
 
     except Exception as exc:
