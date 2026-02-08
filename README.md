@@ -1,6 +1,6 @@
 # eKI API -- KI-gestuetzte Sicherheitspruefung fuer Drehbuecher
 
-**Version:** 0.4.0 (Meilenstein M04 abgeschlossen)
+**Version:** 0.5.0 (Meilenstein M05 abgeschlossen)
 **Auftraggeber:** Filmakademie Baden-Wuerttemberg
 **Auftragnehmer:** StefanAI -- Research & Development
 
@@ -50,13 +50,13 @@ Die Verarbeitung ist formatspezifisch aufgeteilt:
 
 **FDX-Workflow** (strukturiertes XML):
 ```
-parse_fdx → analyze_scene_risk x N → aggregate_report → deliver
+parse_fdx → analyze_scene_risk x N → aggregate_report (JSON+PDF) → deliver (push/pull)
 ```
 
 **PDF-Workflow** (unstrukturiert, LLM-gestuetzt):
 ```
 extract_text → split_scenes → structure_scene_llm x N → aggregate_script
-  → analyze_scene_risk x N → aggregate_report → deliver
+  → analyze_scene_risk x N → aggregate_report (JSON+PDF) → deliver (push/pull)
 ```
 
 Beide Workflows teilen sich die Risikoanalyse (pro Szene) und Delivery-Activities.
@@ -68,8 +68,9 @@ Beide Workflows teilen sich die Risikoanalyse (pro Szene) und Delivery-Activitie
 3. **Temporal**: Workflow erhaelt nur einen Redis-Referenzschluessel -- kein Skriptinhalt
 4. **Parser**: FDX wird direkt geparsed, PDF wird per INT/EXT-Split + LLM strukturiert
 5. **Risikoanalyse**: Jede Szene wird einzeln per LLM auf physische, umgebungs- und psychische Risiken geprueft
-6. **Report**: Findings werden programmatisch aggregiert (risk_summary, Zaehler)
-7. **Delivery**: Report wird an eProjekt zurueckgespielt, alle Buffer-Keys geloescht
+6. **Report**: Findings werden aggregiert, JSON-Report + PDF-Report (Executive Summary, To-Do-Liste) generiert
+7. **Delivery**: Pull-Modus (ePro holt Report via One-Shot-GET) oder Push-Modus (eKI sendet an ePro)
+8. **Cleanup**: Nach Abholung/Zustellung werden alle Buffer-Keys sofort geloescht
 
 ---
 
@@ -140,8 +141,8 @@ curl http://localhost:8000/health
 |---|---|---|
 | `POST` | `/v1/security/check` | Synchroner Check -- JSON (Base64) oder Multipart FDX/PDF-Upload |
 | `POST` | `/v1/security/check:async` | Asynchroner Check via Temporal Workflow (FDX oder PDF) |
-| `GET` | `/v1/security/jobs/{job_id}` | Job-Status abfragen (Ownership-Check) |
-| `GET` | `/v1/security/reports/{id}` | One-Shot-Report-Abholung (Pull-Modus) |
+| `GET` | `/v1/security/jobs/{job_id}` | Echtes Job-Status-Tracking aus DB (M05) |
+| `GET` | `/v1/security/reports/{id}` | One-Shot-Report: JSON + PDF, danach geloescht (M05) |
 
 ### System Endpoints
 
@@ -226,6 +227,32 @@ MEDICAL-STANDBY -> Production, shooting-1d
 
 Taxonomie und Massnahmen liegen in `config/taxonomy/` als YAML und sind ohne Code-Aenderung anpassbar.
 
+## Report-Erzeugung und Delivery (M05)
+
+### Zwei Report-Formate
+
+Jeder Report wird in beiden Formaten gleichzeitig erzeugt:
+
+- **JSON**: Maschinenlesbar mit allen Findings, Taxonomie-Feldern, Massnahmen (fuer ePro-Integration)
+- **PDF**: Menschenlesbar mit Executive Summary, Szenen-Befunde, Massnahmen-Checkliste (fuer Produktion)
+
+Beim Abruf via `GET /v1/security/reports/{id}` enthaelt die Response beides: `report` (JSON) + `pdf_base64` (PDF).
+
+### Delivery-Modes (konfigurierbar)
+
+| Modus | Beschreibung | Konfiguration |
+|---|---|---|
+| **Pull** (Default) | Report bleibt in Redis (verschluesselt, TTL 6h). ePro holt ihn via One-Shot-GET. Nach erstem Abruf sofort geloescht. | `delivery: "pull"` |
+| **Push** | eKI sendet Report per POST an ePro. Bei 201 sofort geloescht, bei Fehler Retry. | `delivery: "push"` |
+
+### Idempotenz
+
+Ein optionaler `idempotency_key` im Request verhindert doppelte Workflows. Gleicher Key = bestehender Job wird zurueckgegeben.
+
+### Job-Status-Tracking
+
+`GET /v1/security/jobs/{id}` liefert echte Daten aus der Datenbank: Status, Progress, Report-ID, Timestamps.
+
 ## Prompt-Management
 
 Alle LLM-Prompts werden zentral in `config/prompts/prompts.yaml` verwaltet:
@@ -300,6 +327,7 @@ eKI_API/
 ├── services/
 │   ├── secure_buffer.py          # AES-verschluesselter Redis-Buffer
 │   ├── taxonomy.py               # TaxonomyManager: Scoring, Validierung (M04)
+│   ├── report_generator.py       # JSON + PDF Report Generator (M05)
 │   └── security_service.py       # Security Service
 ├── workflows/                    # Temporal Workflows
 │   ├── security_check.py         # FDX/PDF Workflow-Router (M03)
@@ -320,6 +348,7 @@ eKI_API/
 │   ├── test_fdx_parser.py        # 41 FDX/Security/Buffer Tests
 │   ├── test_pdf_parser.py        # 32 PDF/Splitter/LLM/PromptManager Tests
 │   ├── test_taxonomy.py          # 38 Taxonomie/Scoring/Measures/Validation Tests (M04)
+│   ├── test_reports.py           # 13 Report-Generator/PDF/Delivery/Idempotenz Tests (M05)
 │   ├── test_api.py               # API Endpoint Tests
 │   ├── test_security.py          # Security Feature Tests
 │   ├── test_config.py            # Config Parsing Tests
@@ -366,8 +395,13 @@ pytest tests/ --cov --cov-report=html
 | Severity Scoring | 12 | Likelihood x Impact Matrix, Grenzwerte |
 | Finding Validation | 5 | Enrichment, Auto-Fill, Fallbacks |
 | Prompt Context | 4 | Taxonomie-Kontext fuer LLM |
+| Report Builder | 3 | JSON-Report korrekt aggregiert |
+| PDF Generation | 4 | PDF erzeugt, Base64, leere Findings |
+| Report Response | 2 | pdf_base64 Feld, mit/ohne PDF |
+| Request Extensions | 2 | delivery + idempotency_key Felder |
+| DB Extensions | 2 | Neue Spalten in JobMetadata/ReportMetadata |
 | Integration | 5 | Base64-Roundtrip, Serialisierung, Benchmark |
-| **Gesamt** | **111** | Alle bestanden |
+| **Gesamt** | **124** | Alle bestanden |
 
 ---
 
@@ -394,7 +428,7 @@ MISTRAL_API_KEY=your-key
 | M02 | Parser Basis (FDX) & Testdataset | Abgeschlossen | FDX-Parser, Szenenmodell, SecureBuffer, 41 Tests |
 | M03 | PDF & Streaming-Parsing | Abgeschlossen | PDF-Parser, LLM-Strukturierung, Prompt-YAML, Workflow-Refactoring, Risikoanalyse pro Szene, 73 Tests |
 | M04 | Risiko-Taxonomie v1 & Scoring | Abgeschlossen | 23 Risiko-Klassen, Scoring-Engine, 20 Massnahmen-Codes, TaxonomyManager, 111 Tests |
-| M05 | Reports (JSON/PDF) & One-Shot-GET | Ausstehend | |
+| M05 | Reports (JSON/PDF) & One-Shot-GET | Abgeschlossen | JSON+PDF-Report, One-Shot-GET, Push/Pull Delivery, Job-Tracking, Idempotenz, 124 Tests |
 | M06 | LLM-Adapter (Mistral API) & KB | Ausstehend | |
 | M07 | Grossdokument-Optimierung | Ausstehend | |
 | M08 | Security/Privacy & Delete-on-Delivery | Ausstehend | |

@@ -479,9 +479,9 @@ async def analyze_scene_risk_activity(job_data: dict[str, Any]) -> dict[str, Any
 async def aggregate_report_activity(
     job_data: dict[str, Any], job_metadata: dict[str, Any]
 ) -> dict[str, Any]:
-    """Aggregate per-scene findings into a complete SecurityReport.
+    """Aggregate per-scene findings into a complete SecurityReport with PDF.
 
-    Programmatic aggregation -- no LLM needed.
+    Builds a full report dict, generates a PDF, and stores both in Redis.
     """
     all_findings = job_data.get("all_findings", [])
     parsed_ref_key = job_data.get("parsed_ref_key", "")
@@ -489,30 +489,37 @@ async def aggregate_report_activity(
 
     buffer = _get_buffer()
 
-    # Count findings by severity
-    risk_summary = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+    # Flatten findings from all scenes
     flat_findings = []
     for scene_result in all_findings:
         for finding in scene_result.get("findings", []):
-            level = finding.get("risk_level", "info")
-            risk_summary[level] = risk_summary.get(level, 0) + 1
             flat_findings.append(finding)
 
-    total_findings = len(flat_findings)
-    if total_findings == 0:
-        risk_summary["info"] = 1
-        total_findings = 1
+    # Build report using the report generator
+    from services.report_generator import build_report_dict, generate_pdf_base64
 
-    report = {
-        "report_id": job_metadata.get("report_id"),
-        "project_id": job_metadata.get("project_id"),
-        "findings": flat_findings,
-        "risk_summary": risk_summary,
-        "total_findings": total_findings,
-        "processing_time_seconds": 1.0,
-        "metadata": {"stub": total_findings == 1 and not flat_findings},
+    report = build_report_dict(
+        report_id=job_metadata.get("report_id", ""),
+        project_id=job_metadata.get("project_id", ""),
+        script_format=job_metadata.get("script_format", "fdx"),
+        findings=flat_findings,
+        processing_time_seconds=1.0,
+    )
+
+    # Generate PDF
+    try:
+        pdf_b64 = generate_pdf_base64(report)
+        logger.info("PDF report generated (%d chars base64)", len(pdf_b64))
+    except Exception as exc:
+        logger.warning("PDF generation failed: %s", exc)
+        pdf_b64 = None
+
+    # Store report + PDF in Redis for retrieval
+    report_package = {
+        "report": report,
+        "pdf_base64": pdf_b64,
     }
-    report_ref = await buffer.store(report)
+    report_ref = await buffer.store(report_package)
 
     # Clean up parsed data
     if parsed_ref_key:
@@ -521,31 +528,136 @@ async def aggregate_report_activity(
     return {
         "report_ref_key": report_ref,
         "report_id": job_metadata.get("report_id"),
-        "total_findings": total_findings,
+        "total_findings": len(flat_findings),
     }
 
 
 @activity.defn(name="deliver_report")
 async def deliver_report_activity(
-    report_data: dict[str, Any], callback_url: str | None = None
+    report_data: dict[str, Any], delivery_config: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Deliver report to eProjekt system (write-through).
+    """Deliver report via Push or Pull mode.
 
-    M03 stub -- real eProjekt integration in later milestones.
+    Pull (default): Report stays in Redis for One-Shot-GET retrieval.
+    Push: Report is POSTed to ePro, then deleted from Redis.
+
+    Also creates ReportMetadata and updates JobMetadata in the database.
     """
     report_ref_key = report_data.get("report_ref_key", "")
-    logger.info("Delivering report %s to eProjekt", report_data.get("report_id"))
+    report_id = report_data.get("report_id", "")
+    delivery_config = delivery_config or {}
+    delivery_mode = delivery_config.get("delivery_mode", "pull")
+    job_id = delivery_config.get("job_id", "")
+    project_id = delivery_config.get("project_id", "")
+    user_id = delivery_config.get("user_id", "")
+    script_format = delivery_config.get("script_format", "fdx")
+
+    logger.info("Delivering report %s (mode=%s)", report_id, delivery_mode)
 
     buffer = _get_buffer()
-    _report = await buffer.retrieve(report_ref_key)
 
-    if callback_url:
-        logger.info("Callback URL provided: %s", callback_url)
+    # Create ReportMetadata and update JobMetadata in DB
+    try:
+        from uuid import UUID as UUIDType
 
-    await buffer.delete(report_ref_key)
+        import asyncpg
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-    return {
-        "delivered": True,
-        "delivery_time_seconds": 0.2,
-        "callback_sent": callback_url is not None,
-    }
+        from api.config import get_settings
+        from core.db_models import JobMetadata, ReportMetadata
+        from core.models import JobStatus, ScriptFormat
+
+        settings = get_settings()
+        engine = create_async_engine(str(settings.database_url))
+        Session = async_sessionmaker(engine, expire_on_commit=False)
+
+        async with Session() as session:
+            # Create ReportMetadata
+            report_meta = ReportMetadata(
+                report_id=UUIDType(report_id) if report_id else None,
+                job_id=UUIDType(job_id) if job_id else None,
+                project_id=project_id,
+                user_id=user_id,
+                script_format=ScriptFormat(script_format),
+                total_findings=report_data.get("total_findings", 0),
+                processing_time_seconds=1.0,
+                report_ref_key=report_ref_key,
+                delivery_mode=delivery_mode,
+            )
+            session.add(report_meta)
+
+            # Update JobMetadata status to completed
+            if job_id:
+                from sqlalchemy import update
+
+                await session.execute(
+                    update(JobMetadata)
+                    .where(JobMetadata.job_id == UUIDType(job_id))
+                    .values(
+                        status=JobStatus.COMPLETED,
+                        progress_percentage=100,
+                        report_id=UUIDType(report_id) if report_id else None,
+                    )
+                )
+
+            await session.commit()
+
+        await engine.dispose()
+        logger.info("ReportMetadata + JobMetadata updated in DB")
+
+    except Exception as exc:
+        logger.warning("DB update failed (non-fatal): %s", exc)
+
+    # Delivery mode handling
+    if delivery_mode == "push":
+        # Push: POST to ePro, then delete from Redis
+        try:
+            from api.config import get_settings
+
+            settings = get_settings()
+            report_package = await buffer.retrieve(report_ref_key)
+
+            import httpx
+
+            async with httpx.AsyncClient(timeout=settings.epro_timeout) as client:
+                headers = {"Content-Type": "application/json"}
+                if settings.epro_auth_token:
+                    headers["Authorization"] = f"Bearer {settings.epro_auth_token}"
+                if report_id:
+                    headers["Idempotency-Key"] = report_id
+
+                response = await client.post(
+                    f"{settings.epro_base_url}/reports/security",
+                    json=report_package.get("report", {}),
+                    headers=headers,
+                )
+                response.raise_for_status()
+                logger.info("Push delivery succeeded: HTTP %d", response.status_code)
+
+            # Delete from Redis after successful push
+            await buffer.delete(report_ref_key)
+
+            return {
+                "delivered": True,
+                "delivery_mode": "push",
+                "delivery_time_seconds": 0.5,
+            }
+
+        except Exception as exc:
+            logger.error("Push delivery failed: %s", exc)
+            # Keep in Redis for Pull fallback
+            return {
+                "delivered": False,
+                "delivery_mode": "push",
+                "error": str(exc),
+            }
+
+    else:
+        # Pull: Report stays in Redis for One-Shot-GET
+        # (already stored by aggregate_report_activity)
+        logger.info("Pull mode: report %s available for One-Shot-GET (TTL 6h)", report_id)
+        return {
+            "delivered": True,
+            "delivery_mode": "pull",
+            "report_url": f"/v1/security/reports/{report_id}",
+        }

@@ -140,6 +140,11 @@ class Settings(BaseSettings):
     )
     prometheus_port: int = Field(default=9090, description="Prometheus metrics port")
 
+    # Delivery
+    delivery_mode: str = Field(
+        default="pull", description="Default delivery mode: 'pull' (One-Shot GET) or 'push' (POST to ePro)"
+    )
+
     # Transient Buffer
     buffer_ttl_seconds: int = Field(
         default=21600, description="Transient secure buffer TTL in seconds (default 6h)"

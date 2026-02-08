@@ -207,7 +207,7 @@ class SecurityCheckWorkflow:
         job_data: dict[str, Any],
         workflow_id: str,
     ) -> dict[str, Any]:
-        """Aggregate findings into report and deliver."""
+        """Aggregate findings into report (with PDF), then deliver."""
         job_metadata = {
             "report_id": job_data.get("report_id"),
             "project_id": job_data.get("project_id"),
@@ -226,18 +226,28 @@ class SecurityCheckWorkflow:
         )
         logger.info("Report generated: %s", report_result.get("report_id"))
 
+        # Delivery config includes mode, job metadata for DB updates
+        delivery_config = {
+            "delivery_mode": job_data.get("delivery_mode", "pull"),
+            "job_id": job_data.get("job_id"),
+            "project_id": job_data.get("project_id"),
+            "user_id": job_data.get("user_id"),
+            "script_format": job_data.get("script_format"),
+        }
+
         delivery_result = await workflow.execute_activity(
             deliver_report_activity,
-            args=[report_result, job_data.get("callback_url")],
+            args=[report_result, delivery_config],
             start_to_close_timeout=timedelta(minutes=5),
             retry_policy=_RETRY_DELIVERY,
         )
-        logger.info("Report delivered: %s", delivery_result.get("delivered"))
+        logger.info("Report delivered: %s (mode=%s)", delivery_result.get("delivered"), delivery_result.get("delivery_mode"))
 
         return {
             "status": "completed",
             "report_id": report_result.get("report_id"),
             "total_findings": report_result.get("total_findings"),
             "delivered": delivery_result.get("delivered"),
+            "delivery_mode": delivery_result.get("delivery_mode"),
             "workflow_id": workflow_id,
         }

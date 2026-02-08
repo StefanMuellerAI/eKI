@@ -93,6 +93,10 @@ class JobMetadata(Base):
     report_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     workflow_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, unique=True, index=True
+    )
+    delivery_mode: Mapped[str] = mapped_column(String(10), nullable=False, default="pull")
     extra_metadata: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
 
@@ -113,4 +117,6 @@ class ReportMetadata(Base):
     is_retrieved: Mapped[bool] = mapped_column(default=False, nullable=False)
     total_findings: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     processing_time_seconds: Mapped[float] = mapped_column(nullable=False)
+    report_ref_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    delivery_mode: Mapped[str] = mapped_column(String(10), nullable=False, default="pull")
     extra_metadata: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)

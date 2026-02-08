@@ -150,6 +150,13 @@ class SecurityCheckRequest(BaseModel):
     callback_url: HttpUrl | None = Field(
         None, description="Optional callback URL for async results"
     )
+    delivery: str = Field(
+        default="pull", description="Delivery mode: 'pull' (One-Shot GET) or 'push' (POST to ePro)"
+    )
+    idempotency_key: str | None = Field(
+        None, description="Optional idempotency key to prevent duplicate jobs",
+        max_length=255,
+    )
     metadata: dict[str, Any] = Field(
         default_factory=dict, description="Additional metadata for audit trail"
     )
@@ -396,6 +403,9 @@ class ReportResponse(BaseModel):
     """Response for report retrieval (one-shot pull mode)."""
 
     report: SecurityReport = Field(..., description="Security analysis report")
+    pdf_base64: str | None = Field(
+        None, description="Base64-encoded PDF report (human-readable)"
+    )
     message: str = Field(
         default="Report retrieved successfully. This URL is now invalidated.",
         description="Human-readable message",
