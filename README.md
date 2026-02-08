@@ -1,6 +1,6 @@
 # eKI API -- KI-gestuetzte Sicherheitspruefung fuer Drehbuecher
 
-**Version:** 0.2.0 (Meilenstein M02 abgeschlossen)
+**Version:** 0.3.0 (Meilenstein M03 abgeschlossen)
 **Auftraggeber:** Filmakademie Baden-Wuerttemberg
 **Auftragnehmer:** StefanAI -- Research & Development
 
@@ -44,14 +44,32 @@ Die eKI ist eine modulare REST-API, die Drehbuecher aus dem eProjekt-System der 
      └─────────────┘
 ```
 
-### Datenfluss (Async)
+### Zwei getrennte Workflows (M03)
 
-1. **Upload**: API empfaengt Drehbuch (JSON/Base64 oder Multipart FDX-Upload)
+Die Verarbeitung ist formatspezifisch aufgeteilt:
+
+**FDX-Workflow** (strukturiertes XML):
+```
+parse_fdx → analyze_scene_risk x N → aggregate_report → deliver
+```
+
+**PDF-Workflow** (unstrukturiert, LLM-gestuetzt):
+```
+extract_text → split_scenes → structure_scene_llm x N → aggregate_script
+  → analyze_scene_risk x N → aggregate_report → deliver
+```
+
+Beide Workflows teilen sich die Risikoanalyse (pro Szene) und Delivery-Activities.
+
+### Datenfluss
+
+1. **Upload**: API empfaengt Drehbuch (JSON/Base64 oder Multipart FDX/PDF-Upload)
 2. **SecureBuffer**: Inhalt wird AES-verschluesselt in Redis gespeichert (TTL max 6h)
 3. **Temporal**: Workflow erhaelt nur einen Redis-Referenzschluessel -- kein Skriptinhalt
-4. **Parser**: Worker holt Daten aus Redis, parst FDX in strukturiertes Szenenmodell
-5. **Analyse**: Risikoanalyse per LLM (Stub, echte Integration in M06)
-6. **Delivery**: Report wird an eProjekt zurueckgespielt, alle Buffer-Keys geloescht
+4. **Parser**: FDX wird direkt geparsed, PDF wird per INT/EXT-Split + LLM strukturiert
+5. **Risikoanalyse**: Jede Szene wird einzeln per LLM auf physische, umgebungs- und psychische Risiken geprueft
+6. **Report**: Findings werden programmatisch aggregiert (risk_summary, Zaehler)
+7. **Delivery**: Report wird an eProjekt zurueckgespielt, alle Buffer-Keys geloescht
 
 ---
 
@@ -60,12 +78,14 @@ Die eKI ist eine modulare REST-API, die Drehbuecher aus dem eProjekt-System der 
 | Komponente | Technologie | Zweck |
 |---|---|---|
 | Framework | Python 3.11+ / FastAPI | REST-API (ASGI) |
-| Workflow-Engine | Temporal 1.23.0 | Asynchrone Verarbeitung |
+| Workflow-Engine | Temporal 1.23.0 | Asynchrone Verarbeitung mit Activities |
 | Datenbank | PostgreSQL 16 + pgvector | Metadaten, Embeddings (spaeter) |
 | Cache | Redis 7 | SecureBuffer, Rate Limiting |
-| LLM | Ollama (Mistral Small 3.2) | Lokale Inferenz |
+| LLM | Ollama (Mistral Small 3.2) | Lokale Inferenz (Strukturierung + Risikoanalyse) |
 | LLM (Cloud) | Mistral Cloud API | Entwicklungsumgebung |
-| Parser | defusedxml | Sicheres XML-Parsing (XXE-Schutz) |
+| FDX-Parser | defusedxml | Sicheres XML-Parsing (XXE-Schutz) |
+| PDF-Parser | pdfplumber (MIT) | Text-Extraktion aus PDFs |
+| Prompt-Management | YAML + PromptManager | Versionierbare LLM-Prompts |
 | Verschluesselung | cryptography (Fernet) | AES-Verschluesselung transienter Daten |
 | Container | Docker / Docker Compose | Deployment |
 | Monitoring | Prometheus, OpenTelemetry | Metriken, Tracing |
@@ -78,7 +98,7 @@ Die eKI ist eine modulare REST-API, die Drehbuecher aus dem eProjekt-System der 
 
 - Docker & Docker Compose
 - Python 3.11+ (fuer lokale Entwicklung)
-- Optional: Ollama mit `mistral-small3.2` fuer lokale LLM-Inferenz
+- Ollama mit `mistral-small3.2` fuer LLM-Inferenz
 
 ### Setup
 
@@ -118,8 +138,8 @@ curl http://localhost:8000/health
 
 | Methode | Endpunkt | Beschreibung |
 |---|---|---|
-| `POST` | `/v1/security/check` | Synchroner Check -- JSON (Base64) oder Multipart FDX-Upload |
-| `POST` | `/v1/security/check:async` | Asynchroner Check via Temporal Workflow |
+| `POST` | `/v1/security/check` | Synchroner Check -- JSON (Base64) oder Multipart FDX/PDF-Upload |
+| `POST` | `/v1/security/check:async` | Asynchroner Check via Temporal Workflow (FDX oder PDF) |
 | `GET` | `/v1/security/jobs/{job_id}` | Job-Status abfragen (Ownership-Check) |
 | `GET` | `/v1/security/reports/{id}` | One-Shot-Report-Abholung (Pull-Modus) |
 
@@ -133,19 +153,11 @@ curl http://localhost:8000/health
 | `GET` | `/metrics` | Ja | Prometheus Metrics |
 | `GET` | `/docs` | Nein | Swagger UI (nur Development) |
 
-### Authentication
-
-```bash
-# Bearer-Token fuer alle /v1/security/* Endpoints
-curl -H "Authorization: Bearer eki_<your_api_key>" \
-     http://localhost:8000/v1/security/check ...
-```
-
 ### Upload-Formate
 
 **JSON (Base64):**
 ```bash
-curl -X POST http://localhost:8000/v1/security/check \
+curl -X POST http://localhost:8000/v1/security/check:async \
   -H "Authorization: Bearer eki_..." \
   -H "Content-Type: application/json" \
   -d '{"script_content": "<base64>", "project_id": "proj-1", "script_format": "fdx"}'
@@ -153,53 +165,62 @@ curl -X POST http://localhost:8000/v1/security/check \
 
 **Multipart (Datei-Upload):**
 ```bash
-curl -X POST http://localhost:8000/v1/security/check \
+curl -X POST http://localhost:8000/v1/security/check:async \
   -H "Authorization: Bearer eki_..." \
-  -F "file=@drehbuch.fdx" \
-  -F "project_id=proj-1"
+  -F "file=@drehbuch.pdf" \
+  -F "project_id=proj-1" \
+  -F "script_format=pdf"
 ```
 
 ---
 
 ## FDX-Parser (M02)
 
-Der Parser verarbeitet Final Draft XML (.fdx) Drehbuecher und extrahiert strukturierte Szenendaten.
+Verarbeitet Final Draft XML (.fdx) Drehbuecher mit `defusedxml` (XXE-Schutz). Alle Paragraph-Typen werden extrahiert: Scene Heading, Action, Character, Dialogue, Parenthetical, Transition, Shot. Deutsche und englische Scene Headings werden unterstuetzt (INT/EXT, INNEN/AUSSEN).
 
-### Unterstuetzte Elemente
+## PDF-Parser (M03)
 
-| FDX Paragraph-Type | Extrahierte Information |
-|---|---|
-| `Scene Heading` | Location, Innen/Aussen, Tageszeit, Szenennummer |
-| `Action` | Handlungsbeschreibung |
-| `Character` | Sprechende Figur |
-| `Dialogue` | Dialogtext |
-| `Parenthetical` | Regieanweisung im Dialog |
-| `Transition` | Szenenwechsel (CUT TO, FADE IN) |
-| `Shot` | Kameraanweisung |
+Verarbeitet PDF-Drehbuecher in drei Schritten:
 
-### Sprachunterstuetzung (Scene Headings)
+1. **Text-Extraktion** (pdfplumber): Seitenweise, in-memory, OCR-Erkennung fuer gescannte Seiten
+2. **Deterministischer Split** (Regex): Zuverlaessige Aufteilung an INT/EXT/INNEN/AUSSEN-Markern
+3. **LLM-Strukturierung** (Ollama/Mistral Structured Output): Jeder Szenenblock wird per KI in das ParsedScene-Schema ueberfuehrt -- Location, Characters, Dialogue, Action
 
-| Deutsch | Englisch | Ergebnis |
-|---|---|---|
-| `INNEN. BUERO - TAG` | `INT. OFFICE - DAY` | LocationType.INT, TimeOfDay.DAY |
-| `AUSSEN. WALD - NACHT` | `EXT. FOREST - NIGHT` | LocationType.EXT, TimeOfDay.NIGHT |
-| `INNEN/AUSSEN. AUTO - DAEMMERUNG` | `INT./EXT. CAR - DUSK` | LocationType.INT_EXT, TimeOfDay.DUSK |
+IDs, Zaehler und der Character-Index werden programmatisch vergeben, nicht von der KI.
 
-### XML-Sicherheit
+## Risikoanalyse (M03)
 
-Alle XML-Verarbeitung laeuft ueber `defusedxml`:
-- XXE (XML External Entity) Angriffe blockiert
-- Entity Expansion Bombs (Billion Laughs) blockiert
-- DTD-Processing deaktiviert
-- Groessenlimit: 10 MB
+Jede Szene wird **einzeln** per LLM auf Sicherheitsrisiken geprueft. Drei Kategorien:
+
+- **PHYSICAL**: Stunts, Hoehe, Wasser, Feuer, Fahrzeuge, Waffen, Nachtdreh
+- **ENVIRONMENTAL**: Gefaehrliche Locations, beengte Raeume, Rauch, Laerm
+- **PSYCHOLOGICAL**: Gewalt, Tod/Trauer, Missbrauch, sexualisierte Inhalte, Minderjaehrige
+
+Jedes Finding hat: `risk_level` (critical/high/medium/low/info), `category`, `description`, `recommendation`, `confidence`. Der Report aggregiert alle Findings programmatisch mit `risk_summary`.
+
+## Prompt-Management
+
+Alle LLM-Prompts werden zentral in `config/prompts/prompts.yaml` verwaltet:
+
+```yaml
+pdf_structuring:        # Szenen-Strukturierung aus PDF-Rohtext
+  scene: { system: ..., user: ... }
+  preamble: { system: ..., user: ... }
+
+risk_analysis:          # Risikoanalyse pro Szene
+  scene: { system: ..., user: ... }
+
+report_summary:         # Executive Summary (optional)
+  executive: { system: ..., user: ... }
+```
+
+Prompts koennen angepasst werden ohne Code-Aenderung. Variablen (`{scene_text}`, `{location}`, etc.) werden zur Laufzeit substituiert.
 
 ---
 
 ## Sicherheitsarchitektur
 
 ### Transiente Datenverarbeitung
-
-Drehbuchinhalte werden **niemals** dauerhaft gespeichert:
 
 - **SecureBuffer**: AES-verschluesselter Redis-Store (Fernet/HMAC-SHA256)
 - **TTL**: Maximal 6 Stunden, dann automatische Loeschung
@@ -210,10 +231,10 @@ Drehbuchinhalte werden **niemals** dauerhaft gespeichert:
 
 - **Authentifizierung**: Database-backed API Keys (SHA-256 Hashing, Ablaufdatum)
 - **Autorisierung**: Ownership-Checks gegen IDOR-Angriffe
-- **Input Validation**: Base64, SSRF-Prevention, SQL-Injection-Schutz
+- **Input Validation**: Base64 (FDX), PDF-Magic-Byte-Check, SSRF-Prevention
 - **Rate Limiting**: IP-basiert (60/min) + API-Key-basiert (1000/h)
 - **Prompt Injection Protection**: 15+ Muster-Erkennung fuer LLM-Inputs
-- **Secrets Management**: Docker Secrets, `.env.local` (nie in Git)
+- **XML-Sicherheit**: defusedxml (XXE, Entity Bombs, DTD blockiert)
 
 ---
 
@@ -223,33 +244,40 @@ Drehbuchinhalte werden **niemals** dauerhaft gespeichert:
 eKI_API/
 ├── api/                          # FastAPI Application
 │   ├── main.py                   # App-Instanz, CORS, Error Handling
-│   ├── config.py                 # Pydantic Settings (inkl. buffer_ttl)
+│   ├── config.py                 # Pydantic Settings
 │   ├── dependencies.py           # Dependency Injection, Auth
 │   ├── rate_limiting.py          # Rate Limiting
 │   └── routers/
 │       ├── health.py             # Health & Readiness
 │       └── security.py           # Security Endpoints (JSON + Multipart)
+├── config/
+│   └── prompts/
+│       └── prompts.yaml          # Zentrale LLM-Prompt-Verwaltung (M03)
 ├── core/                         # Kernkomponenten
-│   ├── models.py                 # Pydantic Schemas + Szenenmodell (M02)
-│   ├── db_models.py              # SQLAlchemy Models (Audit, Jobs, Reports)
+│   ├── models.py                 # Pydantic Schemas + Szenenmodell + Confidence
+│   ├── db_models.py              # SQLAlchemy Models
 │   ├── exceptions.py             # Custom Exceptions
 │   └── prompt_sanitizer.py       # Prompt Injection Protection
-├── parsers/                      # Drehbuch-Parser (M02)
-│   ├── base.py                   # Abstrakte ParserBase + Factory
-│   ├── fdx.py                    # Final Draft XML Parser
+├── parsers/                      # Drehbuch-Parser
+│   ├── base.py                   # Async ParserBase + Factory
+│   ├── fdx.py                    # Final Draft XML Parser (M02)
+│   ├── pdf.py                    # PDF Parser mit LLM-Strukturierung (M03)
+│   ├── pdf_scene_splitter.py     # Deterministischer INT/EXT-Split (M03)
+│   ├── pdf_llm_structurer.py     # LLM Structured Output pro Szene (M03)
 │   ├── scene_heading.py          # Scene-Heading-Parser (DE/EN)
-│   └── secure_xml.py             # defusedxml Wrapper (XXE-Schutz)
+│   └── secure_xml.py             # defusedxml Wrapper
 ├── services/
-│   ├── secure_buffer.py          # AES-verschluesselter Redis-Buffer (M02)
-│   └── security_service.py       # Security Service (Stub)
+│   ├── secure_buffer.py          # AES-verschluesselter Redis-Buffer
+│   └── security_service.py       # Security Service
 ├── workflows/                    # Temporal Workflows
-│   ├── security_check.py         # SecurityCheckWorkflow (4 Activities)
-│   └── activities.py             # Activities mit SecureBuffer-Integration
+│   ├── security_check.py         # FDX/PDF Workflow-Router (M03)
+│   └── activities.py             # 8 Activities inkl. LLM-Risikoanalyse (M03)
 ├── worker/
-│   └── main.py                   # Temporal Worker Entry Point
+│   └── main.py                   # Temporal Worker (8 Activities registriert)
 ├── llm/                          # LLM Provider Abstraktion
 │   ├── base.py                   # BaseLLMProvider Interface
 │   ├── factory.py                # Provider Factory
+│   ├── prompt_manager.py         # YAML Prompt Loader (M03)
 │   ├── ollama.py                 # Ollama Provider
 │   ├── mistral_cloud.py          # Mistral Cloud Provider
 │   └── local_mistral.py          # Local Mistral Alias
@@ -257,12 +285,13 @@ eKI_API/
 │   ├── session.py                # Async Session Management
 │   └── migrations/               # Alembic Migrations
 ├── tests/
-│   ├── test_fdx_parser.py        # 41 Parser/Security/Buffer Tests (M02)
+│   ├── test_fdx_parser.py        # 41 FDX/Security/Buffer Tests
+│   ├── test_pdf_parser.py        # 32 PDF/Splitter/LLM/PromptManager Tests
 │   ├── test_api.py               # API Endpoint Tests
 │   ├── test_security.py          # Security Feature Tests
 │   ├── test_config.py            # Config Parsing Tests
-│   ├── test_workflows.py         # Workflow Tests
-│   └── fixtures/fdx/             # 12 synthetische FDX-Testdateien
+│   ├── fixtures/fdx/             # 12 synthetische FDX-Testdateien
+│   └── fixtures/pdf/             # 5 synthetische PDF-Testdateien
 ├── scripts/                      # Utilities
 ├── openapi/                      # OpenAPI 3.1.1 Spezifikation
 ├── postman/                      # Postman Collection
@@ -275,48 +304,35 @@ eKI_API/
 ## Tests
 
 ```bash
-# Alle Tests
-pytest tests/ -v
+# Alle Parser-Tests (FDX + PDF)
+pytest tests/test_fdx_parser.py tests/test_pdf_parser.py -v
 
-# Nur FDX-Parser Tests (M02)
-pytest tests/test_fdx_parser.py -v
-
-# Nur Security-Tests
-pytest tests/test_security.py -v
+# Nur PDF-Tests
+pytest tests/test_pdf_parser.py -v
 
 # Mit Coverage
 pytest tests/ --cov --cov-report=html
 ```
 
-### Testabdeckung (M02)
+### Testabdeckung
 
 | Bereich | Tests | Beschreibung |
 |---|---|---|
 | Scene Heading Parser | 12 | DE/EN Formate, Edge Cases |
 | Secure XML | 5 | XXE, Entity Bomb, Malformed, Oversize |
 | FDX Parser | 12 | Alle Szenarien inkl. 55-Szenen-Performance |
-| Parser Factory | 3 | Format-Routing, Fehlerbehandlung |
+| PDF Scene Splitter | 12 | INT/EXT Split, Praeambel, DE/EN, reale PDFs |
+| PDF Text Extraction | 5 | pdfplumber, Oversize, Invalid, Benchmark |
+| LLM Structurer | 5 | Schema-Validierung, Fallback, Mock |
+| PromptManager | 6 | YAML laden, Variablen, Fehlerbehandlung |
+| Parser Factory | 5 | FDX + PDF Routing |
 | SecureBuffer | 7 | Encrypt/Decrypt, TTL, Cleanup |
-| Integration | 2 | Base64-Roundtrip, JSON-Serialisierung |
-| **Gesamt** | **41** | Alle bestanden |
-
-### Testdateien (FDX Fixtures)
-
-12 synthetische Drehbuecher fuer verschiedene Szenarien:
-- `simple_scene.fdx` -- Minimales Drehbuch (1 Szene)
-- `multi_scene.fdx` -- 5 Szenen, Parentheticals
-- `stunt_heavy.fdx` -- Physische Risiken (Stunts, Feuer, Hoehe)
-- `psychological.fdx` -- Psychische Belastungen
-- `german_format.fdx` -- Deutsche Szenenkoepfe (INNEN/AUSSEN/TAG/NACHT)
-- `large_script.fdx` -- 55 Szenen (Performance-Test)
-- `xxe_attack.fdx` -- XXE-Angriffsversuch (wird blockiert)
-- `entity_bomb.fdx` -- Billion-Laughs-Angriff (wird blockiert)
+| Integration | 4 | Base64-Roundtrip, Serialisierung, Benchmark |
+| **Gesamt** | **73** | Alle bestanden |
 
 ---
 
 ## LLM Provider
-
-Die API unterstuetzt drei LLM-Provider mit automatischem Prompt Injection Protection:
 
 ```bash
 # Ollama (empfohlen fuer lokale Entwicklung/Produktion)
@@ -327,38 +343,6 @@ OLLAMA_MODEL=mistral-small3.2
 # Mistral Cloud (Entwicklung)
 LLM_PROVIDER=mistral_cloud
 MISTRAL_API_KEY=your-key
-
-# Local Mistral (Alias fuer Ollama)
-LLM_PROVIDER=local_mistral
-```
-
----
-
-## Entwicklung
-
-### Code-Qualitaet
-
-```bash
-ruff check .          # Linting
-ruff format .         # Formatting
-mypy .                # Type Checking
-bandit -r api core    # Security Scan
-```
-
-### Datenbank
-
-```bash
-docker compose exec api alembic upgrade head       # Migrationen ausfuehren
-docker compose exec api alembic revision --autogenerate -m "beschreibung"  # Neue Migration
-docker compose exec api alembic downgrade -1       # Zurueckrollen
-```
-
-### Logs
-
-```bash
-docker compose logs -f api       # API-Logs
-docker compose logs -f worker    # Worker-Logs (Parser-Aktivitaet)
-docker compose logs --tail=50    # Letzte 50 Zeilen aller Services
 ```
 
 ---
@@ -369,7 +353,7 @@ docker compose logs --tail=50    # Letzte 50 Zeilen aller Services
 |---|---|---|---|
 | M01 | Projektgeruest & OpenAPI v0.1 | Abgeschlossen | API-Framework, Auth, CI/CD, Postman |
 | M02 | Parser Basis (FDX) & Testdataset | Abgeschlossen | FDX-Parser, Szenenmodell, SecureBuffer, 41 Tests |
-| M03 | PDF & Streaming-Parsing | Ausstehend | |
+| M03 | PDF & Streaming-Parsing | Abgeschlossen | PDF-Parser, LLM-Strukturierung, Prompt-YAML, Workflow-Refactoring, Risikoanalyse pro Szene, 73 Tests |
 | M04 | Risiko-Taxonomie v1 & Scoring | Ausstehend | |
 | M05 | Reports (JSON/PDF) & One-Shot-GET | Ausstehend | |
 | M06 | LLM-Adapter (Mistral API) & KB | Ausstehend | |

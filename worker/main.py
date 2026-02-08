@@ -13,10 +13,14 @@ from temporalio.worker import Worker
 
 from api.config import get_settings
 from workflows.activities import (
-    analyze_risks_activity,
+    aggregate_report_activity,
+    aggregate_script_activity,
+    analyze_scene_risk_activity,
     deliver_report_activity,
-    generate_report_activity,
-    parse_script_activity,
+    extract_pdf_text_activity,
+    parse_fdx_activity,
+    split_scenes_activity,
+    structure_scene_llm_activity,
 )
 from workflows.security_check import SecurityCheckWorkflow
 
@@ -49,9 +53,16 @@ async def main() -> None:
             task_queue=settings.temporal_task_queue,
             workflows=[SecurityCheckWorkflow],
             activities=[
-                parse_script_activity,
-                analyze_risks_activity,
-                generate_report_activity,
+                # FDX activities
+                parse_fdx_activity,
+                # PDF activities
+                extract_pdf_text_activity,
+                split_scenes_activity,
+                structure_scene_llm_activity,
+                aggregate_script_activity,
+                # Shared activities
+                analyze_scene_risk_activity,
+                aggregate_report_activity,
                 deliver_report_activity,
             ],
             max_concurrent_workflow_tasks=10,

@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import urlparse
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 
 class JobStatus(str, Enum):
@@ -87,6 +87,13 @@ class ParsedScene(BaseModel):
     action_text: str = Field(default="", description="Combined action/description text")
     dialogue: list[DialogueLine] = Field(default_factory=list, description="Dialogue lines")
     text: str = Field(default="", description="Full scene text (heading + action + dialogue)")
+    parse_confidence: float = Field(
+        default=1.0, ge=0.0, le=1.0,
+        description="Confidence of structural classification (1.0 = FDX/certain, 0.0 = failed)",
+    )
+    parse_method: str = Field(
+        default="fdx", description="Parser method: fdx, pdf_llm, pdf_fallback"
+    )
 
 
 class CharacterInfo(BaseModel):
@@ -111,6 +118,13 @@ class ParsedScript(BaseModel):
     )
     parsing_time_seconds: float = Field(..., description="Time taken to parse")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Parser metadata")
+    overall_confidence: float = Field(
+        default=1.0, ge=0.0, le=1.0,
+        description="Average parse confidence across all scenes",
+    )
+    warnings: list[str] = Field(
+        default_factory=list, description="Parser warnings (OCR needed, low confidence, etc.)"
+    )
 
 
 # Request Models
@@ -140,38 +154,40 @@ class SecurityCheckRequest(BaseModel):
         default_factory=dict, description="Additional metadata for audit trail"
     )
 
-    @field_validator("script_content")
-    @classmethod
-    def validate_script_content(cls, v: str) -> str:
-        """Validate base64 encoding and decoded size."""
+    @model_validator(mode="after")
+    def validate_script_content(self) -> "SecurityCheckRequest":
+        """Validate base64 encoding, size, and content type based on format."""
+        v = self.script_content
+        fmt = self.script_format
+
         if not v.strip():
             raise ValueError("Script content cannot be empty")
 
         try:
-            # Validate Base64 encoding
             decoded = base64.b64decode(v, validate=True)
+        except base64.binascii.Error:
+            raise ValueError("Invalid base64 encoding")
 
-            # Check decoded size (10MB limit)
-            max_size = 10 * 1024 * 1024
-            if len(decoded) > max_size:
-                raise ValueError(f"Decoded script exceeds {max_size} byte limit")
+        # Check decoded size (10MB limit)
+        max_size = 10 * 1024 * 1024
+        if len(decoded) > max_size:
+            raise ValueError(f"Decoded script exceeds {max_size} byte limit")
 
-            # Check for null bytes (potential binary exploit)
+        # Format-specific validation
+        if fmt == ScriptFormat.FDX:
+            # FDX is XML text -- validate no null bytes and valid UTF-8
             if b"\x00" in decoded[:1000]:
-                raise ValueError("Script contains invalid null bytes")
-
-            # Validate it's text
+                raise ValueError("FDX script contains invalid null bytes")
             try:
                 decoded[:1000].decode("utf-8")
             except UnicodeDecodeError:
-                raise ValueError("Script does not appear to be valid text")
+                raise ValueError("FDX script does not appear to be valid text")
+        elif fmt == ScriptFormat.PDF:
+            # PDF is binary -- just check it starts with %PDF
+            if not decoded[:5].startswith(b"%PDF"):
+                raise ValueError("File does not appear to be a valid PDF")
 
-            return v
-
-        except base64.binascii.Error:
-            raise ValueError("Invalid base64 encoding")
-        except Exception as e:
-            raise ValueError(f"Script validation failed: {str(e)}")
+        return self
 
     @field_validator("callback_url")
     @classmethod

@@ -115,6 +115,7 @@ services:
       - ./db:/app/db
       - ./llm:/app/llm
       - ./parsers:/app/parsers
+      - ./config:/app/config
       - ./scripts:/app/scripts
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
@@ -150,6 +151,7 @@ services:
       - ./db:/app/db
       - ./llm:/app/llm
       - ./parsers:/app/parsers
+      - ./config:/app/config
     networks:
       - eki-network
     restart: unless-stopped

@@ -143,10 +143,11 @@ class TestSecureXML:
 class TestFDXParser:
     """Tests for parsers.fdx.FDXParser."""
 
-    def test_simple_scene(self):
+    @pytest.mark.asyncio
+    async def test_simple_scene(self):
         content = _read_fixture("simple_scene.fdx")
         parser = FDXParser()
-        result = parser.parse(content)
+        result = await parser.parse(content)
 
         assert isinstance(result, ParsedScript)
         assert result.format == ScriptFormat.FDX
@@ -160,9 +161,10 @@ class TestFDXParser:
         assert len(result.scenes[0].dialogue) == 1
         assert result.scenes[0].dialogue[0].character == "ANNA"
 
-    def test_multi_scene(self):
+    @pytest.mark.asyncio
+    async def test_multi_scene(self):
         content = _read_fixture("multi_scene.fdx")
-        result = FDXParser().parse(content)
+        result = await FDXParser().parse(content)
 
         assert result.total_scenes == 5
         assert result.scenes[0].location == "PARK"
@@ -180,27 +182,30 @@ class TestFDXParser:
         maria_lines = [d for d in scene2_dialogue if d.character == "MARIA"]
         assert any(d.parenthetical == "nervous" for d in maria_lines)
 
-    def test_stunt_heavy(self):
+    @pytest.mark.asyncio
+    async def test_stunt_heavy(self):
         content = _read_fixture("stunt_heavy.fdx")
-        result = FDXParser().parse(content)
+        result = await FDXParser().parse(content)
 
         assert result.total_scenes == 4
         assert result.scenes[0].location == "CLIFF EDGE"
         assert result.scenes[1].location == "HIGHWAY"
         assert "explosion" in result.scenes[1].action_text.lower()
 
-    def test_psychological(self):
+    @pytest.mark.asyncio
+    async def test_psychological(self):
         content = _read_fixture("psychological.fdx")
-        result = FDXParser().parse(content)
+        result = await FDXParser().parse(content)
 
         assert result.total_scenes == 4
         # Child has a parenthetical whisper
         scene4_dialogue = result.scenes[3].dialogue
         assert any(d.parenthetical == "whispering" for d in scene4_dialogue)
 
-    def test_german_format(self):
+    @pytest.mark.asyncio
+    async def test_german_format(self):
         content = _read_fixture("german_format.fdx")
-        result = FDXParser().parse(content)
+        result = await FDXParser().parse(content)
 
         assert result.total_scenes == 3
         assert result.scenes[0].location_type == LocationType.INT
@@ -210,9 +215,10 @@ class TestFDXParser:
         assert result.scenes[2].location_type == LocationType.INT_EXT
         assert result.scenes[2].time_of_day == TimeOfDay.DUSK
 
-    def test_english_format(self):
+    @pytest.mark.asyncio
+    async def test_english_format(self):
         content = _read_fixture("english_format.fdx")
-        result = FDXParser().parse(content)
+        result = await FDXParser().parse(content)
 
         assert result.total_scenes == 3
         assert result.scenes[2].location_type == LocationType.INT_EXT
@@ -221,9 +227,10 @@ class TestFDXParser:
         jones_lines = result.scenes[2].dialogue
         assert any(d.parenthetical == "into radio" for d in jones_lines)
 
-    def test_empty_scenes(self):
+    @pytest.mark.asyncio
+    async def test_empty_scenes(self):
         content = _read_fixture("empty_scenes.fdx")
-        result = FDXParser().parse(content)
+        result = await FDXParser().parse(content)
 
         assert result.total_scenes == 3
         for scene in result.scenes:
@@ -231,38 +238,43 @@ class TestFDXParser:
             assert scene.dialogue == []
             assert scene.action_text == ""
 
-    def test_no_scene_numbers(self):
+    @pytest.mark.asyncio
+    async def test_no_scene_numbers(self):
         content = _read_fixture("no_scene_numbers.fdx")
-        result = FDXParser().parse(content)
+        result = await FDXParser().parse(content)
 
         assert result.total_scenes == 2
         assert result.scenes[0].number is None
         assert result.scenes[1].number is None
         assert result.scenes[0].time_of_day == TimeOfDay.MORNING
 
-    def test_large_script_performance(self):
+    @pytest.mark.asyncio
+    async def test_large_script_performance(self):
         content = _read_fixture("large_script.fdx")
         t0 = time.monotonic()
-        result = FDXParser().parse(content)
+        result = await FDXParser().parse(content)
         elapsed = time.monotonic() - t0
 
         assert result.total_scenes == 55
         assert elapsed < 1.0, f"Parsing took {elapsed:.2f}s, should be < 1s"
 
-    def test_invalid_root_tag_raises(self):
+    @pytest.mark.asyncio
+    async def test_invalid_root_tag_raises(self):
         xml = b"<NotFinalDraft><Content></Content></NotFinalDraft>"
         with pytest.raises(ParsingException, match="Not a valid FDX file"):
-            FDXParser().parse(xml)
+            await FDXParser().parse(xml)
 
-    def test_missing_content_raises(self):
+    @pytest.mark.asyncio
+    async def test_missing_content_raises(self):
         xml = b"<FinalDraft></FinalDraft>"
         with pytest.raises(ParsingException, match="no <Content> element"):
-            FDXParser().parse(xml)
+            await FDXParser().parse(xml)
 
-    def test_xxe_attack_blocked(self):
+    @pytest.mark.asyncio
+    async def test_xxe_attack_blocked(self):
         content = _read_fixture("xxe_attack.fdx")
         with pytest.raises(ParsingException):
-            FDXParser().parse(content)
+            await FDXParser().parse(content)
 
 
 # ===================================================================
@@ -374,21 +386,23 @@ class TestSecureBuffer:
 class TestParserIntegration:
     """Integration tests simulating the activity data flow."""
 
-    def test_base64_fdx_roundtrip(self):
+    @pytest.mark.asyncio
+    async def test_base64_fdx_roundtrip(self):
         """Simulate: base64 encode -> decode -> parse."""
         raw = _read_fixture("multi_scene.fdx")
         b64 = base64.b64encode(raw).decode("ascii")
 
         content = base64.b64decode(b64)
-        result = FDXParser().parse(content)
+        result = await FDXParser().parse(content)
 
         assert result.total_scenes == 5
         assert result.format == ScriptFormat.FDX
 
-    def test_parsed_script_serializable(self):
+    @pytest.mark.asyncio
+    async def test_parsed_script_serializable(self):
         """ParsedScript must be JSON-serializable for SecureBuffer storage."""
         content = _read_fixture("simple_scene.fdx")
-        result = FDXParser().parse(content)
+        result = await FDXParser().parse(content)
         dumped = result.model_dump(mode="json")
         assert isinstance(dumped, dict)
         assert dumped["total_scenes"] == 1

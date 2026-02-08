@@ -57,7 +57,7 @@ class FDXParser(ParserBase):
     def supported_format(self) -> ScriptFormat:
         return ScriptFormat.FDX
 
-    def parse(self, content: bytes) -> ParsedScript:
+    async def parse(self, content: bytes) -> ParsedScript:
         """Parse raw FDX bytes into a ``ParsedScript``."""
         t0 = time.monotonic()
 
