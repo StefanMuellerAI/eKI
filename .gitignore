@@ -59,6 +59,8 @@ secrets/*.pem
 
 # PDF documents (Pflichtenheft etc. -- nicht ins Repo)
 *.pdf
+# But keep test fixture PDFs
+!tests/fixtures/pdf/*.pdf
 
 # OS
 .DS_Store
