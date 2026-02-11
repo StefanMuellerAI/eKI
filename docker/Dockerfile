@@ -39,7 +39,11 @@ COPY core ./core
 COPY services ./services
 COPY workflows ./workflows
 COPY db ./db
+COPY llm ./llm
+COPY parsers ./parsers
+COPY config ./config
 COPY scripts ./scripts
+COPY tests/fixtures ./tests/fixtures
 COPY alembic.ini ./
 
 # Ensure /app is in Python path for module resolution
