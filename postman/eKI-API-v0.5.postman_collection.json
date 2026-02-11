@@ -29,6 +29,12 @@
       "description": "Create with: docker compose exec api python scripts/create_api_key.py --insert"
     },
     {
+      "key": "API_KEY_USER2",
+      "value": "eki_second_user_key_here",
+      "type": "string",
+      "description": "Second API key (different user_id) for IDOR tests"
+    },
+    {
       "key": "JOB_ID",
       "value": "",
       "type": "string",
@@ -39,6 +45,12 @@
       "value": "",
       "type": "string",
       "description": "Auto-set from job status response"
+    },
+    {
+      "key": "SCRIPT_B64",
+      "value": "",
+      "type": "string",
+      "description": "Auto-set by pre-request scripts"
     }
   ],
   "item": [
@@ -69,7 +81,7 @@
               "host": ["{{BASE_URL}}"],
               "path": ["ready"]
             },
-            "description": "Readiness probe - checks DB, Redis, Temporal\n\n**Expected:** 200 OK\n**Auth:** Bearer token"
+            "description": "Readiness probe - checks DB, Redis, Temporal\n\n**Expected:** 200 OK with services status\n**Auth:** Bearer token"
           }
         },
         {
@@ -82,7 +94,8 @@
               "raw": "{{BASE_URL}}/",
               "host": ["{{BASE_URL}}"],
               "path": [""]
-            }
+            },
+            "description": "API info and links to documentation"
           }
         },
         {
@@ -102,7 +115,7 @@
       "description": "System health and monitoring endpoints"
     },
     {
-      "name": "2. FDX Workflow (Complete)",
+      "name": "2. FDX Workflow (Async)",
       "item": [
         {
           "name": "Submit FDX Script (Async)",
@@ -124,13 +137,22 @@
               "listen": "prerequest",
               "script": {
                 "exec": [
-                  "const fdx = '<FinalDraft DocumentType=\"Script\"><Content>'+",
+                  "const fdx = '<?xml version=\"1.0\" encoding=\"UTF-8\"?>'+",
+                  "'<FinalDraft DocumentType=\"Script\" Template=\"No\" Version=\"4\"><Content>'+",
                   "'<Paragraph Type=\"Scene Heading\" Number=\"1\"><Text>EXT. CLIFF EDGE - NIGHT</Text></Paragraph>'+",
-                  "'<Paragraph Type=\"Action\"><Text>A stunt performer stands at the edge of a 15-meter cliff. Below, dark water churns.</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Action\"><Text>A stunt performer stands at the edge of a 15-meter cliff. Below, dark water churns. Safety divers are positioned in the water. The performer checks the harness one last time, then jumps.</Text></Paragraph>'+",
                   "'<Paragraph Type=\"Character\"><Text>STUNT COORDINATOR</Text></Paragraph>'+",
-                  "'<Paragraph Type=\"Dialogue\"><Text>Jump on my mark!</Text></Paragraph>'+",
-                  "'<Paragraph Type=\"Scene Heading\" Number=\"2\"><Text>INT. BURNING BUILDING - NIGHT</Text></Paragraph>'+",
-                  "'<Paragraph Type=\"Action\"><Text>Flames engulf the hallway. A firefighter carries an unconscious child through the inferno.</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Dialogue\"><Text>Clear the zone! Jump on my mark!</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Scene Heading\" Number=\"2\"><Text>EXT. HIGHWAY - DAY</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Action\"><Text>Three cars race at high speed along the highway. The lead car swerves, narrowly avoiding a truck. Sparks fly as metal scrapes the guardrail. A massive explosion erupts behind them as a fuel tanker ignites.</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Character\"><Text>DRIVER</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Dialogue\"><Text>Hold on tight!</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Scene Heading\" Number=\"3\"><Text>INT. BURNING BUILDING - NIGHT</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Action\"><Text>Flames engulf the hallway. Smoke makes visibility near zero. A firefighter carries an unconscious child through the inferno. The ceiling collapses behind them.</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Scene Heading\" Number=\"4\"><Text>EXT. ROOFTOP - DAY</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Action\"><Text>Two fighters engage in hand-to-hand combat on the roof of a 20-story building. One performer is thrown near the edge. Weapons are drawn - prop knives and a replica firearm.</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Character\"><Text>HERO</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Dialogue\"><Text>This ends now.</Text></Paragraph>'+",
                   "'</Content></FinalDraft>';",
                   "const b64 = CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(fdx));",
                   "pm.collectionVariables.set('SCRIPT_B64', b64);"
@@ -152,7 +174,7 @@
               "host": ["{{BASE_URL}}"],
               "path": ["v1", "security", "check:async"]
             },
-            "description": "Submit an FDX script for async security analysis.\n\n**Expected:** 202 Accepted with job_id\n**Next:** Poll job status until completed, then fetch report"
+            "description": "Submit a 4-scene FDX stunt script for async security analysis.\n\nScenes: cliff jump, highway chase with explosion, burning building, rooftop fight.\n\n**Expected:** 202 Accepted with job_id\n**Pipeline:** parse FDX -> risk analysis per scene (LLM) -> aggregate report (JSON+PDF) -> deliver\n**Next:** Poll job status until completed, then fetch report"
           }
         },
         {
@@ -194,7 +216,7 @@
               "host": ["{{BASE_URL}}"],
               "path": ["v1", "security", "reports", "{{REPORT_ID}}"]
             },
-            "description": "ONE-SHOT: Fetches JSON report + PDF (base64).\n\n**WARNING:** This URL is invalidated after the first successful call!\n**Response contains:**\n- report: Full JSON with findings, measures, scores\n- pdf_base64: Base64-encoded PDF report\n\n**Second call returns:** 410 Gone"
+            "description": "ONE-SHOT: Fetches JSON report + PDF (base64).\n\n**WARNING:** This URL is invalidated after the first successful call!\n**Response contains:**\n- report: Full JSON with findings, risk_summary, measures, scores\n- pdf_base64: Base64-encoded PDF report (Executive Summary + Findings + Checkliste)\n\n**Second call returns:** 410 Gone"
           }
         },
         {
@@ -211,10 +233,10 @@
           }
         }
       ],
-      "description": "Complete FDX workflow: Submit -> Poll -> Fetch Report -> Verify One-Shot"
+      "description": "Complete FDX workflow: Submit -> Poll -> Fetch Report -> Verify One-Shot\n\nUses the real LLM pipeline with taxonomy-based risk analysis."
     },
     {
-      "name": "3. PDF Workflow (Complete)",
+      "name": "3. PDF Workflow (Async)",
       "item": [
         {
           "name": "Submit PDF Script (Multipart)",
@@ -267,7 +289,7 @@
               "host": ["{{BASE_URL}}"],
               "path": ["v1", "security", "check:async"]
             },
-            "description": "Submit a PDF screenplay via multipart file upload.\n\n**How to use:**\n1. Click 'Select Files' next to the 'file' field\n2. Choose a .pdf screenplay file\n3. Send the request\n\n**Pipeline:** extract text -> split at INT/EXT -> LLM structuring -> risk analysis"
+            "description": "Submit a PDF screenplay via multipart file upload.\n\n**How to use:**\n1. Click 'Select Files' next to the 'file' field\n2. Choose a .pdf screenplay file\n3. Send the request\n\n**Pipeline:** extract text -> split at INT/EXT -> LLM structuring per scene -> risk analysis per scene -> aggregate report (JSON+PDF) -> deliver"
           }
         },
         {
@@ -281,7 +303,8 @@
                   "if (resp.report_id) {",
                   "    pm.collectionVariables.set('REPORT_ID', resp.report_id);",
                   "    console.log('PDF REPORT_ID saved:', resp.report_id);",
-                  "}"
+                  "}",
+                  "console.log('Status:', resp.status, 'Progress:', resp.progress_percentage);"
                 ],
                 "type": "text/javascript"
               }
@@ -295,7 +318,7 @@
               "host": ["{{BASE_URL}}"],
               "path": ["v1", "security", "jobs", "{{JOB_ID}}"]
             },
-            "description": "Poll until completed. PDF workflows take longer due to LLM structuring."
+            "description": "Poll until completed. PDF workflows take longer due to LLM structuring step."
           }
         },
         {
@@ -308,14 +331,14 @@
               "host": ["{{BASE_URL}}"],
               "path": ["v1", "security", "reports", "{{REPORT_ID}}"]
             },
-            "description": "ONE-SHOT: JSON report + PDF. Same as FDX report endpoint."
+            "description": "ONE-SHOT: JSON report + PDF. Same as FDX report endpoint.\n\n**WARNING:** URL is invalidated after first retrieval!"
           }
         }
       ],
-      "description": "Complete PDF workflow: Upload file -> Poll -> Fetch Report"
+      "description": "Complete PDF workflow: Upload file -> Poll -> Fetch Report\n\nPDF pipeline includes LLM-based scene structuring before risk analysis."
     },
     {
-      "name": "4. Sync Check (Quick Test)",
+      "name": "4. Sync Check (Stub)",
       "item": [
         {
           "name": "Sync FDX Check (JSON)",
@@ -324,9 +347,10 @@
               "listen": "prerequest",
               "script": {
                 "exec": [
-                  "const fdx = '<FinalDraft DocumentType=\"Script\"><Content>'+",
+                  "const fdx = '<?xml version=\"1.0\" encoding=\"UTF-8\"?>'+",
+                  "'<FinalDraft DocumentType=\"Script\"><Content>'+",
                   "'<Paragraph Type=\"Scene Heading\" Number=\"1\"><Text>INT. OFFICE - DAY</Text></Paragraph>'+",
-                  "'<Paragraph Type=\"Action\"><Text>A woman reviews documents.</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Action\"><Text>A woman reviews documents at her desk.</Text></Paragraph>'+",
                   "'</Content></FinalDraft>';",
                   "const b64 = CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(fdx));",
                   "pm.collectionVariables.set('SCRIPT_B64', b64);"
@@ -348,7 +372,7 @@
               "host": ["{{BASE_URL}}"],
               "path": ["v1", "security", "check"]
             },
-            "description": "Quick synchronous check (returns stub report, no LLM)."
+            "description": "Quick synchronous check.\n\n**Note:** Returns a stub report (M01). For real LLM-based analysis, use the async endpoint."
           }
         },
         {
@@ -377,11 +401,11 @@
               "host": ["{{BASE_URL}}"],
               "path": ["v1", "security", "check"]
             },
-            "description": "Synchronous PDF check via file upload."
+            "description": "Synchronous PDF check via file upload.\n\n**Note:** Returns a stub report (M01). For real analysis, use the async endpoint."
           }
         }
       ],
-      "description": "Quick synchronous checks for testing"
+      "description": "Quick synchronous checks (stub responses).\n\nFor real LLM-based risk analysis, use the async workflows in sections 2 and 3."
     },
     {
       "name": "5. Security Tests",
@@ -402,7 +426,7 @@
               "host": ["{{BASE_URL}}"],
               "path": ["v1", "security", "check"]
             },
-            "description": "**Expected:** 401 Unauthorized"
+            "description": "**Expected:** 401 Unauthorized\n\nRequest without Authorization header."
           }
         },
         {
@@ -410,7 +434,7 @@
           "request": {
             "auth": {
               "type": "bearer",
-              "bearer": [{ "key": "token", "value": "eki_invalid_key", "type": "string" }]
+              "bearer": [{ "key": "token", "value": "eki_invalid_key_here", "type": "string" }]
             },
             "method": "POST",
             "header": [],
@@ -424,7 +448,25 @@
               "host": ["{{BASE_URL}}"],
               "path": ["v1", "security", "check"]
             },
-            "description": "**Expected:** 401 Unauthorized"
+            "description": "**Expected:** 401 Unauthorized\n\nRequest with invalid/unknown API key."
+          }
+        },
+        {
+          "name": "Test: Invalid Base64 (422)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"this-is-not-valid-base64!!!\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test123\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check"]
+            },
+            "description": "**Expected:** 422 Validation Error\n\nInvalid base64 in script_content."
           }
         },
         {
@@ -442,11 +484,11 @@
               "host": ["{{BASE_URL}}"],
               "path": ["v1", "security", "check"]
             },
-            "description": "**Expected:** 422 Validation Error (project_id format)"
+            "description": "**Expected:** 422 Validation Error\n\nSQL injection attempt in project_id (only alphanumeric + hyphens allowed)."
           }
         },
         {
-          "name": "Test: SSRF Prevention (422)",
+          "name": "Test: SSRF Private IP (422)",
           "request": {
             "method": "POST",
             "header": [],
@@ -460,7 +502,42 @@
               "host": ["{{BASE_URL}}"],
               "path": ["v1", "security", "check"]
             },
-            "description": "**Expected:** 422 - Callback URL with private IP blocked"
+            "description": "**Expected:** 422 Validation Error\n\nCallback URL with private IP blocked (SSRF prevention)."
+          }
+        },
+        {
+          "name": "Test: SSRF Non-Whitelisted Domain (422)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"dGVzdA==\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test123\",\n  \"callback_url\": \"https://evil-domain.com/steal-data\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check"]
+            },
+            "description": "**Expected:** 422 Validation Error\n\nOnly whitelisted domains allowed for callback_url (epro.filmakademie.de, epro-stage.filmakademie.de)."
+          }
+        },
+        {
+          "name": "Test: IDOR - Other User's Job (404)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{API_KEY_USER2}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/jobs/{{JOB_ID}}",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "jobs", "{{JOB_ID}}"]
+            },
+            "description": "**Expected:** 404 Not Found\n\n**Setup:** Requires API_KEY_USER2 variable (different user_id than API_KEY).\nAccessing another user's job via a different API key should return 404 (ownership check)."
           }
         },
         {
@@ -470,8 +547,10 @@
               "listen": "prerequest",
               "script": {
                 "exec": [
-                  "const fdx = '<FinalDraft DocumentType=\"Script\"><Content>'+",
+                  "const fdx = '<?xml version=\"1.0\" encoding=\"UTF-8\"?>'+",
+                  "'<FinalDraft DocumentType=\"Script\"><Content>'+",
                   "'<Paragraph Type=\"Scene Heading\"><Text>INT. TEST - DAY</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Action\"><Text>A simple test scene.</Text></Paragraph>'+",
                   "'</Content></FinalDraft>';",
                   "const b64 = CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(fdx));",
                   "pm.collectionVariables.set('SCRIPT_B64', b64);"
@@ -493,17 +572,17 @@
               "host": ["{{BASE_URL}}"],
               "path": ["v1", "security", "check:async"]
             },
-            "description": "Send twice with same idempotency_key.\n\n**Expected:** Second call returns same job_id (no duplicate)."
+            "description": "Send twice with same idempotency_key.\n\n**Expected:** Second call returns same job_id (no duplicate workflow created)."
           }
         }
       ],
-      "description": "Security and validation tests"
+      "description": "Security and validation tests.\n\nRun all requests - each should return the expected error code."
     },
     {
       "name": "6. Documentation",
       "item": [
         {
-          "name": "Swagger UI",
+          "name": "Swagger UI (Dev only)",
           "request": {
             "auth": { "type": "noauth" },
             "method": "GET",
@@ -513,7 +592,7 @@
               "host": ["{{BASE_URL}}"],
               "path": ["docs"]
             },
-            "description": "Interactive API docs (development only)"
+            "description": "Interactive API docs.\n\n**Dev:** 200 OK\n**Production (DEBUG=false):** 404 Not Found"
           }
         },
         {
@@ -526,10 +605,12 @@
               "raw": "{{BASE_URL}}/openapi.json",
               "host": ["{{BASE_URL}}"],
               "path": ["openapi.json"]
-            }
+            },
+            "description": "Machine-readable OpenAPI 3.1 specification"
           }
         }
-      ]
+      ],
+      "description": "API documentation endpoints"
     }
   ]
 }

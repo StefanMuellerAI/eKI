@@ -1,265 +1,117 @@
-# eKI API - Postman Collection
+# eKI API - Postman Collection v0.5
 
-Diese Postman Collection enthält alle API-Endpunkte der eKI API mit vollständiger Security-Integration.
+Diese Postman Collection enthält alle API-Endpunkte der eKI API mit vollständiger LLM-Risikoanalyse.
 
-## 📥 Import
+## Import
 
-### Option 1: Direkt importieren
 1. Öffne Postman
 2. Click auf **Import**
-3. Wähle `eKI-API-v0.1.postman_collection.json`
+3. Wähle `eKI-API-v0.5.postman_collection.json`
 4. Click **Import**
 
-### Option 2: Von GitHub
-```
-Import → Link → Paste URL
-```
+## Setup
 
-## 🔑 Setup
-
-### 1. API-Key erstellen
+### 1. Services starten
 
 ```bash
-# Im eki-api Verzeichnis
-python scripts/create_api_key.py
+docker compose up -d
+
+# Migrationen ausführen
+docker compose exec api alembic upgrade head
 ```
 
-Beispiel-Output:
-```
-API Key: eki_1332f79e4acc2e1d8970c11b3f1eb036e757549df356fcfab18de4b1e803288d
+### 2. API-Key erstellen
+
+```bash
+docker compose exec api python scripts/create_api_key.py --insert
 ```
 
-### 2. Variablen setzen
+### 3. Variablen setzen
 
 In Postman, gehe zu **Variables** Tab und setze:
 
 | Variable | Wert | Beschreibung |
 |----------|------|--------------|
 | `BASE_URL` | `http://localhost:8000` | API Base URL |
-| `API_KEY` | `eki_your_key_here` | API Key von Schritt 1 |
-| `API_KEY_USER2` | `eki_second_key` | Zweiter Key für IDOR-Tests |
-| `ACTOR_USER_ID` | `test-user-123` | User ID für Audit Trail |
-| `ACTOR_PROJECT_ID` | `test-project-456` | Project ID für Audit Trail |
+| `API_KEY` | `eki_your_key_here` | API Key von Schritt 2 |
+| `API_KEY_USER2` | `eki_second_key` | Zweiter Key (anderer user_id) für IDOR-Tests |
 
-### 3. Services starten
+`JOB_ID`, `REPORT_ID` und `SCRIPT_B64` werden automatisch durch Pre-Request und Test Scripts gesetzt.
 
-```bash
-docker compose up -d
-```
-
-Warte bis alle Services healthy sind:
-```bash
-docker compose ps
-# Alle sollten "healthy" zeigen
-```
-
-## 📁 Collection-Struktur
+## Collection-Struktur
 
 ### 1. Health & System
-- **Health Check** - Liveness Probe
-- **Readiness Check** - Dependency Status
-- **Root Endpoint** - API Information
+- **Health Check** - Liveness Probe (kein Auth)
+- **Readiness Check** - DB, Redis, Temporal Status (Auth)
+- **Root Endpoint** - API-Info (kein Auth)
+- **Metrics** - Prometheus Metrics (Auth)
 
-### 2. Security Checks (Authenticated)
-- **Synchronous Security Check** - Sync Script Analysis
-- **Asynchronous Security Check** - Async with Temporal
-- **Get Job Status** - Query Job State
-- **Get Report (One-Shot)** - Retrieve Report (only once)
+### 2. FDX Workflow (Async) - Echte LLM-Pipeline
+- **Submit FDX Script** - 4-Szenen Stunt-Script (Base64/JSON)
+- **Poll Job Status** - Warten bis completed
+- **Fetch Report (One-Shot!)** - JSON + PDF Report
+- **Verify One-Shot** - Zweiter Abruf = 410 Gone
 
-### 3. Security Tests
-- **Test: Missing Authentication** - Expect 401
-- **Test: Invalid API Key** - Expect 401
-- **Test: Invalid Base64** - Expect 422
-- **Test: SSRF - Private IP** - Expect 422
-- **Test: SSRF - Non-Whitelisted Domain** - Expect 422
-- **Test: SQL Injection in Project ID** - Expect 422
-- **Test: IDOR - Access Other User Job** - Expect 404
+### 3. PDF Workflow (Async) - Echte LLM-Pipeline
+- **Submit PDF Script** - Multipart Datei-Upload
+- **Poll PDF Job Status** - Warten bis completed
+- **Fetch PDF Report (One-Shot!)** - JSON + PDF Report
 
-### 4. Documentation
-- **OpenAPI Spec** - OpenAPI JSON (dev only)
-- **Swagger UI** - Interactive Docs (dev only)
-- **Metrics** - Prometheus Metrics
+### 4. Sync Check (Stub)
+- **Sync FDX Check** - Sofortige Stub-Response (kein LLM)
+- **Sync PDF Check** - Sofortige Stub-Response (kein LLM)
 
-## 🧪 Testing Workflow
+> **Hinweis:** Der synchrone Endpoint liefert aktuell eine M01-Stub-Response.
+> Für echte LLM-basierte Risikoanalyse den **async Endpoint** verwenden (Sektion 2 und 3).
 
-### Happy Path Test
-1. **Health Check** → Verify API is running
-2. **Synchronous Security Check** → Get immediate report
-3. **Asynchronous Security Check** → Start long-running job
-4. **Get Job Status** → Check job progress
-5. **Get Report** → Retrieve final report
+### 5. Security Tests
+- **Missing Auth (401)** - Request ohne Authorization Header
+- **Invalid API Key (401)** - Ungültiger API Key
+- **Invalid Base64 (422)** - Ungültiges Base64 in script_content
+- **SQL Injection (422)** - SQL Injection in project_id
+- **SSRF Private IP (422)** - Callback URL mit privater IP
+- **SSRF Non-Whitelisted Domain (422)** - Callback URL mit nicht-whitelisted Domain
+- **IDOR Other User's Job (404)** - Zugriff auf fremden Job (benötigt API_KEY_USER2)
+- **Idempotency (Same Key)** - Gleicher idempotency_key = gleicher Job
+
+### 6. Documentation
+- **Swagger UI** - Interaktive Docs (nur Development)
+- **OpenAPI Spec** - OpenAPI 3.1 JSON
+
+## Testing Workflows
+
+### Happy Path (FDX)
+1. **Submit FDX Script (Async)** -> 202 mit job_id (automatisch gespeichert)
+2. **Poll Job Status** -> wiederholen bis status=completed
+3. **Fetch Report** -> JSON mit Findings + PDF als Base64
+4. **Verify One-Shot** -> 410 Gone bestätigt Löschung
+
+### Happy Path (PDF)
+1. **Submit PDF Script (Multipart)** -> PDF-Datei auswählen, 202
+2. **Poll PDF Job Status** -> wiederholen (PDF dauert länger wegen LLM-Strukturierung)
+3. **Fetch PDF Report** -> JSON + PDF
 
 ### Security Test Suite
-Run alle Requests im **"3. Security Tests"** Ordner:
-- Alle sollten mit den erwarteten Error-Codes antworten
-- Keine sollte 200 OK zurückgeben (außer mit korrektem Key)
+1. Select Ordner **"5. Security Tests"**
+2. Rechtsklick -> **Run folder**
+3. Alle Tests sollten die erwarteten Error-Codes liefern
 
-## 🔒 Security Features
+## Sicherheitsfeatures
 
-### Authentication
-Alle `/v1/security/*` Endpoints benötigen:
-```
-Authorization: Bearer eki_your_api_key_here
-```
-
-**Test:**
-- ✅ Mit Key → 200 OK
-- ❌ Ohne Key → 401 Unauthorized
-- ❌ Ungültiger Key → 401 Unauthorized
-
-### Rate Limiting
-- **IP-based:** 60 Requests/Minute
-- **API Key-based:** 1000 Requests/Stunde
-
-Bei Überschreitung: `429 Too Many Requests` mit `Retry-After` Header
-
-### Input Validation
-
-**Base64:**
-- Script Content muss gültiges Base64 sein
-- Max 10MB decoded size
-
-**SSRF Prevention:**
-- Callback URLs müssen whitelisted domains sein:
-  - `epro.filmakademie.de`
-  - `epro-stage.filmakademie.de`
-- Private IPs sind blockiert (192.168.x.x, 10.x.x.x, 127.x.x.x)
-
-**SQL Injection:**
-- `project_id` nur alphanumerisch + Bindestriche + Unterstriche
-- Pattern: `^[a-zA-Z0-9_-]{1,100}$`
-
-### IDOR Prevention
-- User können nur eigene Jobs/Reports abrufen
-- Zugriff auf fremde Ressourcen → `404 Not Found`
-
-### One-Shot Reports
-- Reports können nur EINMAL abgerufen werden
-- Zweiter Zugriff → `410 Gone`
-
-## 📊 Expected Responses
-
-### Successful Responses
-
-**Health Check:**
-```json
-{
-  "status": "healthy",
-  "timestamp": "2026-01-30T10:00:00.000000",
-  "version": "0.1.0"
-}
-```
-
-**Sync Security Check:**
-```json
-{
-  "report": {
-    "report_id": "uuid",
-    "project_id": "test-project-123",
-    "script_format": "fdx",
-    "created_at": "2026-01-30T10:00:00",
-    "risk_summary": {"critical": 0, "high": 0, ...},
-    "total_findings": 1,
-    "findings": [...],
-    "processing_time_seconds": 0.1
-  },
-  "message": "Security check completed successfully"
-}
-```
-
-**Async Security Check:**
-```json
-{
-  "job_id": "uuid",
-  "status": "pending",
-  "message": "Security check job created successfully",
-  "status_url": "/v1/security/jobs/uuid",
-  "estimated_completion_seconds": 120
-}
-```
-
-### Error Responses
-
-**401 Unauthorized:**
-```json
-{
-  "detail": "Missing authorization header"
-}
-```
-
-**422 Validation Error:**
-```json
-{
-  "error": "ValidationError",
-  "message": "Request validation failed",
-  "details": [
-    {
-      "field": "script_content",
-      "message": "Invalid base64 encoding",
-      "error_code": "value_error"
-    }
-  ]
-}
-```
-
-**429 Too Many Requests:**
-```json
-{
-  "detail": "Rate limit exceeded. Maximum 60 requests per 60 seconds."
-}
-```
-Headers: `Retry-After: 30`
-
-## 🐛 Troubleshooting
-
-### "Connection refused"
-```bash
-# Check if services are running
-docker compose ps
-
-# Start services if needed
-docker compose up -d
-```
-
-### "401 Unauthorized"
-```bash
-# Verify API key is set correctly in Postman Variables
-# Create new API key if needed
-python scripts/create_api_key.py
-```
-
-### "422 Validation Error"
-- Check Base64 encoding
-- Verify callback_url is whitelisted domain
-- Ensure project_id matches pattern
-
-### "404 Not Found" on Job/Report
-- Verify you're using the correct API key (IDOR protection)
-- Check that job_id/report_id exists and belongs to your user
-
-## 📚 Additional Resources
-
-- **README.md** - Full API documentation
-- **DEPLOYMENT_GUIDE.md** - Production deployment
-- **TESTING_GUIDE.md** - Testing documentation
-- **SECURITY_AUDIT_SUMMARY.md** - Security features
-
-## 🎯 Quick Test Script
-
-Alle Tests in **"3. Security Tests"** ausführen:
-1. Select folder "3. Security Tests"
-2. Right-click → Run folder
-3. Alle Tests sollten erwartete Error-Codes liefern
-
-## 📝 Notes
-
-- **M01 Stub:** Endpoints geben Mock-Daten zurück
-- **Production:** Swagger UI (`/docs`) ist hidden wenn `DEBUG=false`
-- **Temporal:** Worker muss laufen für async jobs
-- **Database:** PostgreSQL muss migrations haben (`alembic upgrade head`)
+| Feature | Test | Erwartung |
+|---------|------|-----------|
+| Auth erforderlich | Missing Auth | 401 |
+| Key-Validierung | Invalid API Key | 401 |
+| Input-Validierung | Invalid Base64 | 422 |
+| SQL Injection Schutz | SQL in project_id | 422 |
+| SSRF Prevention | Private IP / Non-Whitelisted | 422 |
+| IDOR Prevention | Fremder Job | 404 |
+| One-Shot Reports | Zweiter Abruf | 410 |
+| Idempotenz | Gleicher Key | Gleiche job_id |
+| Rate Limiting | 60/min IP, 1000/h Key | 429 |
 
 ---
 
-**Version:** 0.1.0-security  
-**Last Updated:** 2026-01-30  
-**Status:** ✅ Production Ready
+**Version:** 0.5.0
+**Last Updated:** 2026-02-11
+**Status:** Production Ready
