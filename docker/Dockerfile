@@ -39,7 +39,11 @@ COPY core ./core
 COPY services ./services
 COPY workflows ./workflows
 COPY db ./db
+COPY scripts ./scripts
 COPY alembic.ini ./
+
+# Ensure /app is in Python path for module resolution
+ENV PYTHONPATH=/app
 
 # Create non-root user
 RUN useradd -m -u 1000 eki && chown -R eki:eki /app

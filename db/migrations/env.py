@@ -18,8 +18,10 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Set SQLAlchemy URL from settings
+# Escape '%' as '%%' because configparser treats '%' as interpolation syntax
 settings = get_settings()
-config.set_main_option("sqlalchemy.url", str(settings.database_url).replace("+asyncpg", ""))
+db_url = str(settings.database_url).replace("+asyncpg", "").replace("%", "%%")
+config.set_main_option("sqlalchemy.url", db_url)
 
 # add your model's MetaData object here
 # for 'autogenerate' support
