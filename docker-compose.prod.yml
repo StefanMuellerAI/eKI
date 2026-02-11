@@ -3,21 +3,16 @@
 
 services:
   postgres:
-    environment:
-      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    # POSTGRES_PASSWORD comes from .env.local (env_file in base compose)
+    # Do NOT use POSTGRES_PASSWORD_FILE here -- it conflicts with POSTGRES_PASSWORD
     ports: []
-    secrets:
-      - db_password
 
   redis:
     ports: []
 
   temporal:
-    environment:
-      - POSTGRES_PWD_FILE=/run/secrets/db_password
+    # POSTGRES_PWD comes from .env.local (env_file in base compose)
     ports: []
-    secrets:
-      - db_password
 
   temporal-ui:
     ports: []
