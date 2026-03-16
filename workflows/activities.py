@@ -94,21 +94,25 @@ async def extract_pdf_text_activity(job_data: dict[str, Any]) -> dict[str, Any]:
 
     from parsers.pdf import extract_pdf_text
 
-    full_text, ocr_pages = extract_pdf_text(content_bytes)
+    full_text, page_texts, ocr_pages, warnings = extract_pdf_text(content_bytes)
 
-    text_ref = await buffer.store({"full_text": full_text})
+    text_ref = await buffer.store({
+        "full_text": full_text,
+        "page_texts": page_texts,
+    })
     await buffer.delete(ref_key)
 
     return {
         "text_ref_key": text_ref,
         "ocr_pages_skipped": ocr_pages,
         "text_length": len(full_text),
+        "extraction_warnings": warnings,
     }
 
 
 @activity.defn(name="split_scenes")
 async def split_scenes_activity(job_data: dict[str, Any]) -> dict[str, Any]:
-    """Split extracted text at INT/EXT markers."""
+    """Split extracted text at INT/EXT markers (with page-based fallback)."""
     text_ref_key = job_data.get("text_ref_key", "")
     logger.info("Splitting PDF text into scenes")
 
@@ -116,10 +120,16 @@ async def split_scenes_activity(job_data: dict[str, Any]) -> dict[str, Any]:
 
     text_data = await buffer.retrieve(text_ref_key)
     full_text = text_data["full_text"]
+    page_texts = text_data.get("page_texts")
 
     from parsers.pdf_scene_splitter import split_into_scenes
 
-    blocks = split_into_scenes(full_text)
+    blocks = split_into_scenes(full_text, page_texts=page_texts)
+
+    used_page_fallback = any(
+        not b.is_preamble and b.heading_line.startswith("PAGE ")
+        for b in blocks
+    )
 
     # Store all blocks as a list in Redis
     blocks_data = [
@@ -142,6 +152,7 @@ async def split_scenes_activity(job_data: dict[str, Any]) -> dict[str, Any]:
         "block_count": len(blocks),
         "scene_count": scene_count,
         "has_preamble": has_preamble,
+        "used_page_fallback": used_page_fallback,
     }
 
 
@@ -184,6 +195,12 @@ async def structure_scene_llm_activity(job_data: dict[str, Any]) -> dict[str, An
     llm_result = await structure_scene_with_llm(block["text"], llm)
     fields = llm_result_to_parsed_scene_fields(llm_result)
 
+    is_page_fallback = job_data.get("used_page_fallback", False)
+    if is_page_fallback:
+        confidence = 0.3 if fields["location"] != "UNKNOWN" else 0.1
+    else:
+        confidence = 1.0 if fields["location"] != "UNKNOWN" else 0.5
+
     # Store structured scene fields in Redis
     scene_data = {
         "heading_line": block["heading_line"],
@@ -199,7 +216,8 @@ async def structure_scene_llm_activity(job_data: dict[str, Any]) -> dict[str, An
                 for d in fields["dialogue"]
             ],
         },
-        "confidence": 1.0 if fields["location"] != "UNKNOWN" else 0.5,
+        "confidence": confidence,
+        "parse_method": "pdf_page_fallback" if is_page_fallback else "pdf_llm",
     }
     scene_ref = await buffer.store(scene_data)
 
@@ -221,6 +239,8 @@ async def aggregate_script_activity(job_data: dict[str, Any]) -> dict[str, Any]:
     title = job_data.get("title")
     ocr_pages = job_data.get("ocr_pages_skipped", [])
     blocks_ref_key = job_data.get("blocks_ref_key", "")
+    used_page_fallback = job_data.get("used_page_fallback", False)
+    extra_warnings = job_data.get("extra_warnings", [])
     t0 = time.monotonic()
     logger.info("Aggregating %d scenes into ParsedScript", len(scene_ref_keys))
 
@@ -240,10 +260,10 @@ async def aggregate_script_activity(job_data: dict[str, Any]) -> dict[str, Any]:
     )
 
     scenes: list[ParsedScene] = []
-    warnings: list[str] = []
+    warnings: list[str] = list(extra_warnings)
 
     if ocr_pages:
-        warnings.append(f"Pages {ocr_pages} appear scanned. OCR not yet implemented.")
+        warnings.append(f"Pages {ocr_pages} appear scanned. OCR is not yet supported.")
 
     for i, ref_key in enumerate(scene_ref_keys):
         scene_data = await buffer.retrieve(ref_key)
@@ -277,7 +297,7 @@ async def aggregate_script_activity(job_data: dict[str, Any]) -> dict[str, Any]:
             dialogue=dialogue_lines,
             text=scene_data["text"],
             parse_confidence=scene_data.get("confidence", 0.0),
-            parse_method="pdf_llm",
+            parse_method=scene_data.get("parse_method", "pdf_llm"),
         )
         scenes.append(scene)
         await buffer.delete(ref_key)
@@ -305,7 +325,11 @@ async def aggregate_script_activity(job_data: dict[str, Any]) -> dict[str, Any]:
         parsing_time_seconds=round(elapsed, 3),
         overall_confidence=round(avg_confidence, 3),
         warnings=warnings,
-        metadata={"parser": "pdf_llm", "ocr_pages_skipped": ocr_pages},
+        metadata={
+            "parser": "pdf_page_fallback" if used_page_fallback else "pdf_llm",
+            "ocr_pages_skipped": ocr_pages,
+            "used_page_fallback": used_page_fallback,
+        },
     )
 
     parsed_ref = await buffer.store(script.model_dump(mode="json"))
@@ -320,6 +344,60 @@ async def aggregate_script_activity(job_data: dict[str, Any]) -> dict[str, Any]:
         "total_characters": len(characters),
         "overall_confidence": round(avg_confidence, 3),
     }
+
+
+# ===================================================================
+# Job Status Activity (failure handling)
+# ===================================================================
+
+
+@activity.defn(name="fail_job")
+async def fail_job_activity(job_data: dict[str, Any]) -> dict[str, Any]:
+    """Mark a job as FAILED in the database with an error message.
+
+    Called from the workflow's top-level exception handler to ensure
+    JobMetadata reflects the actual outcome rather than staying PENDING.
+    """
+    job_id = job_data.get("job_id", "")
+    error_message = job_data.get("error_message", "Unknown error")
+    logger.info("Marking job %s as FAILED: %s", job_id, error_message)
+
+    if not job_id:
+        return {"updated": False, "reason": "no job_id"}
+
+    try:
+        from uuid import UUID as UUIDType
+
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        from api.config import get_settings
+        from core.db_models import JobMetadata
+        from core.models import JobStatus
+
+        settings = get_settings()
+        engine = create_async_engine(str(settings.database_url))
+        Session = async_sessionmaker(engine, expire_on_commit=False)
+
+        async with Session() as session:
+            from sqlalchemy import update
+
+            await session.execute(
+                update(JobMetadata)
+                .where(JobMetadata.job_id == UUIDType(job_id))
+                .values(
+                    status=JobStatus.FAILED,
+                    error_message=error_message[:1000],
+                )
+            )
+            await session.commit()
+
+        await engine.dispose()
+        logger.info("Job %s marked as FAILED in DB", job_id)
+        return {"updated": True}
+
+    except Exception as exc:
+        logger.warning("Failed to update job status in DB: %s", exc)
+        return {"updated": False, "reason": str(exc)}
 
 
 # ===================================================================

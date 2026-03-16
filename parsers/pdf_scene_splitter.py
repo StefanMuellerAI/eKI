@@ -9,8 +9,9 @@ from dataclasses import dataclass, field
 
 # Matches lines that begin a new scene (DE + EN).
 # Anchored to start-of-line via MULTILINE.
+# Allows optional leading scene numbers (e.g. "42 INNEN. WOHNZIMMER - TAG").
 SCENE_MARKER_RE = re.compile(
-    r"^[ \t]*("
+    r"^[ \t]*(?:\d+[A-Za-z]?\s+)?("
     r"INT\.\s*/\s*EXT\.|"
     r"INT/EXT\.|"
     r"EXT\.\s*/\s*INT\.|"
@@ -38,7 +39,48 @@ class RawSceneBlock:
     is_preamble: bool
 
 
-def split_into_scenes(full_text: str) -> list[RawSceneBlock]:
+def split_by_pages(page_texts: list[str]) -> list[RawSceneBlock]:
+    """Split pages into blocks: page 1 = preamble, each subsequent page = scene.
+
+    Used as a fallback when no INT/EXT scene markers are detected.
+    Empty pages (after stripping) are skipped.
+    """
+    blocks: list[RawSceneBlock] = []
+    idx = 0
+
+    for page_num, text in enumerate(page_texts, start=1):
+        stripped = text.strip()
+        if not stripped:
+            continue
+
+        if page_num == 1:
+            blocks.append(
+                RawSceneBlock(
+                    index=idx,
+                    text=stripped,
+                    heading_line="",
+                    is_preamble=True,
+                )
+            )
+        else:
+            blocks.append(
+                RawSceneBlock(
+                    index=idx,
+                    text=stripped,
+                    heading_line=f"PAGE {page_num}",
+                    is_preamble=False,
+                )
+            )
+        idx += 1
+
+    return blocks
+
+
+def split_into_scenes(
+    full_text: str,
+    *,
+    page_texts: list[str] | None = None,
+) -> list[RawSceneBlock]:
     """Split *full_text* at scene-heading markers and return ordered blocks.
 
     - Everything before the first marker becomes a preamble block
@@ -46,6 +88,8 @@ def split_into_scenes(full_text: str) -> list[RawSceneBlock]:
       the preamble is omitted.
     - Each subsequent block starts with its heading line and includes all
       text up to the next marker (or end-of-string).
+    - When no markers are found and *page_texts* is provided, falls back to
+      page-by-page splitting (page 1 = preamble, subsequent pages = scenes).
 
     Returns an empty list only if *full_text* is empty/whitespace.
     """
@@ -56,8 +100,11 @@ def split_into_scenes(full_text: str) -> list[RawSceneBlock]:
     matches = list(SCENE_MARKER_RE.finditer(full_text))
 
     if not matches:
-        # No scene markers found at all -- return entire text as a single
-        # preamble block so downstream can still process it.
+        # No scene markers -- try page-based fallback if page info is available
+        if page_texts and len(page_texts) > 1:
+            return split_by_pages(page_texts)
+
+        # Single page or no page info: return entire text as preamble
         return [
             RawSceneBlock(
                 index=0,

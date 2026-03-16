@@ -22,6 +22,7 @@ with workflow.unsafe.imports_passed_through():
         analyze_scene_risk_activity,
         deliver_report_activity,
         extract_pdf_text_activity,
+        fail_job_activity,
         parse_fdx_activity,
         split_scenes_activity,
         structure_scene_llm_activity,
@@ -67,6 +68,21 @@ class SecurityCheckWorkflow:
                 return await self._run_fdx(job_data, workflow_id)
         except Exception as e:
             logger.error("Workflow %s failed: %s", workflow_id, e, exc_info=True)
+
+            job_id = job_data.get("job_id", "")
+            if job_id:
+                try:
+                    await workflow.execute_activity(
+                        fail_job_activity,
+                        {"job_id": job_id, "error_message": str(e)},
+                        start_to_close_timeout=timedelta(seconds=30),
+                        retry_policy=_RETRY_STANDARD,
+                    )
+                except Exception as fail_exc:
+                    logger.warning(
+                        "Could not mark job %s as FAILED: %s", job_id, fail_exc
+                    )
+
             return {"status": "failed", "error": str(e), "workflow_id": workflow_id}
 
     # ------------------------------------------------------------------
@@ -124,7 +140,14 @@ class SecurityCheckWorkflow:
         )
         scene_count = split_result["scene_count"]
         block_count = split_result["block_count"]
-        logger.info("Split into %d blocks (%d scenes)", block_count, scene_count)
+        used_page_fallback = split_result.get("used_page_fallback", False)
+        if used_page_fallback:
+            logger.warning(
+                "No INT/EXT markers found -- using page-by-page fallback (%d pages)",
+                scene_count,
+            )
+        else:
+            logger.info("Split into %d blocks (%d scenes)", block_count, scene_count)
 
         # Step 3: LLM structuring per block (sequential)
         scene_ref_keys: list[str] = []
@@ -136,6 +159,7 @@ class SecurityCheckWorkflow:
                 {
                     "blocks_ref_key": split_result["blocks_ref_key"],
                     "block_index": i,
+                    "used_page_fallback": used_page_fallback,
                 },
                 start_to_close_timeout=timedelta(minutes=5),
                 retry_policy=_RETRY_LLM,
@@ -149,6 +173,14 @@ class SecurityCheckWorkflow:
 
         logger.info("LLM structured %d scenes", len(scene_ref_keys))
 
+        # Collect extraction warnings
+        extraction_warnings = text_result.get("extraction_warnings", [])
+        if used_page_fallback:
+            extraction_warnings.append(
+                "No scene markers (INT/EXT) found. "
+                "Falling back to page-by-page splitting."
+            )
+
         # Step 4: Aggregate into ParsedScript (programmatic, no LLM)
         agg_result = await workflow.execute_activity(
             aggregate_script_activity,
@@ -157,6 +189,8 @@ class SecurityCheckWorkflow:
                 "title": title,
                 "ocr_pages_skipped": text_result.get("ocr_pages_skipped", []),
                 "blocks_ref_key": split_result["blocks_ref_key"],
+                "used_page_fallback": used_page_fallback,
+                "extra_warnings": extraction_warnings,
             },
             start_to_close_timeout=timedelta(minutes=5),
             retry_policy=_RETRY_STANDARD,

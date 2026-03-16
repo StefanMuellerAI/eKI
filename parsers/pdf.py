@@ -34,13 +34,20 @@ _MAX_PDF_PAGES = 500
 _MAX_PDF_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
-def extract_pdf_text(content: bytes, max_pages: int = _MAX_PDF_PAGES) -> tuple[str, list[int]]:
+def extract_pdf_text(
+    content: bytes, max_pages: int = _MAX_PDF_PAGES
+) -> tuple[str, list[str], list[int], list[str]]:
     """Extract text from a PDF, page by page, in-memory only.
 
-    Returns ``(full_text, ocr_needed_pages)`` where *ocr_needed_pages* lists
-    1-based page numbers that appear to be image-only (< 10 text characters).
+    Returns ``(full_text, page_texts, ocr_needed_pages, warnings)`` where:
+    - *page_texts* preserves per-page text (used for page-based fallback splitting)
+    - *ocr_needed_pages* lists 1-based page numbers that appear image-only
+    - *warnings* collects non-fatal issues encountered during extraction
     """
     import pdfplumber
+    from pdfminer.pdfparser import PDFSyntaxError
+    from pdfminer.pdfdocument import PDFPasswordIncorrect
+    from pdfplumber.utils.exceptions import PdfminerException
 
     if len(content) > _MAX_PDF_SIZE:
         raise ParsingException(
@@ -50,22 +57,58 @@ def extract_pdf_text(content: bytes, max_pages: int = _MAX_PDF_PAGES) -> tuple[s
 
     pages_text: list[str] = []
     ocr_needed: list[int] = []
+    warnings: list[str] = []
 
     try:
         with pdfplumber.open(io.BytesIO(content)) as pdf:
+            total_pages = len(pdf.pages)
+            if total_pages > max_pages:
+                warnings.append(
+                    f"PDF has {total_pages} pages. "
+                    f"Only the first {max_pages} pages were processed."
+                )
             for i, page in enumerate(pdf.pages[:max_pages]):
                 text = page.extract_text() or ""
                 if len(text.strip()) < 10:
                     ocr_needed.append(i + 1)
                     continue
                 pages_text.append(text)
+    except PDFPasswordIncorrect:
+        raise ParsingException(
+            "PDF is password-protected. Please provide an unprotected file.",
+            details={"reason": "password_protected"},
+        )
+    except PDFSyntaxError as exc:
+        raise ParsingException(
+            "PDF is corrupted or malformed and cannot be read.",
+            details={"reason": str(exc)},
+        )
+    except PdfminerException as exc:
+        inner = exc.__cause__ or exc.__context__
+        if isinstance(inner, PDFPasswordIncorrect):
+            raise ParsingException(
+                "PDF is password-protected. Please provide an unprotected file.",
+                details={"reason": "password_protected"},
+            )
+        raise ParsingException(
+            "PDF is corrupted or malformed and cannot be read.",
+            details={"reason": str(exc)},
+        )
     except Exception as exc:
         raise ParsingException(
             f"PDF text extraction failed: {exc}",
             details={"reason": str(exc)},
         )
 
-    return "\n".join(pages_text), ocr_needed
+    full_text = "\n".join(pages_text)
+
+    if pages_text and len(full_text.strip()) < 50:
+        warnings.append(
+            "PDF contains very little extractable text. "
+            "Results may be incomplete."
+        )
+
+    return full_text, pages_text, ocr_needed, warnings
 
 
 class PDFParser(ParserBase):
@@ -97,19 +140,30 @@ class PDFParser(ParserBase):
             self._llm = get_llm_provider(get_settings())
 
         # 1. Extract text
-        full_text, ocr_pages = extract_pdf_text(content)
+        full_text, page_texts, ocr_pages, extract_warnings = extract_pdf_text(content)
+        warnings.extend(extract_warnings)
         if ocr_pages:
             warnings.append(
-                f"Pages {ocr_pages} appear to be scanned/image-only. OCR not yet implemented."
+                f"Pages {ocr_pages} appear to be scanned/image-only. OCR is not yet supported."
             )
         if not full_text.strip():
             raise ParsingException(
-                "PDF contains no extractable text",
+                "PDF contains no extractable text. "
+                "The document may be image-only (scanned). OCR is not yet supported.",
                 details={"ocr_pages": ocr_pages},
             )
 
-        # 2. Deterministic split at INT/EXT markers
-        blocks = split_into_scenes(full_text)
+        # 2. Deterministic split at INT/EXT markers (with page-based fallback)
+        blocks = split_into_scenes(full_text, page_texts=page_texts)
+        used_page_fallback = any(
+            not b.is_preamble and b.heading_line.startswith("PAGE ")
+            for b in blocks
+        )
+        if used_page_fallback:
+            warnings.append(
+                "No scene markers (INT/EXT) found. "
+                "Falling back to page-by-page splitting."
+            )
 
         # 3. LLM structuring per scene
         scenes: list[ParsedScene] = []
@@ -122,10 +176,14 @@ class PDFParser(ParserBase):
                 continue
 
             scene_counter += 1
+            is_page_fallback = block.heading_line.startswith("PAGE ")
             try:
                 llm_result = await structure_scene_with_llm(block.text, self._llm)
                 fields = llm_result_to_parsed_scene_fields(llm_result)
-                confidence = 1.0 if fields["location"] != "UNKNOWN" else 0.5
+                if is_page_fallback:
+                    confidence = 0.3 if fields["location"] != "UNKNOWN" else 0.1
+                else:
+                    confidence = 1.0 if fields["location"] != "UNKNOWN" else 0.5
             except Exception as exc:
                 logger.warning("Scene %d LLM structuring failed: %s", scene_counter, exc)
                 fields = {
@@ -145,7 +203,7 @@ class PDFParser(ParserBase):
                 heading=block.heading_line,
                 text=block.text,
                 parse_confidence=confidence,
-                parse_method="pdf_llm",
+                parse_method="pdf_page_fallback" if is_page_fallback else "pdf_llm",
                 **fields,
             )
             scenes.append(scene)

@@ -141,6 +141,12 @@ async def _resolve_multipart(request: Request) -> ResolvedRequest:
             detail="Unsupported file type. Allowed: .fdx, .pdf",
         )
 
+    if fmt == ScriptFormat.PDF and not raw[:5].startswith(b"%PDF"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded file does not appear to be a valid PDF",
+        )
+
     b64 = base64.b64encode(raw).decode("ascii")
     project_id = str(form.get("project_id", ""))
     sf = str(form.get("script_format", ""))

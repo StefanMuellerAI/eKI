@@ -67,7 +67,7 @@ class Settings(BaseSettings):
         default="security-check", description="Temporal task queue name"
     )
     temporal_workflow_execution_timeout: int = Field(
-        default=2400, description="Workflow execution timeout in seconds (40 min)"
+        default=14400, description="Workflow execution timeout in seconds (4h)"
     )
 
     # Security

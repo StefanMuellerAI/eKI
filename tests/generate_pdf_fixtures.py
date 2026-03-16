@@ -154,6 +154,81 @@ def create_no_structure():
     print(f"Created: {path}")
 
 
+def create_no_structure_multi_page():
+    """Multi-page document without any screenplay markers (for page-fallback testing)."""
+    path = FIXTURES_DIR / "no_structure_multi_page.pdf"
+    c = canvas.Canvas(str(path), pagesize=LETTER)
+    c.setFont(FONT, FONT_SIZE)
+
+    page_contents = [
+        [
+            "THE MYSTERIOUS TALE",
+            "by Unknown Author",
+            "",
+            "A story told in prose, without any screenplay formatting.",
+            "This first page serves as the preamble / title page.",
+        ],
+        [
+            "Chapter One",
+            "",
+            "The man walked slowly through the rain-soaked streets.",
+            "He pulled his collar up against the wind and kept moving.",
+            "Somewhere behind him, footsteps echoed on the cobblestones.",
+            "",
+            "He stopped at the corner and lit a cigarette.",
+            "The flame flickered in the darkness.",
+        ],
+        [
+            "Chapter Two",
+            "",
+            "Morning came too quickly. The alarm clock shattered the",
+            "silence and he rolled over, pulling the blanket up.",
+            "",
+            "MARIA knocked on the door. She carried two cups of coffee.",
+            "They sat together in silence for a long time.",
+        ],
+        [
+            "Chapter Three",
+            "",
+            "The car sped through the narrow roads outside the city.",
+            "KARL gripped the steering wheel, his knuckles white.",
+            "",
+            "They had to reach the harbor before midnight.",
+            "Everything depended on it.",
+        ],
+    ]
+
+    for i, page_lines in enumerate(page_contents):
+        if i > 0:
+            c.showPage()
+            c.setFont(FONT, FONT_SIZE)
+        _write_lines(c, page_lines, LETTER[1] - 72)
+
+    c.save()
+    print(f"Created: {path}")
+
+
+def create_password_protected():
+    """Password-protected PDF for testing rejection."""
+    path = FIXTURES_DIR / "password_protected.pdf"
+    from reportlab.lib.pagesizes import LETTER as L
+    c = canvas.Canvas(str(path), pagesize=L)
+    c.setFont(FONT, FONT_SIZE)
+    c.drawString(72, L[1] - 72, "This PDF is password-protected.")
+    c.save()
+
+    try:
+        import pikepdf
+        pdf = pikepdf.open(str(path), allow_overwriting_input=True)
+        pdf.save(
+            str(path),
+            encryption=pikepdf.Encryption(owner="owner123", user="user123", R=4),
+        )
+        print(f"Created: {path} (password-protected)")
+    except ImportError:
+        print(f"Skipped: {path} (pikepdf not installed)")
+
+
 def create_large_120_pages():
     """~120 pages with ~60 scenes for benchmarking."""
     path = FIXTURES_DIR / "large_120_pages.pdf"
@@ -235,5 +310,7 @@ if __name__ == "__main__":
     create_german_screenplay()
     create_multi_scene()
     create_no_structure()
+    create_no_structure_multi_page()
+    create_password_protected()
     create_large_120_pages()
     print("All PDF fixtures generated!")
