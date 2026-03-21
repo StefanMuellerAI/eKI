@@ -22,10 +22,10 @@ with workflow.unsafe.imports_passed_through():
         analyze_scene_risk_activity,
         deliver_report_activity,
         extract_pdf_text_activity,
-        fail_job_activity,
         parse_fdx_activity,
         split_scenes_activity,
         structure_scene_llm_activity,
+        update_job_status_activity,
     )
 
 logger = logging.getLogger(__name__)
@@ -55,11 +55,35 @@ _RETRY_DELIVERY = RetryPolicy(
 class SecurityCheckWorkflow:
     """Routes to FDX or PDF pipeline based on script_format."""
 
+    async def _update_job(
+        self, job_id: str, status: str, progress: int | None = None, error: str | None = None,
+    ) -> None:
+        """Best-effort job status update -- never fails the workflow."""
+        if not job_id:
+            return
+        payload: dict[str, Any] = {"job_id": job_id, "status": status}
+        if progress is not None:
+            payload["progress_percentage"] = progress
+        if error is not None:
+            payload["error_message"] = error
+        try:
+            await workflow.execute_activity(
+                update_job_status_activity,
+                payload,
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=_RETRY_STANDARD,
+            )
+        except Exception as exc:
+            logger.warning("Job status update failed (non-fatal): %s", exc)
+
     @workflow.run
     async def run(self, job_data: dict[str, Any]) -> dict[str, Any]:
         workflow_id = workflow.info().workflow_id
         fmt = job_data.get("script_format", "fdx")
+        job_id = job_data.get("job_id", "")
         logger.info("SecurityCheckWorkflow %s started (format=%s)", workflow_id, fmt)
+
+        await self._update_job(job_id, "running", progress=0)
 
         try:
             if fmt == "pdf":
@@ -68,21 +92,7 @@ class SecurityCheckWorkflow:
                 return await self._run_fdx(job_data, workflow_id)
         except Exception as e:
             logger.error("Workflow %s failed: %s", workflow_id, e, exc_info=True)
-
-            job_id = job_data.get("job_id", "")
-            if job_id:
-                try:
-                    await workflow.execute_activity(
-                        fail_job_activity,
-                        {"job_id": job_id, "error_message": str(e)},
-                        start_to_close_timeout=timedelta(seconds=30),
-                        retry_policy=_RETRY_STANDARD,
-                    )
-                except Exception as fail_exc:
-                    logger.warning(
-                        "Could not mark job %s as FAILED: %s", job_id, fail_exc
-                    )
-
+            await self._update_job(job_id, "failed", error=str(e))
             return {"status": "failed", "error": str(e), "workflow_id": workflow_id}
 
     # ------------------------------------------------------------------
@@ -91,6 +101,7 @@ class SecurityCheckWorkflow:
 
     async def _run_fdx(self, job_data: dict[str, Any], workflow_id: str) -> dict[str, Any]:
         """FDX: parse -> risk per scene -> aggregate report -> deliver."""
+        job_id = job_data.get("job_id", "")
 
         # Step 1: Parse FDX (no LLM needed)
         parsed_result = await workflow.execute_activity(
@@ -99,15 +110,17 @@ class SecurityCheckWorkflow:
             start_to_close_timeout=timedelta(minutes=10),
             retry_policy=_RETRY_STANDARD,
         )
-        logger.info("FDX parsed: %d scenes", parsed_result.get("total_scenes", 0))
+        total = parsed_result.get("total_scenes", 0)
+        logger.info("FDX parsed: %d scenes", total)
+        await self._update_job(job_id, "running", progress=10)
 
         # Step 2: Analyze risk per scene
         all_findings = await self._analyze_scenes(
-            parsed_result["parsed_ref_key"],
-            parsed_result["total_scenes"],
+            parsed_result["parsed_ref_key"], total, job_id=job_id, progress_range=(10, 90),
         )
 
         # Step 3 & 4: Aggregate report and deliver
+        await self._update_job(job_id, "running", progress=90)
         return await self._report_and_deliver(
             all_findings,
             parsed_result["parsed_ref_key"],
@@ -121,6 +134,7 @@ class SecurityCheckWorkflow:
 
     async def _run_pdf(self, job_data: dict[str, Any], workflow_id: str) -> dict[str, Any]:
         """PDF: extract -> split -> LLM structure -> aggregate -> risk -> report -> deliver."""
+        job_id = job_data.get("job_id", "")
 
         # Step 1: Extract text from PDF
         text_result = await workflow.execute_activity(
@@ -130,6 +144,7 @@ class SecurityCheckWorkflow:
             retry_policy=_RETRY_STANDARD,
         )
         logger.info("PDF text extracted: %d chars", text_result.get("text_length", 0))
+        await self._update_job(job_id, "running", progress=5)
 
         # Step 2: Split at INT/EXT markers
         split_result = await workflow.execute_activity(
@@ -148,8 +163,9 @@ class SecurityCheckWorkflow:
             )
         else:
             logger.info("Split into %d blocks (%d scenes)", block_count, scene_count)
+        await self._update_job(job_id, "running", progress=8)
 
-        # Step 3: LLM structuring per block (sequential)
+        # Step 3: LLM structuring per block (sequential) -- progress 8% -> 50%
         scene_ref_keys: list[str] = []
         title: str | None = None
 
@@ -170,6 +186,10 @@ class SecurityCheckWorkflow:
                 logger.info("Preamble processed, title=%s", title)
             else:
                 scene_ref_keys.append(llm_result["scene_ref_key"])
+
+            if block_count > 0:
+                pct = 8 + int(42 * (i + 1) / block_count)
+                await self._update_job(job_id, "running", progress=pct)
 
         logger.info("LLM structured %d scenes", len(scene_ref_keys))
 
@@ -200,14 +220,18 @@ class SecurityCheckWorkflow:
             agg_result["total_scenes"],
             agg_result.get("overall_confidence", 0),
         )
+        await self._update_job(job_id, "running", progress=52)
 
-        # Step 5: Analyze risk per scene
+        # Step 5: Analyze risk per scene -- progress 52% -> 92%
         all_findings = await self._analyze_scenes(
             agg_result["parsed_ref_key"],
             agg_result["total_scenes"],
+            job_id=job_id,
+            progress_range=(52, 92),
         )
 
         # Step 6 & 7: Aggregate report and deliver
+        await self._update_job(job_id, "running", progress=95)
         return await self._report_and_deliver(
             all_findings,
             agg_result["parsed_ref_key"],
@@ -220,10 +244,16 @@ class SecurityCheckWorkflow:
     # ------------------------------------------------------------------
 
     async def _analyze_scenes(
-        self, parsed_ref_key: str, total_scenes: int
+        self,
+        parsed_ref_key: str,
+        total_scenes: int,
+        *,
+        job_id: str = "",
+        progress_range: tuple[int, int] = (10, 90),
     ) -> list[dict[str, Any]]:
         """Call ``analyze_scene_risk_activity`` for each scene."""
         all_findings: list[dict[str, Any]] = []
+        start_pct, end_pct = progress_range
         for i in range(total_scenes):
             finding = await workflow.execute_activity(
                 analyze_scene_risk_activity,
@@ -232,6 +262,9 @@ class SecurityCheckWorkflow:
                 retry_policy=_RETRY_LLM,
             )
             all_findings.append(finding)
+            if total_scenes > 0 and job_id:
+                pct = start_pct + int((end_pct - start_pct) * (i + 1) / total_scenes)
+                await self._update_job(job_id, "running", progress=pct)
         return all_findings
 
     async def _report_and_deliver(

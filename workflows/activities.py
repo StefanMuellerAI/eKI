@@ -351,19 +351,21 @@ async def aggregate_script_activity(job_data: dict[str, Any]) -> dict[str, Any]:
 # ===================================================================
 
 
-@activity.defn(name="fail_job")
-async def fail_job_activity(job_data: dict[str, Any]) -> dict[str, Any]:
-    """Mark a job as FAILED in the database with an error message.
+@activity.defn(name="update_job_status")
+async def update_job_status_activity(job_data: dict[str, Any]) -> dict[str, Any]:
+    """Update job status and optional fields in the database.
 
-    Called from the workflow's top-level exception handler to ensure
-    JobMetadata reflects the actual outcome rather than staying PENDING.
+    Accepts: job_id, status, and optionally error_message, progress_percentage.
     """
     job_id = job_data.get("job_id", "")
-    error_message = job_data.get("error_message", "Unknown error")
-    logger.info("Marking job %s as FAILED: %s", job_id, error_message)
+    new_status = job_data.get("status", "")
+    error_message = job_data.get("error_message")
+    progress = job_data.get("progress_percentage")
 
-    if not job_id:
-        return {"updated": False, "reason": "no job_id"}
+    if not job_id or not new_status:
+        return {"updated": False, "reason": "missing job_id or status"}
+
+    logger.info("Updating job %s -> %s (progress=%s)", job_id, new_status, progress)
 
     try:
         from uuid import UUID as UUIDType
@@ -378,21 +380,23 @@ async def fail_job_activity(job_data: dict[str, Any]) -> dict[str, Any]:
         engine = create_async_engine(str(settings.database_url))
         Session = async_sessionmaker(engine, expire_on_commit=False)
 
+        values: dict[str, Any] = {"status": JobStatus(new_status)}
+        if error_message is not None:
+            values["error_message"] = str(error_message)[:1000]
+        if progress is not None:
+            values["progress_percentage"] = int(progress)
+
         async with Session() as session:
             from sqlalchemy import update
 
             await session.execute(
                 update(JobMetadata)
                 .where(JobMetadata.job_id == UUIDType(job_id))
-                .values(
-                    status=JobStatus.FAILED,
-                    error_message=error_message[:1000],
-                )
+                .values(**values)
             )
             await session.commit()
 
         await engine.dispose()
-        logger.info("Job %s marked as FAILED in DB", job_id)
         return {"updated": True}
 
     except Exception as exc:

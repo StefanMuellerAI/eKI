@@ -21,6 +21,7 @@ from workflows.activities import (
     parse_fdx_activity,
     split_scenes_activity,
     structure_scene_llm_activity,
+    update_job_status_activity,
 )
 from workflows.security_check import SecurityCheckWorkflow
 
@@ -64,6 +65,7 @@ async def main() -> None:
                 analyze_scene_risk_activity,
                 aggregate_report_activity,
                 deliver_report_activity,
+                update_job_status_activity,
             ],
             max_concurrent_workflow_tasks=10,
             max_concurrent_activities=20,
