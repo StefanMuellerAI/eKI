@@ -144,7 +144,6 @@ class SecurityCheckWorkflow:
             retry_policy=_RETRY_STANDARD,
         )
         logger.info("PDF text extracted: %d chars", text_result.get("text_length", 0))
-        await self._update_job(job_id, "running", progress=5)
 
         # Step 2: Split at INT/EXT markers
         split_result = await workflow.execute_activity(
@@ -163,11 +162,12 @@ class SecurityCheckWorkflow:
             )
         else:
             logger.info("Split into %d blocks (%d scenes)", block_count, scene_count)
-        await self._update_job(job_id, "running", progress=8)
+        await self._update_job(job_id, "running", progress=5)
 
         # Step 3: LLM structuring per block (sequential) -- progress 8% -> 50%
         scene_ref_keys: list[str] = []
         title: str | None = None
+        last_reported_pct = 8
 
         for i in range(block_count):
             llm_result = await workflow.execute_activity(
@@ -189,7 +189,9 @@ class SecurityCheckWorkflow:
 
             if block_count > 0:
                 pct = 8 + int(42 * (i + 1) / block_count)
-                await self._update_job(job_id, "running", progress=pct)
+                if pct >= last_reported_pct + 10 or i == block_count - 1:
+                    await self._update_job(job_id, "running", progress=pct)
+                    last_reported_pct = pct
 
         logger.info("LLM structured %d scenes", len(scene_ref_keys))
 
@@ -254,6 +256,7 @@ class SecurityCheckWorkflow:
         """Call ``analyze_scene_risk_activity`` for each scene."""
         all_findings: list[dict[str, Any]] = []
         start_pct, end_pct = progress_range
+        last_reported_pct = start_pct
         for i in range(total_scenes):
             finding = await workflow.execute_activity(
                 analyze_scene_risk_activity,
@@ -264,7 +267,9 @@ class SecurityCheckWorkflow:
             all_findings.append(finding)
             if total_scenes > 0 and job_id:
                 pct = start_pct + int((end_pct - start_pct) * (i + 1) / total_scenes)
-                await self._update_job(job_id, "running", progress=pct)
+                if pct >= last_reported_pct + 10 or i == total_scenes - 1:
+                    await self._update_job(job_id, "running", progress=pct)
+                    last_reported_pct = pct
         return all_findings
 
     async def _report_and_deliver(
