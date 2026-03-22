@@ -24,6 +24,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from pydantic import ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from temporalio.client import Client as TemporalClient
@@ -97,7 +98,18 @@ async def _resolve_request(request: Request) -> ResolvedRequest:
 
 async def _resolve_json(request: Request) -> ResolvedRequest:
     body = await request.json()
-    req = SecurityCheckRequest(**body)
+    try:
+        req = SecurityCheckRequest(**body)
+    except ValidationError as exc:
+        details = "; ".join(
+            f"{'.'.join(str(l) for l in e['loc'])}: {e['msg']}" if e.get("loc")
+            else e["msg"]
+            for e in exc.errors()
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Request validation failed: {details}",
+        ) from exc
     return ResolvedRequest(
         b64_content=req.script_content,
         script_format=req.script_format,

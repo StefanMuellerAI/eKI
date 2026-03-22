@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from api.config import get_settings
@@ -92,6 +93,31 @@ async def validation_exception_handler(
     details = [
         ErrorDetail(
             field=".".join(str(loc) for loc in err["loc"]),
+            message=err["msg"],
+            error_code=err["type"],
+        )
+        for err in exc.errors()
+    ]
+
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content=ErrorResponse(
+            error="ValidationError",
+            message="Request validation failed",
+            details=details,
+            request_id=request.headers.get("X-Request-ID"),
+        ).model_dump(mode="json"),
+    )
+
+
+@app.exception_handler(ValidationError)
+async def pydantic_validation_exception_handler(
+    request: Request, exc: ValidationError
+) -> JSONResponse:
+    """Handle raw Pydantic ValidationError that bypassed FastAPI's wrapper."""
+    details = [
+        ErrorDetail(
+            field=".".join(str(loc) for loc in err["loc"]) if err.get("loc") else None,
             message=err["msg"],
             error_code=err["type"],
         )

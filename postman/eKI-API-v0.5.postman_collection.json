@@ -115,7 +115,429 @@
       "description": "System health and monitoring endpoints"
     },
     {
-      "name": "2. FDX Workflow (Async)",
+      "name": "2. PDF Workflow (Async) - Fixture Scripts",
+      "item": [
+        {
+          "name": "Submit: Regiefassung (TRANCE)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const resp = pm.response.json();",
+                  "if (resp.job_id) {",
+                  "    pm.collectionVariables.set('JOB_ID', resp.job_id);",
+                  "    console.log('JOB_ID saved:', resp.job_id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "tests/fixtures/pdf/TRANCE_REGIEFASSUNG_27042025.pdf",
+                  "description": "Regiefassung TRANCE - aus tests/fixtures/pdf/"
+                },
+                {
+                  "key": "project_id",
+                  "value": "trance-regiefassung",
+                  "type": "text"
+                },
+                {
+                  "key": "script_format",
+                  "value": "pdf",
+                  "type": "text"
+                },
+                {
+                  "key": "delivery",
+                  "value": "pull",
+                  "type": "text"
+                },
+                {
+                  "key": "priority",
+                  "value": "5",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check:async",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check:async"]
+            },
+            "description": "Regiefassung TRANCE (Vollstaendiges Drehbuch).\n\n**Fixture:** `tests/fixtures/pdf/TRANCE_REGIEFASSUNG_27042025.pdf`\n**Tipp:** Falls Datei nicht gefunden wird, Postman Working Directory auf das Projekt-Root setzen:\nSettings -> General -> Working Directory -> `/pfad/zu/eKI_API`"
+          }
+        },
+        {
+          "name": "Submit: Drehbuch (Sinkende Schiffe)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const resp = pm.response.json();",
+                  "if (resp.job_id) {",
+                  "    pm.collectionVariables.set('JOB_ID', resp.job_id);",
+                  "    console.log('JOB_ID saved:', resp.job_id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "tests/fixtures/pdf/SINKENDE_SCHIFFE_190730.pdf",
+                  "description": "Drehbuch Sinkende Schiffe"
+                },
+                {
+                  "key": "project_id",
+                  "value": "sinkende-schiffe",
+                  "type": "text"
+                },
+                {
+                  "key": "script_format",
+                  "value": "pdf",
+                  "type": "text"
+                },
+                {
+                  "key": "delivery",
+                  "value": "pull",
+                  "type": "text"
+                },
+                {
+                  "key": "priority",
+                  "value": "5",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check:async",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check:async"]
+            },
+            "description": "Drehbuch Sinkende Schiffe.\n\n**Fixture:** `tests/fixtures/pdf/SINKENDE_SCHIFFE_190730.pdf`"
+          }
+        },
+        {
+          "name": "Submit: Drehbuch (H2Gold)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const resp = pm.response.json();",
+                  "if (resp.job_id) {",
+                  "    pm.collectionVariables.set('JOB_ID', resp.job_id);",
+                  "    console.log('JOB_ID saved:', resp.job_id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "tests/fixtures/pdf/H2Gold_250406_h2gold_V3.7.pdf",
+                  "description": "Drehbuch H2Gold v3.7"
+                },
+                {
+                  "key": "project_id",
+                  "value": "h2gold",
+                  "type": "text"
+                },
+                {
+                  "key": "script_format",
+                  "value": "pdf",
+                  "type": "text"
+                },
+                {
+                  "key": "delivery",
+                  "value": "pull",
+                  "type": "text"
+                },
+                {
+                  "key": "priority",
+                  "value": "5",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check:async",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check:async"]
+            },
+            "description": "Drehbuch H2Gold v3.7.\n\n**Fixture:** `tests/fixtures/pdf/H2Gold_250406_h2gold_V3.7.pdf`"
+          }
+        },
+        {
+          "name": "Submit: Drehbuch (Babystar)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const resp = pm.response.json();",
+                  "if (resp.job_id) {",
+                  "    pm.collectionVariables.set('JOB_ID', resp.job_id);",
+                  "    console.log('JOB_ID saved:', resp.job_id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "tests/fixtures/pdf/Babystar_Drehbuch_Babystar_Fünfte_Fassung_240414.pdf",
+                  "description": "Drehbuch Babystar (5. Fassung)"
+                },
+                {
+                  "key": "project_id",
+                  "value": "babystar",
+                  "type": "text"
+                },
+                {
+                  "key": "script_format",
+                  "value": "pdf",
+                  "type": "text"
+                },
+                {
+                  "key": "delivery",
+                  "value": "pull",
+                  "type": "text"
+                },
+                {
+                  "key": "priority",
+                  "value": "5",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check:async",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check:async"]
+            },
+            "description": "Drehbuch Babystar (Fuenfte Fassung).\n\n**Fixture:** `tests/fixtures/pdf/Babystar_Drehbuch_Babystar_Fuenfte_Fassung_240414.pdf`"
+          }
+        },
+        {
+          "name": "Submit: Drehbuch (Matroshki)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const resp = pm.response.json();",
+                  "if (resp.job_id) {",
+                  "    pm.collectionVariables.set('JOB_ID', resp.job_id);",
+                  "    console.log('JOB_ID saved:', resp.job_id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "tests/fixtures/pdf/Matroshki_250515_Matroshki_Screenplay-DE.pdf",
+                  "description": "Drehbuch Matroshki (deutsch)"
+                },
+                {
+                  "key": "project_id",
+                  "value": "matroshki",
+                  "type": "text"
+                },
+                {
+                  "key": "script_format",
+                  "value": "pdf",
+                  "type": "text"
+                },
+                {
+                  "key": "delivery",
+                  "value": "pull",
+                  "type": "text"
+                },
+                {
+                  "key": "priority",
+                  "value": "5",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check:async",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check:async"]
+            },
+            "description": "Screenplay Matroshki (deutsch).\n\n**Fixture:** `tests/fixtures/pdf/Matroshki_250515_Matroshki_Screenplay-DE.pdf`"
+          }
+        },
+        {
+          "name": "Submit: Eigene PDF (Freie Auswahl)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const resp = pm.response.json();",
+                  "if (resp.job_id) {",
+                  "    pm.collectionVariables.set('JOB_ID', resp.job_id);",
+                  "    console.log('JOB_ID saved:', resp.job_id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "",
+                  "description": "Eigene PDF-Datei auswaehlen"
+                },
+                {
+                  "key": "project_id",
+                  "value": "postman-custom-pdf",
+                  "type": "text"
+                },
+                {
+                  "key": "script_format",
+                  "value": "pdf",
+                  "type": "text"
+                },
+                {
+                  "key": "delivery",
+                  "value": "pull",
+                  "type": "text"
+                },
+                {
+                  "key": "priority",
+                  "value": "5",
+                  "type": "text"
+                },
+                {
+                  "key": "idempotency_key",
+                  "value": "",
+                  "type": "text",
+                  "description": "Optional deduplication key",
+                  "disabled": true
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check:async",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check:async"]
+            },
+            "description": "Eigene PDF-Datei per Dateiauswahl hochladen.\n\n**Weitere Fixtures in `tests/fixtures/pdf/`:**\n- Fische haben kein Gewissen 5.2 Fassung.pdf\n- Gaia_Scipt_French.pdf (franzoesisch)\n- ICONIC 220202_ICONIC_PPM-MAPPE_JUNGLE.pdf (Projektmappe)\n- Trance_Projektmappe_TRANCE(AT)_F8_25022025.pdf (Projektmappe)\n- Sinkende Schiffe_SE_Projektmappe_190717.pdf (Projektmappe)\n- h2gold_Treatment_2024.pdf (Treatment)\n- KOENIGSKINDER_Buch_F2_Test_211122 (1).pdf\n- The_fly_MAPPE_THEFLY_v4_lq.pdf\n- If I could Fly 221212 FLY v17_compressed.pdf"
+          }
+        },
+        {
+          "name": "Poll Job Status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const resp = pm.response.json();",
+                  "if (resp.report_id) {",
+                  "    pm.collectionVariables.set('REPORT_ID', resp.report_id);",
+                  "    console.log('REPORT_ID saved:', resp.report_id);",
+                  "}",
+                  "console.log('Status:', resp.status, 'Progress:', resp.progress_percentage);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/jobs/{{JOB_ID}}",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "jobs", "{{JOB_ID}}"]
+            },
+            "description": "Poll until status=completed and report_id is set.\n\n**Repeat** every 10-30 seconds until status is 'completed'.\nPDF workflows dauern laenger wegen LLM-Szenenstrukturierung.\n**Then:** Fetch the report using the report_id."
+          }
+        },
+        {
+          "name": "Fetch Report (One-Shot!)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/reports/{{REPORT_ID}}",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "reports", "{{REPORT_ID}}"]
+            },
+            "description": "ONE-SHOT: Fetches JSON report + PDF (base64).\n\n**WARNING:** This URL is invalidated after the first successful call!\n**Response contains:**\n- report: Full JSON with findings, risk_summary, measures, scores\n- pdf_base64: Base64-encoded PDF report\n\n**Second call returns:** 410 Gone"
+          }
+        },
+        {
+          "name": "Verify One-Shot (Expect 410)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/reports/{{REPORT_ID}}",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "reports", "{{REPORT_ID}}"]
+            },
+            "description": "Verify One-Shot enforcement.\n\n**Expected:** 410 Gone\n**Proves:** Report was deleted after first retrieval."
+          }
+        }
+      ],
+      "description": "PDF-Workflow mit echten Drehbuechern aus tests/fixtures/pdf/.\n\nAblauf: Submit PDF -> Poll -> Fetch Report -> Verify One-Shot\n\n**Setup:** Postman Working Directory auf Projekt-Root setzen:\nSettings -> General -> Working Directory\n\n**Verfuegbare Fixtures:**\n- Regiefassungen: TRANCE\n- Drehbuecher: Sinkende Schiffe, H2Gold, Babystar, Matroshki, Fische, Koenigskinder\n- Projektmappen: TRANCE, ICONIC, Sinkende Schiffe SE, The Fly\n- Treatments: H2Gold Treatment\n- Fremdsprachig: Gaia (FR)"
+    },
+    {
+      "name": "3. FDX Workflow (Async)",
       "item": [
         {
           "name": "Submit FDX Script (Async)",
@@ -166,7 +588,7 @@
             "header": [],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"script_content\": \"{{SCRIPT_B64}}\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"postman-fdx-test\",\n  \"delivery\": \"pull\",\n  \"idempotency_key\": \"postman-fdx-{{$timestamp}}\"\n}",
+              "raw": "{\n  \"script_content\": \"{{SCRIPT_B64}}\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"postman-fdx-test\",\n  \"delivery\": \"pull\",\n  \"idempotency_key\": \"postman-fdx-{{$timestamp}}\",\n  \"metadata\": {\n    \"source\": \"postman\",\n    \"test_run\": true\n  }\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -174,7 +596,55 @@
               "host": ["{{BASE_URL}}"],
               "path": ["v1", "security", "check:async"]
             },
-            "description": "Submit a 4-scene FDX stunt script for async security analysis.\n\nScenes: cliff jump, highway chase with explosion, burning building, rooftop fight.\n\n**Expected:** 202 Accepted with job_id\n**Pipeline:** parse FDX -> risk analysis per scene (LLM) -> aggregate report (JSON+PDF) -> deliver\n**Next:** Poll job status until completed, then fetch report"
+            "description": "Submit a 4-scene FDX stunt script (inline Base64/JSON).\n\nScenes: cliff jump, highway chase with explosion, burning building, rooftop fight.\n\n**Expected:** 202 Accepted with job_id"
+          }
+        },
+        {
+          "name": "Submit FDX Script (Push Delivery)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const resp = pm.response.json();",
+                  "if (resp.job_id) {",
+                  "    pm.collectionVariables.set('JOB_ID', resp.job_id);",
+                  "    console.log('Push JOB_ID saved:', resp.job_id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const fdx = '<?xml version=\"1.0\" encoding=\"UTF-8\"?>'+",
+                  "'<FinalDraft DocumentType=\"Script\" Template=\"No\" Version=\"4\"><Content>'+",
+                  "'<Paragraph Type=\"Scene Heading\" Number=\"1\"><Text>EXT. CLIFF EDGE - NIGHT</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Action\"><Text>A stunt performer stands at the edge of a 15-meter cliff. Below, dark water churns. The performer jumps.</Text></Paragraph>'+",
+                  "'</Content></FinalDraft>';",
+                  "const b64 = CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(fdx));",
+                  "pm.collectionVariables.set('SCRIPT_B64', b64);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"{{SCRIPT_B64}}\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"postman-push-test\",\n  \"delivery\": \"push\",\n  \"callback_url\": \"https://epro.filmakademie.de/api/v1/security-reports\",\n  \"idempotency_key\": \"postman-push-{{$timestamp}}\",\n  \"metadata\": {\n    \"source\": \"postman\",\n    \"delivery_test\": \"push\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check:async",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check:async"]
+            },
+            "description": "Submit a script with **push delivery** - the report is POSTed to callback_url when done.\n\n**callback_url** must be HTTPS and on a whitelisted domain:\n- epro.filmakademie.de\n- epro-stage.filmakademie.de\n\n**Expected:** 202 Accepted with job_id"
           }
         },
         {
@@ -203,7 +673,7 @@
               "host": ["{{BASE_URL}}"],
               "path": ["v1", "security", "jobs", "{{JOB_ID}}"]
             },
-            "description": "Poll until status=completed and report_id is set.\n\n**Repeat** every 10-30 seconds until status is 'completed'.\n**Then:** Fetch the report using the report_id."
+            "description": "Poll until status=completed and report_id is set.\n\n**Repeat** every 10-30 seconds until status is 'completed'."
           }
         },
         {
@@ -216,126 +686,11 @@
               "host": ["{{BASE_URL}}"],
               "path": ["v1", "security", "reports", "{{REPORT_ID}}"]
             },
-            "description": "ONE-SHOT: Fetches JSON report + PDF (base64).\n\n**WARNING:** This URL is invalidated after the first successful call!\n**Response contains:**\n- report: Full JSON with findings, risk_summary, measures, scores\n- pdf_base64: Base64-encoded PDF report (Executive Summary + Findings + Checkliste)\n\n**Second call returns:** 410 Gone"
-          }
-        },
-        {
-          "name": "Verify One-Shot (Expect 410)",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{BASE_URL}}/v1/security/reports/{{REPORT_ID}}",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "reports", "{{REPORT_ID}}"]
-            },
-            "description": "Verify One-Shot enforcement.\n\n**Expected:** 410 Gone\n**Proves:** Report was deleted after first retrieval."
+            "description": "ONE-SHOT: Fetches JSON report + PDF (base64).\n\n**WARNING:** URL is invalidated after first call!\n**Second call returns:** 410 Gone"
           }
         }
       ],
-      "description": "Complete FDX workflow: Submit -> Poll -> Fetch Report -> Verify One-Shot\n\nUses the real LLM pipeline with taxonomy-based risk analysis."
-    },
-    {
-      "name": "3. PDF Workflow (Async)",
-      "item": [
-        {
-          "name": "Submit PDF Script (Multipart)",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "const resp = pm.response.json();",
-                  "if (resp.job_id) {",
-                  "    pm.collectionVariables.set('JOB_ID', resp.job_id);",
-                  "    console.log('PDF JOB_ID saved:', resp.job_id);",
-                  "}"
-                ],
-                "type": "text/javascript"
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [],
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                {
-                  "key": "file",
-                  "type": "file",
-                  "src": "",
-                  "description": "Select a .pdf screenplay file"
-                },
-                {
-                  "key": "project_id",
-                  "value": "postman-pdf-test",
-                  "type": "text"
-                },
-                {
-                  "key": "script_format",
-                  "value": "pdf",
-                  "type": "text"
-                },
-                {
-                  "key": "delivery",
-                  "value": "pull",
-                  "type": "text"
-                }
-              ]
-            },
-            "url": {
-              "raw": "{{BASE_URL}}/v1/security/check:async",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check:async"]
-            },
-            "description": "Submit a PDF screenplay via multipart file upload.\n\n**How to use:**\n1. Click 'Select Files' next to the 'file' field\n2. Choose a .pdf screenplay file\n3. Send the request\n\n**Pipeline:** extract text -> split at INT/EXT -> LLM structuring per scene -> risk analysis per scene -> aggregate report (JSON+PDF) -> deliver"
-          }
-        },
-        {
-          "name": "Poll PDF Job Status",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "const resp = pm.response.json();",
-                  "if (resp.report_id) {",
-                  "    pm.collectionVariables.set('REPORT_ID', resp.report_id);",
-                  "    console.log('PDF REPORT_ID saved:', resp.report_id);",
-                  "}",
-                  "console.log('Status:', resp.status, 'Progress:', resp.progress_percentage);"
-                ],
-                "type": "text/javascript"
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{BASE_URL}}/v1/security/jobs/{{JOB_ID}}",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "jobs", "{{JOB_ID}}"]
-            },
-            "description": "Poll until completed. PDF workflows take longer due to LLM structuring step."
-          }
-        },
-        {
-          "name": "Fetch PDF Report (One-Shot!)",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{BASE_URL}}/v1/security/reports/{{REPORT_ID}}",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "reports", "{{REPORT_ID}}"]
-            },
-            "description": "ONE-SHOT: JSON report + PDF. Same as FDX report endpoint.\n\n**WARNING:** URL is invalidated after first retrieval!"
-          }
-        }
-      ],
-      "description": "Complete PDF workflow: Upload file -> Poll -> Fetch Report\n\nPDF pipeline includes LLM-based scene structuring before risk analysis."
+      "description": "FDX-Workflow mit inline Base64-Script.\n\nFuer den primaeren PDF-Workflow siehe Sektion 2."
     },
     {
       "name": "4. Sync Check (Stub)",
@@ -364,7 +719,7 @@
             "header": [],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"script_content\": \"{{SCRIPT_B64}}\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"postman-sync-test\"\n}",
+              "raw": "{\n  \"script_content\": \"{{SCRIPT_B64}}\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"postman-sync-test\",\n  \"metadata\": {\n    \"source\": \"postman\"\n  }\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -393,6 +748,17 @@
                   "key": "project_id",
                   "value": "postman-sync-pdf",
                   "type": "text"
+                },
+                {
+                  "key": "script_format",
+                  "value": "pdf",
+                  "type": "text"
+                },
+                {
+                  "key": "priority",
+                  "value": "5",
+                  "type": "text",
+                  "description": "Processing priority 1-10 (default: 5)"
                 }
               ]
             },
@@ -579,7 +945,220 @@
       "description": "Security and validation tests.\n\nRun all requests - each should return the expected error code."
     },
     {
-      "name": "6. Documentation",
+      "name": "6. Automated PDF Flow (Run as Collection)",
+      "item": [
+        {
+          "name": "Step 1: Submit PDF Script",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "pm.collectionVariables.set('POLL_COUNT', '0');",
+                  "console.log('=== AUTOMATED PDF FLOW START ===');"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Submit returns 202 Accepted', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "",
+                  "const resp = pm.response.json();",
+                  "pm.test('Response contains job_id', function () {",
+                  "    pm.expect(resp.job_id).to.be.a('string');",
+                  "});",
+                  "",
+                  "if (resp.job_id) {",
+                  "    pm.collectionVariables.set('JOB_ID', resp.job_id);",
+                  "    console.log('JOB_ID saved:', resp.job_id);",
+                  "    postman.setNextRequest('Step 2: Poll Until Complete');",
+                  "} else {",
+                  "    console.error('No job_id in response, aborting flow');",
+                  "    postman.setNextRequest(null);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "tests/fixtures/pdf/TRANCE_REGIEFASSUNG_27042025.pdf",
+                  "description": "PDF aus tests/fixtures/pdf/ -- vor dem Run einmalig Datei auswaehlen oder Working Directory setzen"
+                },
+                {
+                  "key": "project_id",
+                  "value": "postman-auto-flow",
+                  "type": "text"
+                },
+                {
+                  "key": "script_format",
+                  "value": "pdf",
+                  "type": "text"
+                },
+                {
+                  "key": "delivery",
+                  "value": "pull",
+                  "type": "text"
+                },
+                {
+                  "key": "priority",
+                  "value": "5",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check:async",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "check:async"]
+            },
+            "description": "**Automated Flow Step 1:** Schickt eine PDF aus den Fixtures ab.\n\n**Vor dem ersten Run:**\n1. Klicke auf 'Select Files' beim file-Feld\n2. Waehle eine PDF aus `tests/fixtures/pdf/`, z.B.:\n   - TRANCE_REGIEFASSUNG_27042025.pdf (Regiefassung)\n   - SINKENDE_SCHIFFE_190730.pdf (Drehbuch)\n   - H2Gold_250406_h2gold_V3.7.pdf (Drehbuch)\n   - Babystar_Drehbuch_Babystar_Fuenfte_Fassung_240414.pdf\n   - Matroshki_250515_Matroshki_Screenplay-DE.pdf\n3. Danach den Ordner per 'Run folder' starten\n\n**Oder:** Postman Working Directory auf Projekt-Root setzen, dann wird der `src`-Pfad automatisch aufgeloest."
+          }
+        },
+        {
+          "name": "Step 2: Poll Until Complete",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const count = parseInt(pm.collectionVariables.get('POLL_COUNT') || '0') + 1;",
+                  "pm.collectionVariables.set('POLL_COUNT', count.toString());",
+                  "console.log('Poll attempt #' + count);",
+                  "",
+                  "if (count > 1) {",
+                  "    const delay = Math.min(count * 5000, 30000);",
+                  "    console.log('Waiting ' + (delay / 1000) + 's before polling...');",
+                  "    const start = Date.now();",
+                  "    while (Date.now() - start < delay) { /* busy wait */ }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Poll returns 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const resp = pm.response.json();",
+                  "const count = parseInt(pm.collectionVariables.get('POLL_COUNT') || '0');",
+                  "const progress = resp.progress_percentage || 0;",
+                  "console.log('Status: ' + resp.status + ' | Progress: ' + progress + '% | Poll #' + count);",
+                  "",
+                  "if (resp.status === 'completed') {",
+                  "    pm.test('Job completed with report_id', function () {",
+                  "        pm.expect(resp.report_id).to.be.a('string');",
+                  "    });",
+                  "    pm.collectionVariables.set('REPORT_ID', resp.report_id);",
+                  "    console.log('REPORT_ID saved: ' + resp.report_id);",
+                  "    console.log('Job completed after ' + count + ' poll(s)');",
+                  "    postman.setNextRequest('Step 3: Fetch Report');",
+                  "",
+                  "} else if (resp.status === 'failed') {",
+                  "    pm.test('Job should not fail', function () {",
+                  "        pm.expect.fail('Job failed: ' + (resp.error_message || 'unknown'));",
+                  "    });",
+                  "    postman.setNextRequest(null);",
+                  "",
+                  "} else if (count >= 60) {",
+                  "    pm.test('Job should complete within 60 polls', function () {",
+                  "        pm.expect.fail('Timeout after ' + count + ' polls. Last status: ' + resp.status);",
+                  "    });",
+                  "    postman.setNextRequest(null);",
+                  "",
+                  "} else {",
+                  "    postman.setNextRequest('Step 2: Poll Until Complete');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/jobs/{{JOB_ID}}",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "jobs", "{{JOB_ID}}"]
+            },
+            "description": "**Automated Flow Step 2:** Polls job status in a loop.\n\n- Waits 5-30s between polls (incremental backoff)\n- Loops back to itself until status is `completed`\n- On `completed`: saves REPORT_ID and proceeds to Step 3\n- On `failed`: stops with error\n- Max 60 polls before timeout"
+          }
+        },
+        {
+          "name": "Step 3: Fetch Report",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Report returns 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const resp = pm.response.json();",
+                  "",
+                  "pm.test('Report contains findings', function () {",
+                  "    pm.expect(resp.report).to.be.an('object');",
+                  "    pm.expect(resp.report.findings).to.be.an('array');",
+                  "    pm.expect(resp.report.total_findings).to.be.above(0);",
+                  "});",
+                  "",
+                  "pm.test('Report contains risk_summary', function () {",
+                  "    pm.expect(resp.report.risk_summary).to.be.an('object');",
+                  "});",
+                  "",
+                  "pm.test('PDF is included', function () {",
+                  "    pm.expect(resp.pdf_base64).to.be.a('string');",
+                  "    pm.expect(resp.pdf_base64.length).to.be.above(100);",
+                  "});",
+                  "",
+                  "console.log('=== FLOW COMPLETE ===');",
+                  "console.log('Total findings: ' + resp.report.total_findings);",
+                  "console.log('Risk summary:', JSON.stringify(resp.report.risk_summary));",
+                  "if (resp.pdf_base64) {",
+                  "    console.log('PDF size: ' + Math.round(resp.pdf_base64.length / 1024) + ' KB (base64)');",
+                  "}",
+                  "",
+                  "postman.setNextRequest(null);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/reports/{{REPORT_ID}}",
+              "host": ["{{BASE_URL}}"],
+              "path": ["v1", "security", "reports", "{{REPORT_ID}}"]
+            },
+            "description": "**Automated Flow Step 3:** Fetches the completed report.\n\nValidates:\n- Report contains findings and risk_summary\n- PDF is included as base64\n- Logs summary to console\n\n**Note:** This is a one-shot URL -- it is invalidated after this call."
+          }
+        }
+      ],
+      "description": "Vollautomatischer PDF-Flow fuer den Collection Runner.\n\n**Einmalig vor dem ersten Run:**\n1. In 'Step 1' das file-Feld oeffnen und eine PDF aus `tests/fixtures/pdf/` waehlen\n   ODER: Postman Working Directory auf Projekt-Root setzen\n\n**Nutzung:**\n1. Rechtsklick auf diesen Ordner -> 'Run folder'\n2. Im Runner: Delay auf 0ms lassen (Wartezeiten sind eingebaut)\n3. 'Run' klicken und zusehen\n\n**Ablauf:**\n1. Submit: PDF-Drehbuch hochladen -> 202 mit job_id\n2. Poll: Status-Abfrage in Schleife (5-30s Backoff) bis completed\n3. Fetch: Report abrufen mit Findings, Risk Summary und PDF\n\nAlle Variablen (JOB_ID, REPORT_ID) werden automatisch gesetzt."
+    },
+    {
+      "name": "7. Documentation",
       "item": [
         {
           "name": "Swagger UI (Dev only)",
@@ -593,6 +1172,20 @@
               "path": ["docs"]
             },
             "description": "Interactive API docs.\n\n**Dev:** 200 OK\n**Production (DEBUG=false):** 404 Not Found"
+          }
+        },
+        {
+          "name": "ReDoc (Dev only)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/redoc",
+              "host": ["{{BASE_URL}}"],
+              "path": ["redoc"]
+            },
+            "description": "Alternative API docs (ReDoc style).\n\n**Dev:** 200 OK\n**Production (DEBUG=false):** 404 Not Found"
           }
         },
         {

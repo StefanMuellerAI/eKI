@@ -46,20 +46,27 @@ In Postman, gehe zu **Variables** Tab und setze:
 - **Root Endpoint** - API-Info (kein Auth)
 - **Metrics** - Prometheus Metrics (Auth)
 
-### 2. FDX Workflow (Async) - Echte LLM-Pipeline
-- **Submit FDX Script** - 4-Szenen Stunt-Script (Base64/JSON)
+### 2. PDF Workflow (Async) - Fixture Scripts (Primär)
+Echte Drehbücher aus `tests/fixtures/pdf/`:
+- **Submit: Regiefassung (TRANCE)** - TRANCE_REGIEFASSUNG_27042025.pdf
+- **Submit: Drehbuch (Sinkende Schiffe)** - SINKENDE_SCHIFFE_190730.pdf
+- **Submit: Drehbuch (H2Gold)** - H2Gold_250406_h2gold_V3.7.pdf
+- **Submit: Drehbuch (Babystar)** - Babystar_Drehbuch_Babystar_Fünfte_Fassung_240414.pdf
+- **Submit: Drehbuch (Matroshki)** - Matroshki_250515_Matroshki_Screenplay-DE.pdf
+- **Submit: Eigene PDF** - Freie Dateiauswahl
 - **Poll Job Status** - Warten bis completed
 - **Fetch Report (One-Shot!)** - JSON + PDF Report
 - **Verify One-Shot** - Zweiter Abruf = 410 Gone
 
-### 3. PDF Workflow (Async) - Echte LLM-Pipeline
-- **Submit PDF Script** - Multipart Datei-Upload
-- **Poll PDF Job Status** - Warten bis completed
-- **Fetch PDF Report (One-Shot!)** - JSON + PDF Report
+### 3. FDX Workflow (Async)
+- **Submit FDX Script** - 4-Szenen Stunt-Script (inline Base64/JSON)
+- **Submit FDX Script (Push Delivery)** - Push an `callback_url` (ePro Whitelist)
+- **Poll Job Status** - Warten bis completed
+- **Fetch Report (One-Shot!)** - JSON + PDF Report
 
 ### 4. Sync Check (Stub)
-- **Sync FDX Check** - Sofortige Stub-Response (kein LLM)
-- **Sync PDF Check** - Sofortige Stub-Response (kein LLM)
+- **Sync FDX Check** - Sofortige Stub-Response (kein LLM), inkl. `metadata`
+- **Sync PDF Check** - Sofortige Stub-Response (kein LLM), inkl. `priority`
 
 > **Hinweis:** Der synchrone Endpoint liefert aktuell eine M01-Stub-Response.
 > Für echte LLM-basierte Risikoanalyse den **async Endpoint** verwenden (Sektion 2 und 3).
@@ -74,22 +81,39 @@ In Postman, gehe zu **Variables** Tab und setze:
 - **IDOR Other User's Job (404)** - Zugriff auf fremden Job (benötigt API_KEY_USER2)
 - **Idempotency (Same Key)** - Gleicher idempotency_key = gleicher Job
 
-### 6. Documentation
+### 6. Automated PDF Flow (Collection Runner)
+- **Step 1: Submit PDF Script** - PDF aus Fixtures hochladen, setzt JOB_ID
+- **Step 2: Poll Until Complete** - Pollt in Schleife (5-30s Backoff, max 60 Polls)
+- **Step 3: Fetch Report** - Holt Report ab, validiert Findings + PDF
+
+> **Nutzung:** Einmalig PDF-Datei in Step 1 auswählen, dann Rechtsklick auf Ordner → "Run folder" → "Run".
+
+### 7. Documentation
 - **Swagger UI** - Interaktive Docs (nur Development)
+- **ReDoc** - Alternative Docs im ReDoc-Stil (nur Development)
 - **OpenAPI Spec** - OpenAPI 3.1 JSON
 
 ## Testing Workflows
 
-### Happy Path (FDX)
-1. **Submit FDX Script (Async)** -> 202 mit job_id (automatisch gespeichert)
-2. **Poll Job Status** -> wiederholen bis status=completed
-3. **Fetch Report** -> JSON mit Findings + PDF als Base64
-4. **Verify One-Shot** -> 410 Gone bestätigt Löschung
+### Happy Path (PDF - Empfohlen)
+1. In Sektion 2 eine **Submit**-Anfrage wählen (z.B. "Regiefassung TRANCE")
+2. Senden -> 202 mit job_id (automatisch gespeichert)
+3. **Poll Job Status** -> wiederholen bis status=completed
+4. **Fetch Report** -> JSON mit Findings + PDF als Base64
+5. **Verify One-Shot** -> 410 Gone bestätigt Löschung
 
-### Happy Path (PDF)
-1. **Submit PDF Script (Multipart)** -> PDF-Datei auswählen, 202
-2. **Poll PDF Job Status** -> wiederholen (PDF dauert länger wegen LLM-Strukturierung)
-3. **Fetch PDF Report** -> JSON + PDF
+### Happy Path (FDX)
+1. **Submit FDX Script (Async)** in Sektion 3 -> 202 mit job_id
+2. **Poll Job Status** -> wiederholen bis status=completed
+3. **Fetch Report** -> JSON + PDF
+
+### Automated PDF Flow (Vollautomatisch)
+1. In **"6. Automated PDF Flow"** → Step 1 öffnen und PDF auswählen
+2. Rechtsklick auf den Ordner → **Run folder**
+3. Delay auf **0ms** lassen (Wartezeiten sind im Script eingebaut)
+4. **Run** klicken -- der Flow macht alles automatisch:
+   - Schickt PDF ab → pollt in Schleife → holt Report ab
+   - Konsole zeigt Fortschritt, Findings und PDF-Größe
 
 ### Security Test Suite
 1. Select Ordner **"5. Security Tests"**
@@ -113,5 +137,5 @@ In Postman, gehe zu **Variables** Tab und setze:
 ---
 
 **Version:** 0.5.0
-**Last Updated:** 2026-02-11
+**Last Updated:** 2026-03-22
 **Status:** Production Ready
