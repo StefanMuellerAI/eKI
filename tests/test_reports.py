@@ -112,6 +112,10 @@ class TestPDFGeneration:
                     "impact": 5,
                     "description": "Building fire scene with real flames.",
                     "recommendation": "Fire department on standby.",
+                    "evidence": "Das Gebaeude steht in Flammen, ANNA rennt durch das brennende Treppenhaus.",
+                    "vulnerability": "stunt double required",
+                    "complexity": "SFX pyrotechnics, multi-camera",
+                    "exposure_duration": "several hours",
                     "confidence": 0.95,
                     "scene_number": "3",
                     "measures": [
@@ -129,6 +133,10 @@ class TestPDFGeneration:
                     "impact": 2,
                     "description": "Graphic violence depiction.",
                     "recommendation": "Psychological briefing for cast.",
+                    "evidence": "TOM schlaegt mit der Faust auf den Tisch, Glasscherben fliegen.",
+                    "vulnerability": "none",
+                    "complexity": "none",
+                    "exposure_duration": "brief",
                     "confidence": 0.8,
                     "scene_number": "5",
                     "measures": [

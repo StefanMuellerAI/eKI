@@ -219,6 +219,7 @@ class TestFindingValidation:
             "recommendation": "Fire dept standby",
             "measure_codes": ["SFX-CLEARANCE", "FIRE-DEPT"],
             "confidence": 0.9,
+            "evidence": "The building erupts in flames",
         }
         result = tm.validate_finding(finding)
 
@@ -227,6 +228,7 @@ class TestFindingValidation:
         assert result["risk_level"] == "critical"  # 4x5=20
         assert len(result["measures"]) == 2
         assert result["measures"][0]["code"] == "SFX-CLEARANCE"
+        assert result["evidence"] == "The building erupts in flames"
 
     def test_fills_rule_id_from_class(self):
         tm = TaxonomyManager()
@@ -291,6 +293,44 @@ class TestFindingValidation:
         assert result["likelihood"] == 5
         assert result["impact"] == 1
         assert result["risk_level"] == "medium"  # 5x1=5
+
+    def test_defaults_new_fields_when_missing(self):
+        tm = TaxonomyManager()
+        finding = {
+            "risk_class": "STUNTS",
+            "category": "PHYSICAL",
+            "likelihood": 3,
+            "impact": 4,
+            "description": "Stunt scene",
+            "recommendation": "Stunt coordinator",
+        }
+        result = tm.validate_finding(finding)
+
+        assert result["evidence"] == ""
+        assert result["vulnerability"] == ""
+        assert result["complexity"] == ""
+        assert result["exposure_duration"] == ""
+
+    def test_passes_through_context_factors(self):
+        tm = TaxonomyManager()
+        finding = {
+            "risk_class": "WATER",
+            "category": "PHYSICAL",
+            "likelihood": 4,
+            "impact": 5,
+            "description": "Underwater scene with child actor",
+            "recommendation": "Safety divers, child welfare officer",
+            "evidence": "LISA (8) taucht in den See",
+            "vulnerability": "child actor (age 8)",
+            "complexity": "underwater camera, multi-take",
+            "exposure_duration": "several hours",
+        }
+        result = tm.validate_finding(finding)
+
+        assert result["evidence"] == "LISA (8) taucht in den See"
+        assert result["vulnerability"] == "child actor (age 8)"
+        assert result["complexity"] == "underwater camera, multi-take"
+        assert result["exposure_duration"] == "several hours"
 
 
 # ===================================================================

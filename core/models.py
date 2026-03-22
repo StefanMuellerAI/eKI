@@ -341,6 +341,22 @@ class RiskFinding(BaseModel):
     )
     confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score of the finding")
     line_reference: str | None = Field(None, description="Specific line or dialogue reference")
+    evidence: str = Field(
+        default="",
+        description="Textauszug oder Regelbegruendung, die das Risiko belegt",
+    )
+    vulnerability: str = Field(
+        default="",
+        description="Verletzlichkeitsfaktoren (z.B. Kinder, Tiere, Stunts-Double)",
+    )
+    complexity: str = Field(
+        default="",
+        description="Komplexitaetsfaktoren (z.B. Extras, Mehrkameras, Wasser/Feuer)",
+    )
+    exposure_duration: str = Field(
+        default="",
+        description="Geschaetzte Dauer der Risikoexposition (z.B. kurz, mehrere Stunden, ganzer Drehtag)",
+    )
 
 
 class SecurityReport(BaseModel):

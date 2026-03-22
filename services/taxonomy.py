@@ -216,6 +216,12 @@ class TaxonomyManager:
             resolved = self.get_measures_for_class(risk_class)
         finding["measures"] = resolved
 
+        # Ensure Pflichtenheft-required context fields are present
+        finding.setdefault("evidence", "")
+        finding.setdefault("vulnerability", "")
+        finding.setdefault("complexity", "")
+        finding.setdefault("exposure_duration", "")
+
         return finding
 
 

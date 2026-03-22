@@ -449,10 +449,26 @@ _RISK_SCHEMA: dict[str, Any] = {
                         "description": "Applicable measure codes from the catalog",
                     },
                     "confidence": {"type": "number"},
+                    "evidence": {
+                        "type": "string",
+                        "description": "Direct quote or excerpt from the scene text that triggers this risk, or rule rationale",
+                    },
+                    "vulnerability": {
+                        "type": "string",
+                        "description": "Vulnerability factors: children, animals, stunt doubles, elderly, or 'none'",
+                    },
+                    "complexity": {
+                        "type": "string",
+                        "description": "Complexity factors: extras, multi-camera, water/fire combination, night shoot, or 'none'",
+                    },
+                    "exposure_duration": {
+                        "type": "string",
+                        "description": "Estimated duration of risk exposure: brief, several hours, full shooting day, or multi-day",
+                    },
                 },
                 "required": [
                     "risk_class", "category", "likelihood", "impact",
-                    "description", "recommendation",
+                    "description", "recommendation", "evidence",
                 ],
             },
         },
@@ -527,6 +543,16 @@ async def analyze_scene_risk_activity(job_data: dict[str, Any]) -> dict[str, Any
             f["line_reference"] = None
             if "confidence" not in f or not f["confidence"]:
                 f["confidence"] = 0.8
+
+            # Ensure Pflichtenheft context fields have defaults
+            if "evidence" not in f:
+                f["evidence"] = ""
+            if "vulnerability" not in f:
+                f["vulnerability"] = ""
+            if "complexity" not in f:
+                f["complexity"] = ""
+            if "exposure_duration" not in f:
+                f["exposure_duration"] = ""
 
             # Convert measures to serializable dicts
             measures = f.get("measures", [])

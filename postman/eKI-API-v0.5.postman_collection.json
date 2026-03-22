@@ -517,7 +517,7 @@
               "host": ["{{BASE_URL}}"],
               "path": ["v1", "security", "reports", "{{REPORT_ID}}"]
             },
-            "description": "ONE-SHOT: Fetches JSON report + PDF (base64).\n\n**WARNING:** This URL is invalidated after the first successful call!\n**Response contains:**\n- report: Full JSON with findings, risk_summary, measures, scores\n- pdf_base64: Base64-encoded PDF report\n\n**Second call returns:** 410 Gone"
+            "description": "ONE-SHOT: Fetches JSON report + PDF (base64).\n\n**WARNING:** This URL is invalidated after the first successful call!\n**Response contains:**\n- report: Full JSON with findings, risk_summary, measures, scores\n- pdf_base64: Base64-encoded PDF report\n\n**Finding fields (M04):**\n- risk_class, rule_id, category, likelihood, impact, risk_level\n- evidence: Textauszug/Regelbegruendung aus dem Drehbuch\n- vulnerability: Verletzlichkeitsfaktoren (Kinder, Tiere, Stunts-Double)\n- complexity: Komplexitaetsfaktoren (Extras, Mehrkameras, Wasser/Feuer)\n- exposure_duration: Geschaetzte Dauer der Risikoexposition\n- measures: Zugeordnete Sicherheitsmassnahmen\n\n**Second call returns:** 410 Gone"
           }
         },
         {
@@ -686,7 +686,7 @@
               "host": ["{{BASE_URL}}"],
               "path": ["v1", "security", "reports", "{{REPORT_ID}}"]
             },
-            "description": "ONE-SHOT: Fetches JSON report + PDF (base64).\n\n**WARNING:** URL is invalidated after first call!\n**Second call returns:** 410 Gone"
+            "description": "ONE-SHOT: Fetches JSON report + PDF (base64).\n\n**WARNING:** URL is invalidated after first call!\n\n**Finding fields (M04):** evidence, vulnerability, complexity, exposure_duration, measures\n\n**Second call returns:** 410 Gone"
           }
         }
       ],
@@ -1125,6 +1125,19 @@
                   "    pm.expect(resp.report.risk_summary).to.be.an('object');",
                   "});",
                   "",
+                  "pm.test('Findings contain M04 taxonomy fields', function () {",
+                  "    const f = resp.report.findings[0];",
+                  "    pm.expect(f).to.have.property('risk_class');",
+                  "    pm.expect(f).to.have.property('rule_id');",
+                  "    pm.expect(f).to.have.property('likelihood');",
+                  "    pm.expect(f).to.have.property('impact');",
+                  "    pm.expect(f).to.have.property('evidence');",
+                  "    pm.expect(f).to.have.property('vulnerability');",
+                  "    pm.expect(f).to.have.property('complexity');",
+                  "    pm.expect(f).to.have.property('exposure_duration');",
+                  "    pm.expect(f).to.have.property('measures');",
+                  "});",
+                  "",
                   "pm.test('PDF is included', function () {",
                   "    pm.expect(resp.pdf_base64).to.be.a('string');",
                   "    pm.expect(resp.pdf_base64.length).to.be.above(100);",
@@ -1133,6 +1146,12 @@
                   "console.log('=== FLOW COMPLETE ===');",
                   "console.log('Total findings: ' + resp.report.total_findings);",
                   "console.log('Risk summary:', JSON.stringify(resp.report.risk_summary));",
+                  "if (resp.report.findings.length > 0) {",
+                  "    const f0 = resp.report.findings[0];",
+                  "    console.log('First finding: ' + f0.risk_class + ' (' + f0.rule_id + ') severity=' + f0.risk_level);",
+                  "    console.log('  evidence: ' + (f0.evidence || '(none)'));",
+                  "    console.log('  vulnerability: ' + (f0.vulnerability || '(none)'));",
+                  "}",
                   "if (resp.pdf_base64) {",
                   "    console.log('PDF size: ' + Math.round(resp.pdf_base64.length / 1024) + ' KB (base64)');",
                   "}",

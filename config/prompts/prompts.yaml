@@ -62,18 +62,29 @@ risk_analysis:
       - risk_class: One of the class codes from the taxonomy (e.g. FIRE, HEIGHT, STUNTS, INTIMACY)
       - rule_id: The corresponding rule ID (e.g. SEC-P-008)
       - category: PHYSICAL, ENVIRONMENTAL, or PSYCHOLOGICAL
-      - likelihood: 1-5 (1=very unlikely, 5=almost certain to occur during production)
+      - likelihood: 1-5 (consider vulnerability, complexity, and exposure duration)
       - impact: 1-5 (1=negligible, 5=life-threatening or severe psychological harm)
+      - evidence: Direct quote from the scene text that triggers this risk, or a rule-based rationale
       - description: Concrete description of what the risk is
       - recommendation: Specific actionable mitigation for film production
       - measure_codes: List of applicable measure codes from the catalog
       - confidence: 0.0-1.0 how certain you are this risk exists in the scene
+      - vulnerability: Vulnerability factors if applicable (children, animals, stunt doubles, elderly) or "none"
+      - complexity: Complexity factors if applicable (extras, multi-camera, water+fire, night shoot) or "none"
+      - exposure_duration: Estimated risk exposure duration (brief/several hours/full day/multi-day)
+
+      Scoring guidance:
+      - When scoring likelihood and impact, explicitly factor in:
+        * Vulnerability of involved persons (children, animals, stunt doubles increase impact)
+        * Scene complexity (extras, multi-camera setups, combined hazards increase likelihood)
+        * Duration of risk exposure (longer exposure increases both likelihood and impact)
 
       Rules:
       - Only report risks EXPLICITLY described or STRONGLY implied in the scene text.
       - Do NOT hallucinate or invent risks not present in the text.
       - Use the exact class codes and measure codes from the taxonomy.
       - Be specific in your descriptions -- reference what in the scene triggers the risk.
+      - The evidence field MUST contain a direct quote or excerpt from the scene text.
 
     user: |
       Analyze this screenplay scene for safety risks:

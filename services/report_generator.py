@@ -161,6 +161,7 @@ def generate_pdf_report(report: dict[str, Any]) -> bytes:
             rule_id = f.get("rule_id", "")
             desc = _escape_html(f.get("description", ""))
             rec = _escape_html(f.get("recommendation", ""))
+            evidence = _escape_html(f.get("evidence", ""))
             likelihood = f.get("likelihood", 0)
             impact = f.get("impact", 0)
 
@@ -168,8 +169,10 @@ def generate_pdf_report(report: dict[str, Any]) -> bytes:
                 f"<b>[{severity}]</b> {risk_class} ({rule_id}) | "
                 f"L:{likelihood} x I:{impact}<br/>"
                 f"{desc}<br/>"
-                f"<i>Empfehlung: {rec}</i>"
             )
+            if evidence:
+                finding_text += f'<i>Evidenz: "{evidence}"</i><br/>'
+            finding_text += f"<i>Empfehlung: {rec}</i>"
             elements.append(Paragraph(finding_text, body_style))
 
             # Measures
