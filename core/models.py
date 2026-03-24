@@ -147,6 +147,14 @@ class SecurityCheckRequest(BaseModel):
         max_length=100,
         pattern=r"^[a-zA-Z0-9_-]+$",
     )
+    script_id: int | None = Field(
+        None,
+        description=(
+            "eProjekt document ID of the script/treatment being analyzed. "
+            "Passed back to ePro on push delivery so ePro can correlate the "
+            "assessment with the correct document version. Use -1 if unknown."
+        ),
+    )
     callback_url: HttpUrl | None = Field(
         None, description="Optional callback URL for async results"
     )

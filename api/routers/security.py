@@ -87,6 +87,7 @@ class ResolvedRequest:
     priority: int = 5
     delivery: str = "pull"
     idempotency_key: str | None = None
+    script_id: int | None = None
 
 
 async def _resolve_request(request: Request) -> ResolvedRequest:
@@ -119,6 +120,7 @@ async def _resolve_json(request: Request) -> ResolvedRequest:
         priority=body.get("priority", 5),
         delivery=req.delivery,
         idempotency_key=req.idempotency_key,
+        script_id=req.script_id,
     )
 
 
@@ -166,6 +168,9 @@ async def _resolve_multipart(request: Request) -> ResolvedRequest:
     if sf:
         fmt = ScriptFormat(sf)
 
+    raw_script_id = form.get("script_id")
+    script_id = int(raw_script_id) if raw_script_id not in (None, "") else None
+
     return ResolvedRequest(
         b64_content=b64,
         script_format=fmt,
@@ -174,6 +179,7 @@ async def _resolve_multipart(request: Request) -> ResolvedRequest:
         priority=int(form.get("priority", 5)),
         delivery=str(form.get("delivery", "pull")),
         idempotency_key=str(form.get("idempotency_key", "")) or None,
+        script_id=script_id,
     )
 
 
@@ -310,6 +316,7 @@ async def security_check_async(
         priority=resolved.priority,
         idempotency_key=resolved.idempotency_key,
         delivery_mode=delivery_mode,
+        script_id=resolved.script_id,
     )
     db.add(job_meta)
     await db.commit()
@@ -328,6 +335,7 @@ async def security_check_async(
         "priority": resolved.priority,
         "delivery_mode": delivery_mode,
         "metadata": resolved.metadata,
+        "script_id": resolved.script_id,
     }
 
     try:

@@ -92,7 +92,8 @@ delivery: pull
 | script_content | Ja (JSON) | string | Base64-kodierter Dateiinhalt |
 | file | Ja (Multipart) | binary | Drehbuch-Datei (.fdx oder .pdf) |
 | script_format | Ja | "fdx" / "pdf" | Format des Drehbuchs |
-| project_id | Ja | string | eProjekt Projekt-ID (alphanumerisch, max 100 Zeichen) |
+| project_id | Ja | string | eProjekt Projekt-ID (poAllgemeinId, alphanumerisch, max 100 Zeichen) |
+| script_id | Nein | int | eProjekt Drehbuch-Dokument-ID. Wird bei Push an ePro zurueckgegeben, damit ePro das Assessment dem korrekten Dokument zuordnen kann. -1 wenn unbekannt. |
 | delivery | Nein | "pull" / "push" | Delivery-Modus (Default: "pull") |
 | idempotency_key | Nein | string | Verhindert doppelte Jobs bei Retry |
 | metadata | Nein | object | Zusaetzliche Metadaten fuer Audit |
@@ -275,6 +276,73 @@ Bei Verlust muss ein neuer Job gestartet werden.
 - Reports sind maximal **6 Stunden** nach Fertigstellung abrufbar
 - Danach werden sie automatisch geloescht (TTL)
 - Reports sind waehrend der Aufbewahrung AES-verschluesselt gespeichert
+
+---
+
+## 4b. Push-Modus (Alternative zu Pull)
+
+Wenn `delivery=push` beim Einreichen gesetzt wird, sendet eKI den Report
+nach Fertigstellung **automatisch** per `POST` an die eProjekt-API.
+Ein manuelles Abholen (Schritt 4) entfaellt.
+
+### Ablauf
+
+```
+1. ePro sendet Drehbuch        POST /v1/security/check:async  (delivery=push, script_id=...)
+2. ePro fragt Job-Status ab    GET  /v1/security/jobs/{job_id} (Polling)
+3. Job ist fertig -> eKI pusht automatisch zu ePro
+4. ePro empfaengt das Assessment via eigene API
+```
+
+### Was eKI an ePro sendet
+
+eKI ruft folgende ePro-Schnittstelle auf:
+
+```
+POST /api/eki/scl/set-risk-assessment/{project_id}
+Content-Type: multipart/form-data
+```
+
+| Feld | Typ | Beschreibung |
+|------|-----|--------------|
+| script_id | int | Drehbuch-Dokument-ID aus dem urspruenglichen Request (-1 wenn unbekannt) |
+| status | int | 0 = kein hohes Risiko gefunden, 1 = hohe/kritische Risiken vorhanden |
+| assessment | string | Textuelle Zusammenfassung aller Findings |
+| file | PDF | Report als PDF-Datei (max 7 MB) |
+
+### Autorisierung
+
+Die Autorisierung beim Push zu ePro erfolgt **ausschliesslich per IP-Whitelist**
+(kein Bearer-Token). Der eKI-Server muss von der freigeschalteten IP zugreifen.
+
+### Status-Mapping
+
+| eKI-Findings | ePro status |
+|--------------|-------------|
+| Mindestens 1 Finding mit risk_level critical oder high | 1 |
+| Keine critical/high Findings | 0 |
+
+### Fehlerverhalten
+
+Wenn der Push fehlschlaegt (ePro nicht erreichbar, HTTP-Fehler), bleibt der
+Report in Redis gespeichert. Er kann dann per Pull (One-Shot-GET) als Fallback
+abgeholt werden, sofern die TTL noch nicht abgelaufen ist.
+
+### Beispiel-Request (wie ePro ihn empfaengt)
+
+```bash
+curl -X POST https://staging.epro.filmakademie.de/api/eki/scl/set-risk-assessment/75 \
+  -F "status=1" \
+  -F "script_id=123" \
+  -F 'assessment="eKI Safety Risk Assessment — Project 75 ..."' \
+  -F "file=@/path/to/safety-check-result_75.pdf"
+```
+
+### Beispiel-Response von ePro
+
+```json
+{"status": true, "message": "Risk assessment persisted (4711)"}
+```
 
 ---
 

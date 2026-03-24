@@ -97,6 +97,7 @@ class JobMetadata(Base):
         String(255), nullable=True, unique=True, index=True
     )
     delivery_mode: Mapped[str] = mapped_column(String(10), nullable=False, default="pull")
+    script_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     extra_metadata: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
 

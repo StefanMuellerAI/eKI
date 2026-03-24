@@ -718,42 +718,76 @@ async def deliver_report_activity(
 
     # Delivery mode handling
     if delivery_mode == "push":
-        # Push: POST to ePro, then delete from Redis
+        # Push: multipart POST to ePro set-risk-assessment, then delete from Redis
         try:
-            from api.config import get_settings
-
-            settings = get_settings()
-            report_package = await buffer.retrieve(report_ref_key)
+            import base64 as b64mod
 
             import httpx
 
-            async with httpx.AsyncClient(timeout=settings.epro_timeout) as client:
-                headers = {"Content-Type": "application/json"}
-                if settings.epro_auth_token:
-                    headers["Authorization"] = f"Bearer {settings.epro_auth_token}"
-                if report_id:
-                    headers["Idempotency-Key"] = report_id
+            from api.config import get_settings
+            from services.report_generator import compute_epro_status, generate_assessment_text
 
+            settings = get_settings()
+            report_package = await buffer.retrieve(report_ref_key)
+            report = report_package.get("report", {})
+            pdf_b64 = report_package.get("pdf_base64", "")
+
+            epro_status = compute_epro_status(report)
+            assessment = generate_assessment_text(report)
+            script_id = delivery_config.get("script_id")
+            if script_id is None:
+                script_id = -1
+
+            push_url = (
+                f"{settings.epro_base_url}/eki/scl/"
+                f"set-risk-assessment/{project_id}"
+            )
+
+            form_data = {
+                "script_id": str(int(script_id)),
+                "status": str(epro_status),
+                "assessment": assessment,
+            }
+
+            files = {}
+            if pdf_b64:
+                pdf_bytes = b64mod.b64decode(pdf_b64)
+                files["file"] = (
+                    f"safety-check-result_{project_id}.pdf",
+                    pdf_bytes,
+                    "application/pdf",
+                )
+
+            headers: dict[str, str] = {}
+            if settings.epro_auth_token:
+                headers["Authorization"] = f"Bearer {settings.epro_auth_token}"
+
+            async with httpx.AsyncClient(timeout=settings.epro_timeout) as client:
                 response = await client.post(
-                    f"{settings.epro_base_url}/reports/security",
-                    json=report_package.get("report", {}),
-                    headers=headers,
+                    push_url,
+                    data=form_data,
+                    files=files if files else None,
+                    headers=headers or None,
                 )
                 response.raise_for_status()
-                logger.info("Push delivery succeeded: HTTP %d", response.status_code)
+                epro_body = response.json()
+                logger.info(
+                    "Push delivery succeeded: HTTP %d — %s",
+                    response.status_code,
+                    epro_body.get("message", ""),
+                )
 
-            # Delete from Redis after successful push
             await buffer.delete(report_ref_key)
 
             return {
                 "delivered": True,
                 "delivery_mode": "push",
-                "delivery_time_seconds": 0.5,
+                "epro_status": epro_status,
+                "epro_response": epro_body,
             }
 
         except Exception as exc:
             logger.error("Push delivery failed: %s", exc)
-            # Keep in Redis for Pull fallback
             return {
                 "delivered": False,
                 "delivery_mode": "push",

@@ -11,6 +11,8 @@ import pytest
 
 from services.report_generator import (
     build_report_dict,
+    compute_epro_status,
+    generate_assessment_text,
     generate_pdf_base64,
     generate_pdf_report,
 )
@@ -306,3 +308,172 @@ class TestDBModelExtensions:
         )
         assert report.report_ref_key == "eki:buf:abc123"
         assert report.delivery_mode == "pull"
+
+    def test_job_metadata_has_script_id(self):
+        from core.db_models import JobMetadata
+        job = JobMetadata(
+            job_id=uuid4(),
+            project_id="test",
+            script_format="fdx",
+            user_id="user1",
+            delivery_mode="push",
+            script_id=42,
+        )
+        assert job.script_id == 42
+
+    def test_job_metadata_script_id_nullable(self):
+        from core.db_models import JobMetadata
+        job = JobMetadata(
+            job_id=uuid4(),
+            project_id="test",
+            script_format="fdx",
+            user_id="user1",
+            delivery_mode="pull",
+        )
+        assert job.script_id is None
+
+
+# ===================================================================
+# ePro Push Helpers
+# ===================================================================
+
+
+class TestComputeEproStatus:
+    """Tests for compute_epro_status (0/1 mapping for ePro API)."""
+
+    def test_returns_1_for_critical_findings(self):
+        report = {"findings": [
+            {"risk_level": "critical", "description": "Fire"},
+        ]}
+        assert compute_epro_status(report) == 1
+
+    def test_returns_1_for_high_findings(self):
+        report = {"findings": [
+            {"risk_level": "high", "description": "Height"},
+        ]}
+        assert compute_epro_status(report) == 1
+
+    def test_returns_0_for_medium_only(self):
+        report = {"findings": [
+            {"risk_level": "medium", "description": "Noise"},
+            {"risk_level": "low", "description": "Minor"},
+        ]}
+        assert compute_epro_status(report) == 0
+
+    def test_returns_0_for_empty_findings(self):
+        assert compute_epro_status({"findings": []}) == 0
+
+    def test_returns_0_for_no_findings_key(self):
+        assert compute_epro_status({}) == 0
+
+    def test_returns_1_when_mixed_levels(self):
+        report = {"findings": [
+            {"risk_level": "low", "description": "a"},
+            {"risk_level": "info", "description": "b"},
+            {"risk_level": "high", "description": "c"},
+        ]}
+        assert compute_epro_status(report) == 1
+
+
+class TestGenerateAssessmentText:
+    """Tests for generate_assessment_text (plain-text report for ePro)."""
+
+    def _sample_report(self, findings: list[dict] | None = None) -> dict[str, Any]:
+        if findings is None:
+            findings = [
+                {
+                    "risk_level": "critical", "category": "PHYSICAL",
+                    "risk_class": "FIRE", "rule_id": "SEC-P-008",
+                    "description": "Building on fire.", "recommendation": "Fire dept.",
+                    "scene_number": "3", "measures": [
+                        {"code": "FIRE-DEPT", "title": "Feuerwehr", "responsible": "Prod", "due": "1d"},
+                    ],
+                },
+                {
+                    "risk_level": "low", "category": "ENVIRONMENTAL",
+                    "risk_class": "NOISE", "rule_id": "SEC-E-004",
+                    "description": "Loud noise.", "recommendation": "Ear protection.",
+                    "scene_number": "5", "measures": [],
+                },
+            ]
+        return build_report_dict(
+            report_id="r1", project_id="42", script_format="fdx",
+            findings=findings, processing_time_seconds=10.0,
+        )
+
+    def test_contains_project_id(self):
+        text = generate_assessment_text(self._sample_report())
+        assert "Project 42" in text
+
+    def test_contains_finding_count(self):
+        text = generate_assessment_text(self._sample_report())
+        assert "Total findings: 2" in text
+
+    def test_contains_scene_headers(self):
+        text = generate_assessment_text(self._sample_report())
+        assert "Scene 3" in text
+        assert "Scene 5" in text
+
+    def test_contains_risk_levels(self):
+        text = generate_assessment_text(self._sample_report())
+        assert "CRITICAL" in text
+        assert "LOW" in text
+
+    def test_contains_descriptions(self):
+        text = generate_assessment_text(self._sample_report())
+        assert "Building on fire." in text
+        assert "Loud noise." in text
+
+    def test_contains_recommendations(self):
+        text = generate_assessment_text(self._sample_report())
+        assert "Recommendation: Fire dept." in text
+
+    def test_contains_measures(self):
+        text = generate_assessment_text(self._sample_report())
+        assert "FIRE-DEPT" in text
+        assert "Feuerwehr" in text
+
+    def test_empty_findings(self):
+        text = generate_assessment_text(self._sample_report(findings=[]))
+        assert "Total findings: 0" in text
+        assert "No safety risks identified" in text
+
+    def test_contains_engine_version(self):
+        text = generate_assessment_text(self._sample_report())
+        assert "eKI v" in text
+
+
+class TestRequestScriptId:
+    """Tests for the script_id field on SecurityCheckRequest."""
+
+    def test_script_id_default_none(self):
+        from core.models import SecurityCheckRequest
+        content = base64.b64encode(b"<FinalDraft><Content></Content></FinalDraft>").decode()
+        req = SecurityCheckRequest(
+            script_content=content,
+            script_format="fdx",
+            project_id="test-proj",
+        )
+        assert req.script_id is None
+
+    def test_script_id_set(self):
+        from core.models import SecurityCheckRequest
+        content = base64.b64encode(b"<FinalDraft><Content></Content></FinalDraft>").decode()
+        req = SecurityCheckRequest(
+            script_content=content,
+            script_format="fdx",
+            project_id="test-proj",
+            script_id=123,
+        )
+        assert req.script_id == 123
+
+    def test_script_id_negative_one(self):
+        from core.models import SecurityCheckRequest
+        content = base64.b64encode(b"<FinalDraft><Content></Content></FinalDraft>").decode()
+        req = SecurityCheckRequest(
+            script_content=content,
+            script_format="fdx",
+            project_id="test-proj",
+            script_id=-1,
+        )
+        assert req.script_id == -1

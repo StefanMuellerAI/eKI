@@ -305,6 +305,7 @@ class SecurityCheckWorkflow:
             "project_id": job_data.get("project_id"),
             "user_id": job_data.get("user_id"),
             "script_format": job_data.get("script_format"),
+            "script_id": job_data.get("script_id"),
         }
 
         delivery_result = await workflow.execute_activity(
