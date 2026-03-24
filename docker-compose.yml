@@ -56,29 +56,37 @@ services:
 
   # Temporal Server
   temporal:
-    image: temporalio/auto-setup:1.23.0
+    image: temporalio/auto-setup:1.29.4
     container_name: eki-temporal
     env_file:
       - .env.local
     environment:
-      - DB=postgresql
+      - DB=postgres12
       - DB_PORT=5432
       - POSTGRES_SEEDS=postgres
+      - TEMPORAL_ADDRESS=temporal:7233
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/eki.yaml
+    volumes:
+      - ./docker/temporal/dynamicconfig:/etc/temporal/config/dynamicconfig
+    deploy:
+      resources:
+        limits:
+          memory: 2g
     depends_on:
       postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "tctl", "--address", "temporal:7233", "workflow", "list"]
-      interval: 10s
+      interval: 30s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      start_period: 45s
     networks:
       - eki-network
 
   # Temporal Web UI
   temporal-ui:
-    image: temporalio/ui:2.23.0
+    image: temporalio/ui:2.47.3
     container_name: eki-temporal-ui
     ports:
       - "8080:8080"

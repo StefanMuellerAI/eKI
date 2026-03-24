@@ -1,0 +1,22 @@
+# Temporal Server Dynamic Configuration
+# Limits in-memory caches to prevent unbounded memory growth.
+# See: https://github.com/temporalio/temporal/issues/8902
+
+# Mutable-state cache: cap at 50 000 entries (default is unlimited per-shard)
+history.hostLevelCacheMaxSize:
+  - value: 50000
+    constraints: {}
+
+# Host-level events cache with 256 MB byte limit
+history.enableHostLevelEventsCache:
+  - value: true
+    constraints: {}
+history.eventsHostLevelCacheMaxSizeBytes:
+  - value: 268435456  # 256 MB
+    constraints: {}
+
+# Frontend: limit concurrent gRPC connections to reduce goroutine growth
+# (mitigates issue #6323 on older versions)
+frontend.keepAliveMaxConnectionAge:
+  - value: "5m"
+    constraints: {}
