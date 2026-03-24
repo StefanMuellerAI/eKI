@@ -4,7 +4,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Request, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -71,18 +71,71 @@ app.add_middleware(
 
 
 # Exception handlers
+
+
+def _is_infrastructure_error(exc: Exception) -> tuple[bool, str]:
+    """Classify infrastructure errors and return a user-facing message."""
+    module = type(exc).__module__ or ""
+    qualname = type(exc).__qualname__
+
+    if module.startswith("temporalio") or module.startswith("grpc"):
+        return True, "Workflow service is temporarily unavailable. Please try again later."
+
+    if module.startswith("redis"):
+        return True, "Cache service is temporarily unavailable. Please try again later."
+
+    if module.startswith("sqlalchemy") or module.startswith("asyncpg"):
+        return True, "Database service is temporarily unavailable. Please try again later."
+
+    if qualname in ("ConnectionRefusedError", "ConnectionResetError", "TimeoutError"):
+        return True, "A backend service is temporarily unavailable. Please try again later."
+
+    return False, ""
+
+
 @app.exception_handler(EKIException)
 async def eki_exception_handler(request: Request, exc: EKIException) -> JSONResponse:
-    """Handle custom EKI exceptions."""
+    """Handle custom EKI exceptions with their specific status codes."""
     return JSONResponse(
-        status_code=status.HTTP_400_BAD_REQUEST,
+        status_code=exc.status_code,
         content=ErrorResponse(
             error=exc.__class__.__name__,
             message=exc.message,
             details=[ErrorDetail(message=str(v)) for v in exc.details.values()],
             request_id=request.headers.get("X-Request-ID"),
-        ).model_dump(),
+        ).model_dump(mode="json"),
     )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    """Normalize FastAPI HTTPExceptions into the ErrorResponse format."""
+    error_name = {
+        400: "BadRequest",
+        401: "Unauthorized",
+        403: "Forbidden",
+        404: "NotFound",
+        405: "MethodNotAllowed",
+        409: "Conflict",
+        410: "Gone",
+        413: "PayloadTooLarge",
+        422: "ValidationError",
+        429: "RateLimitExceeded",
+    }.get(exc.status_code, "Error")
+
+    response = JSONResponse(
+        status_code=exc.status_code,
+        content=ErrorResponse(
+            error=error_name,
+            message=str(exc.detail),
+            request_id=request.headers.get("X-Request-ID"),
+        ).model_dump(mode="json"),
+    )
+
+    if exc.headers:
+        response.headers.update(exc.headers)
+
+    return response
 
 
 @app.exception_handler(RequestValidationError)
@@ -137,14 +190,27 @@ async def pydantic_validation_exception_handler(
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Handle unexpected exceptions."""
+    """Handle unexpected exceptions with infrastructure-aware classification."""
+    is_infra, user_message = _is_infrastructure_error(exc)
+
+    if is_infra:
+        logger.error(f"Infrastructure error: {type(exc).__name__}: {exc}", exc_info=True)
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content=ErrorResponse(
+                error="ServiceUnavailable",
+                message=user_message,
+                request_id=request.headers.get("X-Request-ID"),
+            ).model_dump(mode="json"),
+        )
+
     logger.error(f"Unexpected error: {exc}", exc_info=True)
 
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content=ErrorResponse(
             error="InternalServerError",
-            message="An unexpected error occurred",
+            message="An internal error occurred. Please try again later.",
             request_id=request.headers.get("X-Request-ID"),
         ).model_dump(mode="json"),
     )

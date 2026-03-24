@@ -1,6 +1,7 @@
 """FastAPI dependency injection functions."""
 
 import hashlib
+import logging
 from datetime import datetime
 
 import redis.asyncio as aioredis
@@ -11,7 +12,10 @@ from temporalio.client import Client as TemporalClient
 
 from api.config import Settings, get_settings
 from core.db_models import ApiKeyModel
+from core.exceptions import ServiceUnavailableException
 from db.session import get_db_session
+
+logger = logging.getLogger(__name__)
 
 
 async def get_settings_dependency() -> Settings:
@@ -41,9 +45,20 @@ async def get_redis() -> aioredis.Redis:
 
 
 async def get_temporal_client() -> TemporalClient:
-    """Get Temporal client."""
+    """Get Temporal client.
+
+    Raises ServiceUnavailableException with a user-facing message when
+    the Temporal server cannot be reached.
+    """
     settings = get_settings()
-    client = await TemporalClient.connect(settings.temporal_host)
+    try:
+        client = await TemporalClient.connect(settings.temporal_host)
+    except Exception as exc:
+        logger.error(f"Failed to connect to Temporal at {settings.temporal_host}: {exc}")
+        raise ServiceUnavailableException(
+            "Workflow engine is not reachable. Please try again later.",
+            details={"service": "temporal"},
+        ) from exc
     yield client
 
 

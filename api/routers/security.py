@@ -51,6 +51,7 @@ from core.models import (
     SecurityReport,
     SyncSecurityCheckResponse,
 )
+from core.exceptions import ServiceUnavailableException
 from services.secure_buffer import SecureBuffer
 from workflows.security_check import SecurityCheckWorkflow
 
@@ -329,13 +330,31 @@ async def security_check_async(
         "metadata": resolved.metadata,
     }
 
-    await temporal_client.start_workflow(
-        SecurityCheckWorkflow.run,
-        job_data,
-        id=str(job_id),
-        task_queue=settings.temporal_task_queue,
-        execution_timeout=timedelta(seconds=settings.temporal_workflow_execution_timeout),
-    )
+    try:
+        await temporal_client.start_workflow(
+            SecurityCheckWorkflow.run,
+            job_data,
+            id=str(job_id),
+            task_queue=settings.temporal_task_queue,
+            execution_timeout=timedelta(seconds=settings.temporal_workflow_execution_timeout),
+        )
+    except ServiceUnavailableException:
+        raise
+    except Exception as exc:
+        logger.error(f"Failed to start workflow for job {job_id}: {exc}", exc_info=True)
+        await db.execute(
+            update(JobMetadata)
+            .where(JobMetadata.job_id == job_id)
+            .values(
+                status=JobStatus.FAILED,
+                error_message="Workflow engine temporarily unavailable.",
+            )
+        )
+        await db.commit()
+        raise ServiceUnavailableException(
+            "Security check could not be started. The workflow engine is temporarily unavailable.",
+            details={"job_id": str(job_id)},
+        ) from exc
 
     return AsyncSecurityCheckResponse(
         job_id=job_id,

@@ -1,5 +1,6 @@
 """Health check endpoints."""
 
+import logging
 from datetime import datetime
 
 import redis.asyncio as aioredis
@@ -8,9 +9,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from temporalio.client import Client as TemporalClient
 
-from api.dependencies import get_db, get_redis, get_temporal_client, verify_api_key
+from api.config import get_settings
+from api.dependencies import get_db, get_redis, verify_api_key
 from core.db_models import ApiKeyModel
 from core.models import HealthResponse, ReadinessResponse
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -47,7 +51,6 @@ async def readiness_check(
     http_response: Response,
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis),
-    temporal: TemporalClient = Depends(get_temporal_client),
     _api_key: ApiKeyModel = Depends(verify_api_key),
 ) -> ReadinessResponse:
     """
@@ -59,6 +62,8 @@ async def readiness_check(
     - Temporal workflow engine
 
     Returns 200 if all services are available, 503 otherwise.
+    Temporal is checked inside the handler body so that a connection
+    failure does not crash the entire endpoint.
     """
     services_status: dict[str, bool] = {}
 
@@ -76,11 +81,14 @@ async def readiness_check(
     except Exception:
         services_status["redis"] = False
 
-    # Check Temporal
+    # Check Temporal – connect and perform a real RPC health check
     try:
-        # Simple check - if we got the client, Temporal is reachable
-        services_status["temporal"] = temporal is not None
+        settings = get_settings()
+        client = await TemporalClient.connect(settings.temporal_host)
+        await client.service_client.check_health()
+        services_status["temporal"] = True
     except Exception:
+        logger.warning("Temporal health check failed", exc_info=True)
         services_status["temporal"] = False
 
     # Determine overall status
@@ -94,8 +102,6 @@ async def readiness_check(
     )
 
     if not all_ready:
-        # Liveness stays public; readiness is an authenticated operator endpoint.
-        # Return 503 to integrate with health checks.
         http_response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
     return readiness_response

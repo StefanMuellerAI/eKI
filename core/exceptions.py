@@ -6,6 +6,8 @@ from typing import Any
 class EKIException(Exception):
     """Base exception for eKI API."""
 
+    status_code: int = 400
+
     def __init__(self, message: str, details: dict[str, Any] | None = None) -> None:
         self.message = message
         self.details = details or {}
@@ -15,37 +17,37 @@ class EKIException(Exception):
 class ValidationException(EKIException):
     """Raised when request validation fails."""
 
-    pass
+    status_code = 422
 
 
 class NotFoundException(EKIException):
     """Raised when a resource is not found."""
 
-    pass
+    status_code = 404
 
 
 class WorkflowException(EKIException):
     """Raised when a Temporal workflow fails."""
 
-    pass
+    status_code = 502
 
 
 class ServiceUnavailableException(EKIException):
     """Raised when a required service is unavailable."""
 
-    pass
+    status_code = 503
 
 
 class RateLimitException(EKIException):
     """Raised when rate limit is exceeded."""
 
-    pass
+    status_code = 429
 
 
 class AuthenticationException(EKIException):
     """Raised when authentication fails."""
 
-    pass
+    status_code = 401
 
 
 class ParsingException(EKIException):
