@@ -6,6 +6,7 @@ from datetime import datetime
 
 import redis.asyncio as aioredis
 from fastapi import Depends, Header, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from temporalio.client import Client as TemporalClient
@@ -62,8 +63,13 @@ async def get_temporal_client() -> TemporalClient:
     yield client
 
 
+_bearer_scheme = HTTPBearer(
+    description="API key as Bearer token: `eki_<token>`",
+)
+
+
 async def verify_api_key(
-    authorization: str | None = Header(None, description="Bearer API key"),
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> ApiKeyModel:
     """
@@ -77,21 +83,7 @@ async def verify_api_key(
     - Active status validation
     - Usage tracking for monitoring
     """
-    if not authorization:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing authorization header",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization header format",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    token = authorization[7:]  # Remove "Bearer " prefix
+    token = credentials.credentials
 
     if not token:
         raise HTTPException(
@@ -129,8 +121,12 @@ async def verify_api_key(
 
 
 def get_actor_headers(
-    x_actor_user_id: str | None = Header(None, description="Actor user ID"),
-    x_actor_project_id: str | None = Header(None, description="Actor project ID"),
+    x_actor_user_id: str | None = Header(
+        None, description="Actor user ID", include_in_schema=False,
+    ),
+    x_actor_project_id: str | None = Header(
+        None, description="Actor project ID", include_in_schema=False,
+    ),
     api_key: ApiKeyModel = Depends(verify_api_key),
 ) -> dict[str, str | None]:
     """

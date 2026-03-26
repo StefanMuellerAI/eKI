@@ -11,12 +11,19 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
+from fastapi.openapi.utils import get_openapi
+
 from api.config import get_settings
 from api.dependencies import verify_api_key
 from api.routers import health, security
 from core.exceptions import EKIException
 from core.db_models import ApiKeyModel
-from core.models import ErrorDetail, ErrorResponse
+from core.models import (
+    AsyncSecurityCheckRequest,
+    ErrorDetail,
+    ErrorResponse,
+    SecurityCheckRequest,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -30,7 +37,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan manager for startup and shutdown events."""
     settings = get_settings()
-    logger.info(f"Starting eKI API v0.1.0 in {settings.env} environment")
+    logger.info(f"Starting eKI API v0.5.0 in {settings.env} environment")
 
     # Startup: Initialize connections, etc.
     logger.info("Application startup complete")
@@ -46,7 +53,7 @@ settings = get_settings()
 app = FastAPI(
     title="eKI API",
     description="KI-gestützte Sicherheitsprüfung für Drehbücher - Filmakademie Baden-Württemberg",
-    version="0.1.0",
+    version="0.5.0",
     docs_url="/docs" if settings.debug else None,  # Hide in production
     redoc_url="/redoc" if settings.debug else None,  # Hide in production
     openapi_url="/openapi.json" if settings.debug else None,  # Hide in production
@@ -232,8 +239,114 @@ if settings.metrics_enabled:
 async def root() -> dict[str, str]:
     """Root endpoint redirect to docs."""
     return {
-        "message": "eKI API v0.1.0",
+        "message": "eKI API v0.5.0",
         "docs": "/docs",
         "redoc": "/redoc",
         "openapi": "/openapi.json",
     }
+
+
+# ---------------------------------------------------------------------------
+# Custom OpenAPI schema – injects request body docs for endpoints that
+# use raw Request parsing (needed for dual JSON / multipart support).
+# ---------------------------------------------------------------------------
+
+_MULTIPART_BASE: dict = {
+    "type": "object",
+    "required": ["file"],
+    "properties": {
+        "file": {
+            "type": "string",
+            "format": "binary",
+            "description": "Script file (.fdx or .pdf, max 10 MB)",
+        },
+        "project_id": {
+            "type": "string",
+            "description": "eProjekt project ID",
+        },
+        "script_format": {
+            "type": "string",
+            "enum": ["fdx", "pdf"],
+            "description": "Script format (auto-detected from file extension if omitted)",
+        },
+        "script_id": {
+            "type": "integer",
+            "description": "eProjekt document ID of the script/treatment",
+        },
+        "delivery": {
+            "type": "string",
+            "enum": ["pull", "push"],
+            "default": "pull",
+            "description": "Delivery mode: pull (One-Shot GET) or push (POST to ePro)",
+        },
+        "idempotency_key": {
+            "type": "string",
+            "maxLength": 255,
+            "description": "Optional idempotency key to prevent duplicate jobs",
+        },
+    },
+}
+
+_MULTIPART_ASYNC: dict = {
+    **_MULTIPART_BASE,
+    "properties": {
+        **_MULTIPART_BASE["properties"],
+        "priority": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "default": 5,
+            "description": "Job priority (1=highest, 10=lowest)",
+        },
+    },
+}
+
+
+def _custom_openapi() -> dict:
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+
+    schemas = openapi_schema.setdefault("components", {}).setdefault("schemas", {})
+
+    for model_cls in (SecurityCheckRequest, AsyncSecurityCheckRequest):
+        model_schema = model_cls.model_json_schema(
+            ref_template="#/components/schemas/{model}"
+        )
+        for def_name, def_body in model_schema.pop("$defs", {}).items():
+            schemas.setdefault(def_name, def_body)
+        schemas[model_cls.__name__] = model_schema
+
+    paths = openapi_schema.get("paths", {})
+
+    endpoint_map = [
+        ("/v1/security/check", "SecurityCheckRequest", _MULTIPART_BASE),
+        ("/v1/security/check:async", "AsyncSecurityCheckRequest", _MULTIPART_ASYNC),
+    ]
+    for path, json_schema_name, multipart_schema in endpoint_map:
+        operation = paths.get(path, {}).get("post")
+        if not operation:
+            continue
+        operation["requestBody"] = {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": f"#/components/schemas/{json_schema_name}"},
+                },
+                "multipart/form-data": {
+                    "schema": multipart_schema,
+                },
+            },
+        }
+
+    app.openapi_schema = openapi_schema
+    return openapi_schema
+
+
+app.openapi = _custom_openapi

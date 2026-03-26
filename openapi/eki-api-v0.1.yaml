@@ -1,7 +1,7 @@
 openapi: 3.1.1
 info:
   title: eKI API
-  version: 0.1.0
+  version: 0.5.0
   description: |
     KI-gestützte Sicherheitsprüfung für Drehbücher - Filmakademie Baden-Württemberg
 
@@ -13,6 +13,13 @@ info:
     - **Processing-Only:** Keine persistente Speicherung von Drehbüchern/Reports (nur Audit-Metadaten)
     - **Write-Through:** Ergebnisse werden sofort an eProjekt zurückgespielt
     - **Minimalinvasiv:** Integration nur über REST, keine direkten DB-Zugriffe
+
+    ## Meilenstein-Status
+    - M01: Projektgerüst & OpenAPI ✓
+    - M02: Parser Basis (FDX) ✓
+    - M03: PDF & Streaming-Parsing ✓
+    - M04: Risiko-Taxonomie & Scoring ✓
+    - M05: Reports (JSON/PDF) & One-Shot-GET ✓
 
   contact:
     name: Filmakademie Baden-Württemberg
@@ -54,8 +61,12 @@ paths:
       tags:
         - Health
       summary: Readiness probe
-      description: Checks if the service is ready to handle requests by verifying all dependencies
+      description: >-
+        Checks if the service is ready to handle requests by verifying all
+        dependencies (PostgreSQL, Redis, Temporal). Requires API-key authentication.
       operationId: readinessCheck
+      security:
+        - BearerAuth: []
       responses:
         '200':
           description: Service is ready
@@ -63,6 +74,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ReadinessResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '503':
           description: Service is not ready
           content:
@@ -75,7 +88,9 @@ paths:
       tags:
         - Security
       summary: Synchronous security check
-      description: Perform a synchronous security check for scripts ≤1MB or ≤50 scenes
+      description: >-
+        Perform a synchronous security check for scripts ≤1 MB or ≤50 scenes.
+        Accepts JSON (base64-encoded script_content) or multipart/form-data file upload (.fdx, .pdf).
       operationId: securityCheckSync
       security:
         - BearerAuth: []
@@ -88,6 +103,9 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/SecurityCheckRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/MultipartSecurityCheckRequest'
       responses:
         '200':
           description: Security check completed successfully
@@ -95,10 +113,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SyncSecurityCheckResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '413':
+          description: File exceeds maximum size (10 MB)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '422':
           $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -107,7 +135,11 @@ paths:
       tags:
         - Security
       summary: Asynchronous security check
-      description: Start an asynchronous security check for large scripts
+      description: >-
+        Start an asynchronous security check via Temporal workflow.
+        Accepts JSON (base64-encoded script_content) or multipart/form-data file upload (.fdx, .pdf).
+        Script content is AES-encrypted in Redis; only a reference key is passed to the workflow.
+        Supports idempotency keys and configurable delivery mode (pull/push).
       operationId: securityCheckAsync
       security:
         - BearerAuth: []
@@ -120,6 +152,9 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/AsyncSecurityCheckRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/MultipartAsyncSecurityCheckRequest'
       responses:
         '202':
           description: Security check job created successfully
@@ -127,19 +162,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AsyncSecurityCheckResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '413':
+          description: File exceeds maximum size (10 MB)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '422':
           $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          description: Workflow engine temporarily unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /v1/security/jobs/{job_id}:
     get:
       tags:
         - Security
       summary: Get job status
-      description: Query the status of an asynchronous security check job
+      description: >-
+        Query the status of an asynchronous security check job.
+        Returns real data from the database including progress percentage and report ID.
+        Ownership is verified against the authenticated API key.
       operationId: getJobStatus
       security:
         - BearerAuth: []
@@ -162,6 +216,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -170,7 +226,10 @@ paths:
       tags:
         - Security
       summary: Retrieve report (one-shot)
-      description: Retrieve a security report. URL is invalidated after retrieval
+      description: >-
+        Retrieve a security report (JSON + PDF). The URL is invalidated after
+        the first successful retrieval (one-shot pull mode). Subsequent requests
+        return 410 Gone. Ownership is verified against the authenticated API key.
       operationId: getReport
       security:
         - BearerAuth: []
@@ -184,7 +243,7 @@ paths:
             format: uuid
       responses:
         '200':
-          description: Report retrieved successfully
+          description: Report retrieved successfully (URL now invalidated)
           content:
             application/json:
               schema:
@@ -199,6 +258,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -208,7 +269,9 @@ components:
       type: http
       scheme: bearer
       bearerFormat: APIKey
-      description: Opaque API key transmitted as `Authorization: Bearer eki_<token>`
+      description: >-
+        Opaque API key transmitted as `Authorization: Bearer eki_<token>`.
+        Keys are SHA-256 hashed and stored in PostgreSQL with expiry dates.
 
   parameters:
     ActorUserId:
@@ -228,10 +291,13 @@ components:
         type: string
 
   schemas:
+
+    # --- Enums ---
+
     ScriptFormat:
       type: string
       enum: [fdx, pdf]
-      description: Supported script formats
+      description: "Supported script formats: Final Draft XML (.fdx) or PDF (.pdf)"
 
     JobStatus:
       type: string
@@ -241,7 +307,16 @@ components:
     RiskLevel:
       type: string
       enum: [critical, high, medium, low, info]
-      description: Risk level classification
+      description: >-
+        Risk level classification, calculated from likelihood × impact:
+        critical (≥16), high (≥10), medium (≥5), low (≥2), info (<2)
+
+    RiskCategory:
+      type: string
+      enum: [PHYSICAL, ENVIRONMENTAL, PSYCHOLOGICAL]
+      description: Top-level risk category from the taxonomy
+
+    # --- Request Schemas ---
 
     SecurityCheckRequest:
       type: object
@@ -252,7 +327,7 @@ components:
       properties:
         script_content:
           type: string
-          description: Base64-encoded script content
+          description: Base64-encoded script content (FDX as UTF-8 text, PDF as binary)
           minLength: 1
           maxLength: 10485760
         script_format:
@@ -261,14 +336,41 @@ components:
           type: string
           description: eProjekt project ID
           minLength: 1
+          maxLength: 100
+          pattern: '^[a-zA-Z0-9_-]+$'
+        script_id:
+          type: integer
+          nullable: true
+          description: >-
+            eProjekt document ID of the script/treatment being analyzed.
+            Passed back to ePro on push delivery so ePro can correlate the
+            assessment with the correct document version. Use -1 if unknown.
         callback_url:
           type: string
           format: uri
-          description: Optional HTTPS callback URL for async results (allowlisted eProjekt domains only)
+          nullable: true
+          description: >-
+            Optional HTTPS callback URL for push delivery results.
+            Must be on allowlisted eProjekt domains (epro.filmakademie.de,
+            epro-stage.filmakademie.de). Private/internal IPs are blocked.
+        delivery:
+          type: string
+          enum: [pull, push]
+          default: pull
+          description: >-
+            Delivery mode: "pull" (One-Shot GET via /reports/{id}) or
+            "push" (POST to ePro callback URL)
+        idempotency_key:
+          type: string
+          nullable: true
+          maxLength: 255
+          description: >-
+            Optional idempotency key to prevent duplicate jobs.
+            If a job with the same key already exists, the existing job is returned.
         metadata:
           type: object
           additionalProperties: true
-          description: Additional metadata for audit trail
+          description: Additional metadata for audit trail (max 50 keys, values ≤1000 chars)
 
     AsyncSecurityCheckRequest:
       allOf:
@@ -281,6 +383,46 @@ components:
               maximum: 10
               default: 5
               description: Job priority (1=highest, 10=lowest)
+
+    MultipartSecurityCheckRequest:
+      type: object
+      required:
+        - file
+      properties:
+        file:
+          type: string
+          format: binary
+          description: Script file upload (.fdx or .pdf, max 10 MB). PDF files are validated by magic bytes.
+        project_id:
+          type: string
+          description: eProjekt project ID
+        script_format:
+          $ref: '#/components/schemas/ScriptFormat'
+        script_id:
+          type: integer
+          nullable: true
+          description: eProjekt document ID
+        delivery:
+          type: string
+          enum: [pull, push]
+          default: pull
+        idempotency_key:
+          type: string
+          nullable: true
+          maxLength: 255
+
+    MultipartAsyncSecurityCheckRequest:
+      allOf:
+        - $ref: '#/components/schemas/MultipartSecurityCheckRequest'
+        - type: object
+          properties:
+            priority:
+              type: integer
+              minimum: 1
+              maximum: 10
+              default: 5
+
+    # --- Response Schemas ---
 
     HealthResponse:
       type: object
@@ -297,7 +439,7 @@ components:
           format: date-time
         version:
           type: string
-          example: 0.1.0
+          example: 0.5.0
 
     ReadinessResponse:
       type: object
@@ -314,12 +456,37 @@ components:
           format: date-time
         services:
           type: object
-          additionalProperties:
-            type: boolean
+          properties:
+            database:
+              type: boolean
+            redis:
+              type: boolean
+            temporal:
+              type: boolean
+          required: [database, redis, temporal]
           example:
             database: true
             redis: true
             temporal: true
+
+    MeasureItem:
+      type: object
+      required:
+        - code
+        - title
+      properties:
+        code:
+          type: string
+          description: "Measure code from the catalog (e.g. RIG-SAFETY, PSY-BRIEFING, INTIMACY-COORD)"
+        title:
+          type: string
+          description: Human-readable measure title
+        responsible:
+          type: string
+          description: "Responsible role (e.g. Stunt Coordination, Weapons Master, Production)"
+        due:
+          type: string
+          description: "Due date template (e.g. pre-production, shooting-3d, shooting-0d)"
 
     RiskFinding:
       type: object
@@ -342,23 +509,85 @@ components:
           $ref: '#/components/schemas/RiskLevel'
         category:
           type: string
-          description: Risk category
+          description: "Risk category: PHYSICAL, ENVIRONMENTAL, PSYCHOLOGICAL"
+        risk_class:
+          type: string
+          description: >-
+            Specific risk class from the taxonomy (e.g. FIRE, HEIGHT, INTIMACY,
+            STUNTS, WEAPONS, WATER, VIOLENCE, TRAUMA). 23 classes across 3 categories.
+        rule_id:
+          type: string
+          description: "Taxonomy rule ID (e.g. SEC-P-008 for FIRE, SEC-Y-003 for TRAUMA)"
+        likelihood:
+          type: integer
+          minimum: 0
+          maximum: 5
+          description: "Likelihood of risk occurring (1-5, 0=unscored)"
+        impact:
+          type: integer
+          minimum: 0
+          maximum: 5
+          description: "Severity of impact if risk occurs (1-5, 0=unscored)"
         description:
           type: string
-          description: Human-readable description
+          description: Human-readable description of the risk
         recommendation:
           type: string
           description: Mitigation recommendation
+        measures:
+          type: array
+          items:
+            $ref: '#/components/schemas/MeasureItem'
+          description: Applicable safety measures from the codified catalog (20 measures)
         confidence:
           type: number
           format: float
           minimum: 0
           maximum: 1
-          description: Confidence score of the finding
+          description: Confidence score of the finding (1.0 = FDX/certain, lower for PDF/LLM)
         line_reference:
           type: string
           nullable: true
-          description: Specific line or dialogue reference
+          description: Specific line or dialogue reference in the script
+        evidence:
+          type: string
+          description: Textual evidence or rule justification supporting the risk assessment
+        vulnerability:
+          type: string
+          description: "Vulnerability factors (e.g. children, animals, stunt doubles)"
+        complexity:
+          type: string
+          description: "Complexity factors (e.g. extras, multi-camera, water/fire elements)"
+        exposure_duration:
+          type: string
+          description: "Estimated risk exposure duration (e.g. kurz, mehrere Stunden, ganzer Drehtag)"
+
+    RiskSummary:
+      type: object
+      description: Count of findings per risk level
+      required: [critical, high, medium, low, info]
+      properties:
+        critical:
+          type: integer
+          minimum: 0
+        high:
+          type: integer
+          minimum: 0
+        medium:
+          type: integer
+          minimum: 0
+        low:
+          type: integer
+          minimum: 0
+        info:
+          type: integer
+          minimum: 0
+      example:
+        critical: 1
+        high: 3
+        medium: 5
+        low: 2
+        info: 1
 
     SecurityReport:
       type: object
@@ -383,10 +612,7 @@ components:
           type: string
           format: date-time
         risk_summary:
-          type: object
-          additionalProperties:
-            type: integer
-          description: Count of findings per risk level
+          $ref: '#/components/schemas/RiskSummary'
         total_findings:
           type: integer
         findings:
@@ -427,10 +653,10 @@ components:
           $ref: '#/components/schemas/JobStatus'
         message:
           type: string
-          example: Security check job created successfully
+          example: "Security check job started (delivery=pull)"
         status_url:
           type: string
-          description: URL to check job status
+          description: URL to check job status (e.g. /v1/security/jobs/{job_id})
         estimated_completion_seconds:
           type: integer
           nullable: true
@@ -469,6 +695,7 @@ components:
         metadata:
           type: object
           additionalProperties: true
+          description: "Job metadata (includes delivery_mode)"
 
     ReportResponse:
       type: object
@@ -478,9 +705,17 @@ components:
       properties:
         report:
           $ref: '#/components/schemas/SecurityReport'
+        pdf_base64:
+          type: string
+          nullable: true
+          description: >-
+            Base64-encoded PDF report (human-readable) with Executive Summary,
+            scene findings, and action-item checklist. Null if PDF generation failed.
         message:
           type: string
           example: Report retrieved successfully. This URL is now invalidated.
+
+    # --- Error Schemas ---
 
     ErrorDetail:
       type: object
@@ -519,22 +754,36 @@ components:
           format: date-time
 
   responses:
+    BadRequest:
+      description: Bad request (missing fields, invalid file type, empty file)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
     Unauthorized:
-      description: Unauthorized
+      description: Unauthorized (missing, invalid, or expired API key)
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
 
     NotFound:
-      description: Resource not found
+      description: Resource not found or access denied (ownership check failed)
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
 
     ValidationError:
-      description: Validation error
+      description: Validation error (invalid base64, bad project_id format, SSRF blocked, etc.)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    RateLimitExceeded:
+      description: Rate limit exceeded (IP-based 60/min or API-key-based 1000/h)
       content:
         application/json:
           schema:
