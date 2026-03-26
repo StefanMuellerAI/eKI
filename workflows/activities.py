@@ -757,6 +757,15 @@ async def deliver_report_activity(
                     pdf_bytes,
                     "application/pdf",
                 )
+                logger.info(
+                    "Push payload: script_id=%s, status=%s, assessment=%d chars, PDF=%d bytes",
+                    script_id, epro_status, len(assessment), len(pdf_bytes),
+                )
+            else:
+                logger.warning(
+                    "Push payload: script_id=%s, status=%s, assessment=%d chars, PDF=MISSING",
+                    script_id, epro_status, len(assessment),
+                )
 
             headers: dict[str, str] = {}
             if settings.epro_auth_token:
