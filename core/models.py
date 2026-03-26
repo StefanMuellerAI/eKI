@@ -235,7 +235,7 @@ class SecurityCheckRequest(BaseModel):
         # Whitelist of allowed domains
         allowed_domains = {
             "epro.filmakademie.de",
-            "epro-stage.filmakademie.de",
+            "staging.epro.filmakademie.de",
         }
 
         if hostname.lower().rstrip(".") not in allowed_domains:

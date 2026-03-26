@@ -103,7 +103,7 @@ class Settings(BaseSettings):
 
     # eProjekt Integration (for future milestones)
     epro_base_url: str = Field(
-        default="https://epro-stage.filmakademie.de/api", description="eProjekt base URL"
+        default="https://staging.epro.filmakademie.de/api", description="eProjekt base URL"
     )
     epro_auth_token: str = Field(default="", description="eProjekt authentication token")
     epro_auth_token_file: str | None = Field(

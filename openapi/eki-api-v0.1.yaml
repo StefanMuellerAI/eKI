@@ -352,7 +352,7 @@ components:
           description: >-
             Optional HTTPS callback URL for push delivery results.
             Must be on allowlisted eProjekt domains (epro.filmakademie.de,
-            epro-stage.filmakademie.de). Private/internal IPs are blocked.
+            staging.epro.filmakademie.de). Private/internal IPs are blocked.
         delivery:
           type: string
           enum: [pull, push]

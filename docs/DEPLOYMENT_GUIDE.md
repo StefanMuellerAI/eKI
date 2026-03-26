@@ -100,7 +100,7 @@ DATABASE_URL=postgresql+asyncpg://eki_user:<db_password>@postgres:5432/eki_db
 API_SECRET_KEY=<from secrets/api_secret_key.txt>
 
 # CORS - IMPORTANT: Update with your actual domains
-CORS_ORIGINS=https://epro.filmakademie.de,https://epro-stage.filmakademie.de
+CORS_ORIGINS=https://epro.filmakademie.de,https://staging.epro.filmakademie.de
 
 # Rate Limiting
 RATE_LIMIT_ENABLED=true

@@ -131,6 +131,8 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    extra_hosts:
+      - "staging.epro.filmakademie.de:193.196.129.23"
     networks:
       - eki-network
     restart: unless-stopped
@@ -160,6 +162,8 @@ services:
       - ./llm:/app/llm
       - ./parsers:/app/parsers
       - ./config:/app/config
+    extra_hosts:
+      - "staging.epro.filmakademie.de:193.196.129.23"
     networks:
       - eki-network
     restart: unless-stopped
