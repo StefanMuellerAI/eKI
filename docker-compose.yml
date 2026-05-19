@@ -16,6 +16,7 @@ services:
       retries: 5
     networks:
       - eki-network
+    restart: unless-stopped
 
   # Redis Cache
   redis:
@@ -30,6 +31,7 @@ services:
       retries: 5
     networks:
       - eki-network
+    restart: unless-stopped
 
   # Ollama Local LLM (optional - comment out if using Mistral Cloud)
   ollama:
@@ -53,6 +55,7 @@ services:
     #         - driver: nvidia
     #           count: 1
     #           capabilities: [gpu]
+    restart: unless-stopped
 
   # Temporal Server
   temporal:
@@ -83,6 +86,7 @@ services:
       start_period: 45s
     networks:
       - eki-network
+    restart: unless-stopped
 
   # Temporal Web UI
   temporal-ui:
@@ -97,6 +101,7 @@ services:
       - temporal
     networks:
       - eki-network
+    restart: unless-stopped
 
   # FastAPI Application
   api:
