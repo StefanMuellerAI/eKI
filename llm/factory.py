@@ -41,6 +41,8 @@ def get_llm_provider(settings: Settings) -> BaseLLMProvider:
             "base_url": settings.ollama_base_url,
             "model": "mistral",
             "timeout": settings.ollama_timeout,
+            "think": settings.ollama_think,
+            "num_ctx": settings.ollama_num_ctx,
         }
         return LocalMistralProvider(config)
 
@@ -49,6 +51,8 @@ def get_llm_provider(settings: Settings) -> BaseLLMProvider:
             "base_url": settings.ollama_base_url,
             "model": settings.ollama_model,
             "timeout": settings.ollama_timeout,
+            "think": settings.ollama_think,
+            "num_ctx": settings.ollama_num_ctx,
         }
         return OllamaProvider(config)
 

@@ -128,9 +128,25 @@ class Settings(BaseSettings):
     # Ollama Configuration
     ollama_base_url: str = Field(default="http://ollama:11434", description="Ollama base URL")
     ollama_model: str = Field(
-        default="mistral", description="Ollama model name (e.g., mistral, llama2, codellama)"
+        default="mistral",
+        description="Ollama model name (e.g., mistral, gemma4:31b, qwen3.6:35b)",
     )
-    ollama_timeout: int = Field(default=120, description="Ollama request timeout in seconds")
+    ollama_timeout: int = Field(default=300, description="Ollama request timeout in seconds")
+    ollama_think: bool = Field(
+        default=False,
+        description=(
+            "Enable reasoning/thinking mode for thinking-capable models "
+            "(gemma4, qwen3.x). Disabled by default for faster, cleaner "
+            "structured output. Ignored by non-thinking models like mistral."
+        ),
+    )
+    ollama_num_ctx: int = Field(
+        default=32768,
+        description=(
+            "Context window in tokens for Ollama requests. Must cover "
+            "system prompt + taxonomy context + schema + scene text."
+        ),
+    )
 
     # Observability
     otel_enabled: bool = Field(default=True, description="Enable OpenTelemetry")
