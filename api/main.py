@@ -15,7 +15,7 @@ from fastapi.openapi.utils import get_openapi
 
 from api.config import get_settings
 from api.dependencies import verify_api_key
-from api.routers import health, security
+from api.routers import health, knowledge_base, security
 from core.exceptions import EKIException
 from core.db_models import ApiKeyModel
 from core.models import (
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan manager for startup and shutdown events."""
     settings = get_settings()
-    logger.info(f"Starting eKI API v0.5.0 in {settings.env} environment")
+    logger.info(f"Starting eKI API v0.6.0 in {settings.env} environment")
 
     # Startup: Initialize connections, etc.
     logger.info("Application startup complete")
@@ -53,7 +53,7 @@ settings = get_settings()
 app = FastAPI(
     title="eKI API",
     description="KI-gestützte Sicherheitsprüfung für Drehbücher - Filmakademie Baden-Württemberg",
-    version="0.5.0",
+    version="0.6.0",
     docs_url="/docs" if settings.debug else None,  # Hide in production
     redoc_url="/redoc" if settings.debug else None,  # Hide in production
     openapi_url="/openapi.json" if settings.debug else None,  # Hide in production
@@ -226,6 +226,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
 # Include routers
 app.include_router(health.router, tags=["Health"])
 app.include_router(security.router, prefix="/v1/security", tags=["Security"])
+app.include_router(knowledge_base.router, prefix="/v1/kb", tags=["KnowledgeBase"])
 
 if settings.metrics_enabled:
 
@@ -239,7 +240,7 @@ if settings.metrics_enabled:
 async def root() -> dict[str, str]:
     """Root endpoint redirect to docs."""
     return {
-        "message": "eKI API v0.5.0",
+        "message": "eKI API v0.6.0",
         "docs": "/docs",
         "redoc": "/redoc",
         "openapi": "/openapi.json",

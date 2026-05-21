@@ -45,15 +45,21 @@ class PromptManager:
     def get(self, section: str, name: str, **kwargs: Any) -> tuple[str, str]:
         """Return ``(system_prompt, user_prompt)`` with variables substituted.
 
+        Both ``system`` and ``user`` templates are formatted with *kwargs*,
+        so placeholders such as ``{taxonomy_context}`` or ``{kb_context}``
+        defined in the system message are resolved.  Templates that do not
+        reference a given kwarg simply ignore it.
+
         Raises ``KeyError`` if section/name does not exist.
-        Raises ``KeyError`` if a required template variable is missing from *kwargs*.
+        Raises ``KeyError`` if a required template variable is missing
+        from *kwargs*.
         """
         try:
             entry = self._prompts[section][name]
         except KeyError:
             raise KeyError(f"Prompt not found: {section}.{name}")
 
-        system = entry["system"].strip()
+        system = entry["system"].strip().format(**kwargs)
         user = entry["user"].strip().format(**kwargs)
         return system, user
 

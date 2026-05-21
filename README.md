@@ -1,6 +1,6 @@
 # eKI API -- KI-gestuetzte Sicherheitspruefung fuer Drehbuecher
 
-**Version:** 0.5.0 (Meilenstein M05 abgeschlossen)
+**Version:** 0.6.0 (Meilenstein M06 abgeschlossen)
 **Auftraggeber:** Filmakademie Baden-Wuerttemberg
 **Auftragnehmer:** StefanAI -- Research & Development
 
@@ -144,6 +144,16 @@ curl http://localhost:8000/health
 | `GET` | `/v1/security/jobs/{job_id}` | Echtes Job-Status-Tracking aus DB (M05) |
 | `GET` | `/v1/security/reports/{id}` | One-Shot-Report: JSON + PDF, danach geloescht (M05) |
 
+### Knowledge Base Endpoints (M06, Auth erforderlich)
+
+| Methode | Endpunkt | Beschreibung |
+|---|---|---|
+| `POST` | `/v1/kb/documents` | Upload eines KB-Dokuments (PDF/MD/TXT, Multipart) |
+| `GET` | `/v1/kb/documents` | Liste aller KB-Dokumente, optional gefiltert nach `tag` |
+| `GET` | `/v1/kb/documents/{doc_id}` | Metadaten zu einem Dokument |
+| `DELETE` | `/v1/kb/documents/{doc_id}` | Einzel-Delete (Chunks cascaden) |
+| `DELETE` | `/v1/kb/documents?tag=...` | Bulk-Delete nach Tag (z.B. `placeholder` zum Wipe der Seed-Daten) |
+
 ### System Endpoints
 
 | Methode | Endpunkt | Auth | Beschreibung |
@@ -253,6 +263,48 @@ Ein optionaler `idempotency_key` im Request verhindert doppelte Workflows. Gleic
 
 `GET /v1/security/jobs/{id}` liefert echte Daten aus der Datenbank: Status, Progress, Report-ID, Timestamps.
 
+## LLM-Adapter und Knowledge Base (M06)
+
+### Mistral Cloud als zweite Inferenz-Quelle
+
+Der Mistral-Cloud-Adapter ist auf produktionsreifes Structured Output aufgeruestet (`llm/mistral_cloud.py`):
+
+- Mistrals nativer JSON-Mode (`response_format={"type":"json_object"}`)
+- Post-Hoc JSON-Schema-Validierung mit `jsonschema` (Draft 2020-12)
+- Genau ein Self-Correcting-Retry mit Fehlerkontext im Prompt
+- Identischer Rueckgabevertrag wie OllamaProvider
+
+Damit kann `LLM_PROVIDER=mistral_cloud` fuer Stage-Tests (Pflichtenheft Abnahmetest 8) genutzt werden. Ollama bleibt der Default fuer den lokalen Produktivbetrieb.
+
+### Knowledge Base mit pgvector
+
+Die KB speichert verschluesselte Sicherheits-Dokumente (Stunt-SOPs, SFX-Leitfaeden, etc.) und reichert die Risikoanalyse via RAG-Retrieval an. Schema:
+
+| Tabelle | Inhalt |
+|---|---|
+| `kb_documents` | Originaltext Fernet-verschluesselt, Metadaten (title, source, tags, tenant_id, expires_at, content_hash) |
+| `kb_embeddings` | Chunks (~1200 Tokens, 100 Overlap) mit `vector(1024)` aus Ollama `mxbai-embed-large` und ivfflat-Cosine-Index |
+
+**Aktivierung:** Per Feature-Flag `KB_RETRIEVAL_ENABLED` (Default `false`). Solange deaktiviert, ist der Risk-Flow bytewise identisch mit M05. Aktivierung erst nach Validierung.
+
+**Test-KB befuellen (Bernd-Stand-in):**
+
+```bash
+export EKI_API_KEY="eki_..."
+python scripts/seed_kb.py --seed-placeholders   # ingestet 6 Beispiel-SOPs
+python scripts/seed_kb.py --status              # Uebersicht
+```
+
+**Echte Inhalte einspielen:**
+
+```bash
+cp ~/Bernd-Stunt-Leitfaden.pdf config/kb_seed/real/
+python scripts/seed_kb.py --wipe-placeholders   # nur Tag 'placeholder' weg
+python scripts/seed_kb.py --reseed              # ingestet alles aus real/
+```
+
+Details in `docs/M06_KB_GUIDE.md`.
+
 ## Prompt-Management
 
 Alle LLM-Prompts werden zentral in `config/prompts/prompts.yaml` verwaltet:
@@ -304,10 +356,14 @@ eKI_API/
 │   ├── rate_limiting.py          # Rate Limiting
 │   └── routers/
 │       ├── health.py             # Health & Readiness
+│       ├── knowledge_base.py     # KB-Endpoints /v1/kb/* (M06)
 │       └── security.py           # Security Endpoints (JSON + Multipart)
 ├── config/
+│   ├── kb_seed/                  # KB-Seed-Dokumente (M06)
+│   │   ├── placeholders/         # 6 Bernd-Stand-in SOPs (Tag: placeholder)
+│   │   └── real/                 # Echte Sicherheits-Dokumente
 │   ├── prompts/
-│   │   └── prompts.yaml          # Zentrale LLM-Prompt-Verwaltung (M03)
+│   │   └── prompts.yaml          # Zentrale LLM-Prompt-Verwaltung (M03/M06)
 │   └── taxonomy/
 │       ├── taxonomy.yaml         # Risiko-Taxonomie: 23 Klassen, Rule-IDs (M04)
 │       └── measures.yaml         # Massnahmenkatalog: 20 Codes mit Rollen (M04)
@@ -328,6 +384,7 @@ eKI_API/
 │   ├── secure_buffer.py          # AES-verschluesselter Redis-Buffer
 │   ├── taxonomy.py               # TaxonomyManager: Scoring, Validierung (M04)
 │   ├── report_generator.py       # JSON + PDF Report Generator (M05)
+│   ├── knowledge_base.py         # KB Ingest/Search/Cleanup mit pgvector (M06)
 │   └── security_service.py       # Security Service
 ├── workflows/                    # Temporal Workflows
 │   ├── security_check.py         # FDX/PDF Workflow-Router (M03)
@@ -335,11 +392,11 @@ eKI_API/
 ├── worker/
 │   └── main.py                   # Temporal Worker (8 Activities registriert)
 ├── llm/                          # LLM Provider Abstraktion
-│   ├── base.py                   # BaseLLMProvider Interface
+│   ├── base.py                   # BaseLLMProvider Interface (+ embed() M06)
 │   ├── factory.py                # Provider Factory
-│   ├── prompt_manager.py         # YAML Prompt Loader (M03)
-│   ├── ollama.py                 # Ollama Provider
-│   ├── mistral_cloud.py          # Mistral Cloud Provider
+│   ├── prompt_manager.py         # YAML Prompt Loader (M03, system-format fix M06)
+│   ├── ollama.py                 # Ollama Provider (Generation + Embeddings, M06)
+│   ├── mistral_cloud.py          # Mistral Cloud Provider (Schema-validated JSON, M06)
 │   └── local_mistral.py          # Local Mistral Alias
 ├── db/
 │   ├── session.py                # Async Session Management
@@ -349,12 +406,18 @@ eKI_API/
 │   ├── test_pdf_parser.py        # 32 PDF/Splitter/LLM/PromptManager Tests
 │   ├── test_taxonomy.py          # 38 Taxonomie/Scoring/Measures/Validation Tests (M04)
 │   ├── test_reports.py           # 13 Report-Generator/PDF/Delivery/Idempotenz Tests (M05)
+│   ├── test_kb_service.py        # KB-Chunker/Frontmatter/Dedup Tests (M06)
+│   ├── test_kb_endpoints.py      # /v1/kb/* Routen-Contract Tests (M06)
+│   ├── test_mistral_cloud_structured.py  # Mistral JSON-Mode + Schema Retry (M06)
+│   ├── test_prompt_manager_fix.py        # System-Prompt-Format-Regression (M06)
+│   ├── test_risk_with_kb.py      # Feature-Flag default OFF Regression (M06)
+│   ├── test_seed_kb.py           # CLI Wipe/Reseed/Status Idempotenz (M06)
 │   ├── test_api.py               # API Endpoint Tests
 │   ├── test_security.py          # Security Feature Tests
 │   ├── test_config.py            # Config Parsing Tests
 │   ├── fixtures/fdx/             # 12 synthetische FDX-Testdateien
 │   └── fixtures/pdf/             # 5 synthetische PDF-Testdateien
-├── scripts/                      # Utilities
+├── scripts/                      # Utilities (inkl. seed_kb.py fuer KB-Befuellung)
 ├── openapi/                      # OpenAPI 3.1.1 Spezifikation
 ├── postman/                      # Postman Collection
 ├── docker/                       # Dockerfiles (API + Worker)
@@ -429,7 +492,7 @@ MISTRAL_API_KEY=your-key
 | M03 | PDF & Streaming-Parsing | Abgeschlossen | PDF-Parser, LLM-Strukturierung, Prompt-YAML, Workflow-Refactoring, Risikoanalyse pro Szene, 73 Tests |
 | M04 | Risiko-Taxonomie v1 & Scoring | Abgeschlossen | 23 Risiko-Klassen, Scoring-Engine, 20 Massnahmen-Codes, TaxonomyManager, 111 Tests |
 | M05 | Reports (JSON/PDF) & One-Shot-GET | Abgeschlossen | JSON+PDF-Report, One-Shot-GET, Push/Pull Delivery, Job-Tracking, Idempotenz, 124 Tests |
-| M06 | LLM-Adapter (Mistral API) & KB | Ausstehend | |
+| M06 | LLM-Adapter (Mistral Cloud) & KB-Grundlage | Abgeschlossen | Mistral Cloud Structured Output (Schema-validiert, Retry), pgvector-KB (kb_documents + kb_embeddings), Ollama-Embeddings (mxbai-embed-large), KB-Endpoints /v1/kb/*, 6 Placeholder-SOPs, idempotenter Seeder, Feature-Flag KB_RETRIEVAL_ENABLED (Default OFF), PromptManager-Bugfix, 40 zusaetzliche Tests |
 | M07 | Grossdokument-Optimierung | Ausstehend | |
 | M08 | Security/Privacy & Delete-on-Delivery | Ausstehend | |
 | M09 | Observability & SLOs | Ausstehend | |

@@ -53,6 +53,8 @@ def get_llm_provider(settings: Settings) -> BaseLLMProvider:
             "timeout": settings.ollama_timeout,
             "think": settings.ollama_think,
             "num_ctx": settings.ollama_num_ctx,
+            "embedding_model": settings.ollama_embedding_model,
+            "embedding_max_chars": settings.ollama_embedding_max_chars,
         }
         return OllamaProvider(config)
 

@@ -58,6 +58,10 @@ risk_analysis:
 
       {taxonomy_context}
 
+      Relevant safety knowledge from the project knowledge base
+      (use only if it concretely supports a finding for THIS scene):
+      {kb_context}
+
       For each risk you identify, provide:
       - risk_class: One of the class codes from the taxonomy (e.g. FIRE, HEIGHT, STUNTS, INTIMACY)
       - rule_id: The corresponding rule ID (e.g. SEC-P-008)

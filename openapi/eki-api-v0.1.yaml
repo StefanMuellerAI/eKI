@@ -1,7 +1,7 @@
 openapi: 3.1.1
 info:
   title: eKI API
-  version: 0.5.0
+  version: 0.6.0
   description: |
     KI-gestützte Sicherheitsprüfung für Drehbücher - Filmakademie Baden-Württemberg
 
@@ -20,6 +20,7 @@ info:
     - M03: PDF & Streaming-Parsing ✓
     - M04: Risiko-Taxonomie & Scoring ✓
     - M05: Reports (JSON/PDF) & One-Shot-GET ✓
+    - M06: LLM-Adapter (Mistral Cloud) & KB-Grundlage ✓
 
   contact:
     name: Filmakademie Baden-Württemberg
@@ -39,6 +40,8 @@ tags:
     description: Health and readiness checks
   - name: Security
     description: Security check operations
+  - name: KnowledgeBase
+    description: Knowledge Base management (M06) for RAG-augmented risk analysis
 
 paths:
   /health:
@@ -262,6 +265,184 @@ paths:
           $ref: '#/components/responses/RateLimitExceeded'
         '500':
           $ref: '#/components/responses/InternalError'
+
+  # -------------------------------------------------------------------------
+  # M06: Knowledge Base endpoints
+  # -------------------------------------------------------------------------
+  /v1/kb/documents:
+    post:
+      tags:
+        - KnowledgeBase
+      summary: Upload a KB document
+      description: >-
+        Upload a safety document (.pdf, .md, .txt) into the project knowledge
+        base. The document is chunked, embedded, and stored Fernet-encrypted.
+        Idempotent via SHA-256 content hash: re-uploading the same content
+        returns 409 Conflict.
+      operationId: uploadKbDocument
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, title]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: PDF, Markdown, or plain text file (max 10 MB)
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                source:
+                  type: string
+                  enum: [UPLOAD, SHARE, URL, PLACEHOLDER]
+                  default: UPLOAD
+                tags:
+                  type: string
+                  description: Comma-separated tag list (max 16 tags)
+                ttl_hours:
+                  type: integer
+                  minimum: 1
+                  maximum: 8760
+                  default: 720
+      responses:
+        '201':
+          description: Document ingested
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KBDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Duplicate content (identical SHA-256 already in KB)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+
+    get:
+      tags:
+        - KnowledgeBase
+      summary: List KB documents
+      description: Return metadata summaries for all KB documents of the calling tenant.
+      operationId: listKbDocuments
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: tag
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter to documents that carry the given tag
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: List of KB documents
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KBListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+
+    delete:
+      tags:
+        - KnowledgeBase
+      summary: Bulk delete KB documents by tag
+      description: >-
+        Delete all KB documents tagged with the given tag (e.g. `placeholder`
+        to wipe seed data once real content is loaded).
+      operationId: deleteKbDocumentsByTag
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: tag
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Documents deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KBDeleteByTagResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+
+  /v1/kb/documents/{doc_id}:
+    get:
+      tags:
+        - KnowledgeBase
+      summary: Get KB document metadata
+      description: Return metadata for a single KB document. Original text is never returned.
+      operationId: getKbDocument
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: doc_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: KB document metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KBDocumentResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    delete:
+      tags:
+        - KnowledgeBase
+      summary: Delete a single KB document
+      description: Delete one KB document. Its embedding chunks cascade.
+      operationId: deleteKbDocument
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: doc_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Document deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KBDeleteResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
 components:
   securitySchemes:
@@ -752,6 +933,74 @@ components:
         timestamp:
           type: string
           format: date-time
+
+    # -----------------------------------------------------------------------
+    # M06: Knowledge Base schemas
+    # -----------------------------------------------------------------------
+    KBDocumentResponse:
+      type: object
+      required: [doc_id, title, source, tags, uploaded_by, created_at, expires_at, chunk_count]
+      properties:
+        doc_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        source:
+          type: string
+          enum: [UPLOAD, SHARE, URL, PLACEHOLDER]
+        tags:
+          type: array
+          items: { type: string }
+        uploaded_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        chunk_count:
+          type: integer
+          minimum: 0
+          description: Number of embedding chunks stored for this document
+
+    KBListResponse:
+      type: object
+      required: [total_returned, documents]
+      properties:
+        total_returned:
+          type: integer
+          minimum: 0
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/KBDocumentResponse'
+
+    KBDeleteResponse:
+      type: object
+      required: [deleted, doc_id]
+      properties:
+        deleted:
+          type: boolean
+          default: true
+        doc_id:
+          type: string
+          format: uuid
+
+    KBDeleteByTagResponse:
+      type: object
+      required: [deleted, tag, count]
+      properties:
+        deleted:
+          type: boolean
+          default: true
+        tag:
+          type: string
+        count:
+          type: integer
+          minimum: 0
+          description: Number of documents deleted by this call
 
   responses:
     BadRequest:

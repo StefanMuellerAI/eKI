@@ -28,14 +28,30 @@ def event_loop() -> Generator:
 
 @pytest.fixture(scope="session")
 async def test_engine():
-    """Create test database engine."""
+    """Create test database engine.
+
+    SQLite cannot render Postgres-specific column types (JSONB, pgvector
+    ``Vector(1024)``).  We therefore exclude the M06 ``kb_*`` tables from
+    the in-memory schema; their Postgres-level correctness is covered by
+    the Alembic migration and dedicated integration tests, not by the
+    unit suite.
+    """
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
         echo=False,
     )
 
+    sqlite_tables = [
+        t for t in Base.metadata.sorted_tables
+        if t.name not in {"kb_documents", "kb_embeddings"}
+    ]
+
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(
+            lambda sync_conn: Base.metadata.create_all(
+                sync_conn, tables=sqlite_tables
+            )
+        )
 
     yield engine
 

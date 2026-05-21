@@ -66,3 +66,9 @@ class EProException(EKIException):
     """Raised when eProjekt integration fails."""
 
     pass
+
+
+class ConflictException(EKIException):
+    """Raised when a resource conflict prevents the operation (e.g. duplicate)."""
+
+    status_code = 409

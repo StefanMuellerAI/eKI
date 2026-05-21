@@ -312,6 +312,10 @@ class TestPromptManager:
             location_type="EXT",
             time_of_day="DAY",
             scene_text="Cars race at high speed.",
+            # M06: system prompt now references {taxonomy_context} and
+            # {kb_context}; both must be supplied for substitution to succeed.
+            taxonomy_context="taxonomy stub",
+            kb_context="(none)",
         )
         assert "safety" in system.lower()
         assert "HIGHWAY" in user

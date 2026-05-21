@@ -35,6 +35,16 @@ class OllamaProvider(BaseLLMProvider):
         # Default context covers system+taxonomy+schema+long scenes comfortably.
         # Non-thinking models (e.g. mistral) accept this without issue.
         self.num_ctx = config.get("num_ctx", 32768)
+        # Embedding model used by KB ingest/search (M06).  Separate from the
+        # generation model so users can pick e.g. gemma4:31b for inference
+        # and mxbai-embed-large for embeddings.
+        self.embedding_model = config.get("embedding_model", "mxbai-embed-large")
+        # Hard upper bound on the characters sent to /api/embeddings.  Small
+        # embedders such as mxbai-embed-large refuse inputs > ~1100 chars
+        # of dense German/Markdown with HTTP 500.  1000 chars is the
+        # verified safe ceiling; raise when switching to a long-context
+        # embedder (bge-m3 etc.).
+        self.embedding_max_chars = int(config.get("embedding_max_chars", 1000))
 
     async def generate(
         self,
@@ -242,6 +252,64 @@ class OllamaProvider(BaseLLMProvider):
     def _strip_thinking_tags(text: str) -> str:
         """Remove <think>...</think> blocks from a model response."""
         return _THINKING_TAG_PATTERN.sub("", text).strip()
+
+    async def embed(self, text: str) -> list[float]:
+        """Generate an embedding vector via Ollama's /api/embeddings.
+
+        The model is taken from ``embedding_model`` (config) and defaults
+        to ``mxbai-embed-large`` (1024 dim).  Input is sanitized to keep
+        prompt-injection patterns out of the vector store.
+
+        Inputs larger than ``embedding_max_chars`` are truncated with a
+        warning -- small embedders (mxbai-embed-large) refuse longer
+        inputs with HTTP 500.  The caller stores the FULL chunk text;
+        only the vector is computed over the truncated prefix.
+        """
+        if not text or not text.strip():
+            raise LLMException(
+                "Cannot embed empty text",
+                details={"provider": "ollama"},
+            )
+
+        try:
+            clean_text = PromptSanitizer.validate_and_sanitize(text, raise_on_unsafe=False)
+        except ValueError as e:
+            raise LLMException(
+                "Embedding input blocked by security policy",
+                details={"provider": "ollama", "reason": str(e)},
+            )
+
+        if len(clean_text) > self.embedding_max_chars:
+            logger.warning(
+                "Embedding input truncated from %d to %d chars to fit '%s' context window",
+                len(clean_text), self.embedding_max_chars, self.embedding_model,
+            )
+            clean_text = clean_text[: self.embedding_max_chars]
+
+        payload = {"model": self.embedding_model, "prompt": clean_text}
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    f"{self.base_url}/api/embeddings",
+                    json=payload,
+                )
+                response.raise_for_status()
+                result = response.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Ollama embeddings API error: {e}")
+            raise LLMException(
+                f"Ollama embeddings API request failed: {str(e)}",
+                details={"provider": "ollama", "model": self.embedding_model},
+            )
+
+        vector = result.get("embedding")
+        if not isinstance(vector, list) or not vector:
+            raise LLMException(
+                "Ollama returned an empty or malformed embedding",
+                details={"provider": "ollama", "model": self.embedding_model},
+            )
+        return [float(v) for v in vector]
 
     async def health_check(self) -> bool:
         """Check Ollama availability."""

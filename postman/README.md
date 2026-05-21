@@ -1,12 +1,12 @@
-# eKI API - Postman Collection v0.5
+# eKI API - Postman Collection v0.6
 
-Diese Postman Collection enthält alle API-Endpunkte der eKI API mit vollständiger LLM-Risikoanalyse.
+Diese Postman Collection enthält alle API-Endpunkte der eKI API mit vollständiger LLM-Risikoanalyse und der neuen Knowledge Base (M06).
 
 ## Import
 
 1. Öffne Postman
 2. Click auf **Import**
-3. Wähle `eKI-API-v0.5.postman_collection.json`
+3. Wähle `eKI-API-v0.6.postman_collection.json` (v0.5 bleibt verfügbar)
 4. Click **Import**
 
 ## Setup
@@ -93,6 +93,18 @@ Echte Drehbücher aus `tests/fixtures/pdf/`:
 - **ReDoc** - Alternative Docs im ReDoc-Stil (nur Development)
 - **OpenAPI Spec** - OpenAPI 3.1 JSON
 
+### 8. Knowledge Base (M06)
+- **Upload KB document (Markdown)** - Multipart Upload (PDF/MD/TXT), liefert `doc_id`
+- **List KB documents** - Alle KB-Dokumente, optional gefiltert nach `tag`
+- **List KB documents filtered by tag** - z.B. `?tag=placeholder` für Seed-Inhalte
+- **Get KB document metadata** - Einzelmetadaten (kein Originaltext)
+- **Delete a KB document** - Einzel-Delete, Chunks cascaden
+- **Wipe placeholders (bulk delete by tag)** - `?tag=placeholder` löscht nur Seed-Daten
+
+> **Feature-Flag:** Die KB-Endpunkte sind immer verfügbar. Ob KB-Treffer in die
+> Risikoanalyse einfließen, steuert `KB_RETRIEVAL_ENABLED` in `.env.local`
+> (Default `false`).
+
 ## Testing Workflows
 
 ### Happy Path (PDF - Empfohlen)
@@ -136,6 +148,6 @@ Echte Drehbücher aus `tests/fixtures/pdf/`:
 
 ---
 
-**Version:** 0.5.0
-**Last Updated:** 2026-03-22
-**Status:** Production Ready
+**Version:** 0.6.0
+**Last Updated:** 2026-05-21
+**Status:** Production Ready (M06 KB additive, Feature-Flag default OFF)

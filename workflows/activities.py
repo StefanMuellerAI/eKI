@@ -409,6 +409,72 @@ async def update_job_status_activity(job_data: dict[str, Any]) -> dict[str, Any]
 # ===================================================================
 
 
+async def _build_kb_context(*, scene_text: str, settings: Any) -> str:
+    """Return KB context string for the risk-analysis prompt.
+
+    Strictly opt-in:
+
+    * Returns ``"(none)"`` when ``KB_RETRIEVAL_ENABLED=false`` (default).
+    * Returns ``"(none)"`` if scene_text is empty.
+    * Returns ``"(none)"`` on ANY failure during KB lookup, so a flaky
+      DB or empty KB never breaks the risk activity.  Failures are logged
+      at WARNING level for operators.
+
+    When successful, returns ``"[Title] chunk_text_excerpt\\n\\n[...]"``
+    with at most ``settings.kb_top_k`` snippets, each truncated to
+    ``settings.kb_max_chunk_chars_in_prompt`` characters.
+    """
+    if not getattr(settings, "kb_retrieval_enabled", False):
+        return "(none)"
+    if not scene_text or not scene_text.strip():
+        return "(none)"
+
+    try:
+        from uuid import UUID as UUIDType
+
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        from llm.factory import get_llm_provider
+        from services.knowledge_base import KnowledgeBaseService
+
+        engine = create_async_engine(str(settings.database_url))
+        Session = async_sessionmaker(engine, expire_on_commit=False)
+
+        async with Session() as session:
+            kb = KnowledgeBaseService(
+                db=session,
+                llm=get_llm_provider(settings),
+                secret_key=settings.api_secret_key,
+            )
+            hits = await kb.search(
+                query_text=scene_text,
+                tenant_id=UUIDType(settings.kb_default_tenant_id),
+                top_k=settings.kb_top_k,
+            )
+
+        await engine.dispose()
+
+        if not hits:
+            return "(none)"
+
+        max_chars = settings.kb_max_chunk_chars_in_prompt
+        parts = []
+        for h in hits:
+            snippet = (h.chunk_text or "").strip()
+            if len(snippet) > max_chars:
+                snippet = snippet[:max_chars].rstrip() + "..."
+            parts.append(f"[{h.title}] {snippet}")
+        logger.info("KB retrieval: %d hits used for scene context", len(hits))
+        return "\n\n".join(parts)
+
+    except Exception as exc:
+        logger.warning(
+            "KB retrieval failed (non-fatal, falling back to no-KB context): %s",
+            exc,
+        )
+        return "(none)"
+
+
 _RISK_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -513,7 +579,15 @@ async def analyze_scene_risk_activity(job_data: dict[str, Any]) -> dict[str, Any
         pm = get_prompt_manager()
         taxonomy = get_taxonomy_manager()
 
-        # Build prompt with taxonomy context
+        # KB retrieval (M06): strictly opt-in via KB_RETRIEVAL_ENABLED.
+        # When the flag is off, no KB code path is taken, so the risk
+        # activity behaves byte-identically to M05.
+        kb_context_str = await _build_kb_context(
+            scene_text=scene.get("text", ""),
+            settings=settings,
+        )
+
+        # Build prompt with taxonomy + (optional) KB context
         system_prompt, user_prompt = pm.get(
             "risk_analysis", "scene",
             scene_number=scene_number,
@@ -522,6 +596,7 @@ async def analyze_scene_risk_activity(job_data: dict[str, Any]) -> dict[str, Any
             time_of_day=scene.get("time_of_day", "UNKNOWN"),
             scene_text=scene.get("text", ""),
             taxonomy_context=taxonomy.summary_for_prompt(),
+            kb_context=kb_context_str,
         )
 
         result = await llm.generate_structured(

@@ -74,6 +74,20 @@ class BaseLLMProvider(ABC):
         """
         pass
 
+    async def embed(self, text: str) -> list[float]:
+        """Return an embedding vector for *text*.
+
+        Optional capability used by the M06 knowledge base.  Providers
+        that cannot embed (e.g. text-only Mistral Cloud chat models)
+        raise :class:`NotImplementedError`; the KB service catches that
+        and instructs the operator to switch ``EMBEDDING_PROVIDER``.
+
+        Subclasses override this when they expose an embedding endpoint.
+        """
+        raise NotImplementedError(
+            f"{self.provider_name} does not implement embeddings"
+        )
+
     @property
     @abstractmethod
     def provider_name(self) -> str:

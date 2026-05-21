@@ -68,6 +68,9 @@ dependencies = [
     # YAML (Prompt Management)
     "pyyaml>=6.0",
 
+    # JSON Schema validation (M06 Mistral Cloud structured output, KB service)
+    "jsonschema>=4.21",
+
     # PDF Report Generation
     "reportlab>=4.0",
 

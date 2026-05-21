@@ -147,6 +147,56 @@ class Settings(BaseSettings):
             "system prompt + taxonomy context + schema + scene text."
         ),
     )
+    ollama_embedding_model: str = Field(
+        default="mxbai-embed-large",
+        description=(
+            "Ollama model used for KB embeddings (M06). Must produce a "
+            "1024-dim vector to match the kb_embeddings.vector column. "
+            "Tested with mxbai-embed-large (512 token / ~1800 char hard "
+            "limit) and bge-m3 (8192 token, 1024 dim, ideal match). "
+            "If you switch to bge-m3, bump ollama_embedding_max_chars."
+        ),
+    )
+    ollama_embedding_max_chars: int = Field(
+        default=1000,
+        description=(
+            "Pre-truncate embed() input to this many characters. "
+            "mxbai-embed-large has a hard 512-token context and refuses "
+            "inputs > ~1100 chars of dense German/Markdown with HTTP 500. "
+            "1000 chars is the verified safe ceiling. The full chunk_text "
+            "is still stored in kb_embeddings; only the vector is computed "
+            "over the truncated prefix.  For full Pflichtenheft chunks "
+            "(800-1500 tokens), switch to bge-m3 and raise this to ~30000."
+        ),
+    )
+
+    # Knowledge Base (M06)
+    kb_retrieval_enabled: bool = Field(
+        default=False,
+        description=(
+            "Master switch for KB retrieval in the risk analysis pipeline. "
+            "Default OFF: the risk flow is byte-identical to the M05 path. "
+            "Turn ON only after KB content has been validated and seeded."
+        ),
+    )
+    kb_default_tenant_id: str = Field(
+        default="00000000-0000-0000-0000-000000000001",
+        description=(
+            "Tenant UUID used by all KB operations until multi-tenant "
+            "routing is required. Pinned to Filmakademie's single tenant."
+        ),
+    )
+    kb_top_k: int = Field(
+        default=3,
+        description="Number of KB chunks retrieved per scene during risk analysis.",
+    )
+    kb_max_chunk_chars_in_prompt: int = Field(
+        default=600,
+        description=(
+            "Max characters per retrieved chunk inserted into the LLM prompt "
+            "to keep the context window under control on large screenplays."
+        ),
+    )
 
     # Observability
     otel_enabled: bool = Field(default=True, description="Enable OpenTelemetry")

@@ -3,11 +3,28 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Boolean, DateTime, Enum, Integer, String, Text, func
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    func,
+)
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from core.models import JobStatus, ScriptFormat
+
+# Embedding dimensionality matches mxbai-embed-large (M06 default).
+# Must stay in sync with db/migrations/versions/20260521_m06_knowledge_base.py.
+_KB_VECTOR_DIM = 1024
 
 
 class Base(DeclarativeBase):
@@ -121,3 +138,79 @@ class ReportMetadata(Base):
     report_ref_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     delivery_mode: Mapped[str] = mapped_column(String(10), nullable=False, default="pull")
     extra_metadata: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+
+# ---------------------------------------------------------------------------
+# M06: Knowledge Base
+# ---------------------------------------------------------------------------
+
+
+class KnowledgeDocument(Base):
+    """A document ingested into the safety knowledge base.
+
+    The original text is stored Fernet-encrypted (same key derivation as
+    SecureBuffer).  Metadata is plaintext for queries/filtering.  Chunks
+    and their embeddings live in :class:`KnowledgeEmbedding`.
+    """
+
+    __tablename__ = "kb_documents"
+
+    doc_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Allowed values: UPLOAD, SHARE, URL, PLACEHOLDER (seed data marker)
+    source: Mapped[str] = mapped_column(String(20), nullable=False)
+    tenant_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), nullable=False, index=True
+    )
+    tags: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
+    original_text_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    content_hash: Mapped[str] = mapped_column(
+        String(64), nullable=False, unique=True, index=True
+    )
+    uploaded_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    ttl_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=720)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<KnowledgeDocument(doc_id={self.doc_id}, title={self.title!r}, "
+            f"source={self.source}, tags={self.tags})>"
+        )
+
+
+class KnowledgeEmbedding(Base):
+    """One vector embedding per text chunk of a KnowledgeDocument."""
+
+    __tablename__ = "kb_embeddings"
+
+    embedding_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    doc_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("kb_documents.doc_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    chunk_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
+    vector: Mapped[list[float]] = mapped_column(Vector(_KB_VECTOR_DIM), nullable=False)
+    dim: Mapped[int] = mapped_column(Integer, nullable=False, default=_KB_VECTOR_DIM)
+    chunk_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    length: Mapped[int] = mapped_column(Integer, nullable=False)
+    hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    def __repr__(self) -> str:
+        return (
+            f"<KnowledgeEmbedding(embedding_id={self.embedding_id}, "
+            f"doc_id={self.doc_id}, chunk_id={self.chunk_id})>"
+        )

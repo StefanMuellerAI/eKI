@@ -74,7 +74,7 @@ def _make_report_package(
         "total_findings": len(findings),
         "findings": findings,
         "processing_time_seconds": 10.0,
-        "metadata": {"engine_version": "0.5.0", "taxonomy_version": "1.0"},
+        "metadata": {"engine_version": "0.6.0", "taxonomy_version": "1.0"},
     }
 
     pdf_bytes = b"%PDF-1.4 fake test pdf content"
