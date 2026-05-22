@@ -3,7 +3,7 @@
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, ClassVar
 
 from pydantic import Field, PostgresDsn, RedisDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -363,6 +363,37 @@ class Settings(BaseSettings):
         if isinstance(v, list):
             return [str(ip).strip() for ip in v if str(ip).strip()]
         return v
+
+    # Hier wird LLM_PROVIDER schon beim App-Start gegen das erlaubte Set
+    # geprueft, statt erst beim ersten LLM-Call in llm/factory.py zu
+    # scheitern. Kleinschreibung + Strip ist tolerant; Bindestrich/
+    # Unterstrich-Verwechslungen (haeufiger Schreibfehler) werden mit
+    # einer klaren Fehlermeldung abgewiesen.
+    _LLM_PROVIDER_ALIASES: ClassVar[dict[str, str]] = {
+        "mistral-cloud": "mistral_cloud",
+        "local-mistral": "local_mistral",
+    }
+
+    @field_validator("llm_provider", mode="before")
+    @classmethod
+    def validate_llm_provider(cls, v: Any) -> str:
+        """Normalize and validate LLM_PROVIDER against the allowed set."""
+        if not isinstance(v, str):
+            raise ValueError("LLM_PROVIDER must be a string")
+        value = v.strip().lower()
+        if value in cls._LLM_PROVIDER_ALIASES:
+            raise ValueError(
+                f"LLM_PROVIDER='{v}' uses a hyphen, but the code expects "
+                f"underscores. Use '{cls._LLM_PROVIDER_ALIASES[value]}' "
+                f"instead."
+            )
+        allowed = {"mistral_cloud", "local_mistral", "ollama"}
+        if value not in allowed:
+            raise ValueError(
+                f"Invalid LLM_PROVIDER='{v}'. "
+                f"Valid options: {sorted(allowed)}."
+            )
+        return value
 
     @model_validator(mode="before")
     @classmethod
