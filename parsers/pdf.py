@@ -30,12 +30,38 @@ from parsers.pdf_scene_splitter import split_into_scenes
 
 logger = logging.getLogger(__name__)
 
+# Fallback-Konstanten für den Fall, dass Settings beim Aufruf nicht ladbar
+# sind (z.B. in stand-alone Tests ohne env-Konfig). Numerisch identisch
+# zum Stand vor M07. Im Produktivpfad werden die Werte aus den Settings
+# bezogen (max_pdf_pages, max_pdf_size_bytes).
 _MAX_PDF_PAGES = 500
 _MAX_PDF_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
+def _effective_pdf_limits(max_pages: int | None) -> tuple[int, int]:
+    """Return (effective_max_pages, effective_max_size) using settings.
+
+    max_pages aus dem Argument hat Vorrang (Test-Hook); fehlt es, wird der
+    Wert aus settings.max_pdf_pages genommen. settings.max_pdf_size_bytes
+    überschreibt _MAX_PDF_SIZE, falls verfügbar.
+    """
+    cfg_max_pages = _MAX_PDF_PAGES
+    cfg_max_size = _MAX_PDF_SIZE
+    try:
+        from api.config import get_settings
+
+        s = get_settings()
+        cfg_max_pages = int(getattr(s, "max_pdf_pages", _MAX_PDF_PAGES))
+        cfg_max_size = int(getattr(s, "max_pdf_size_bytes", _MAX_PDF_SIZE))
+    except Exception:
+        pass
+
+    effective_pages = max_pages if max_pages is not None else cfg_max_pages
+    return effective_pages, cfg_max_size
+
+
 def extract_pdf_text(
-    content: bytes, max_pages: int = _MAX_PDF_PAGES
+    content: bytes, max_pages: int | None = None
 ) -> tuple[str, list[str], list[int], list[str]]:
     """Extract text from a PDF, page by page, in-memory only.
 
@@ -49,10 +75,12 @@ def extract_pdf_text(
     from pdfminer.pdfdocument import PDFPasswordIncorrect
     from pdfplumber.utils.exceptions import PdfminerException
 
-    if len(content) > _MAX_PDF_SIZE:
+    effective_max_pages, effective_max_size = _effective_pdf_limits(max_pages)
+
+    if len(content) > effective_max_size:
         raise ParsingException(
-            f"PDF exceeds size limit ({len(content)} > {_MAX_PDF_SIZE} bytes)",
-            details={"size": len(content), "max_size": _MAX_PDF_SIZE},
+            f"PDF exceeds size limit ({len(content)} > {effective_max_size} bytes)",
+            details={"size": len(content), "max_size": effective_max_size},
         )
 
     pages_text: list[str] = []
@@ -62,12 +90,12 @@ def extract_pdf_text(
     try:
         with pdfplumber.open(io.BytesIO(content)) as pdf:
             total_pages = len(pdf.pages)
-            if total_pages > max_pages:
+            if total_pages > effective_max_pages:
                 warnings.append(
                     f"PDF has {total_pages} pages. "
-                    f"Only the first {max_pages} pages were processed."
+                    f"Only the first {effective_max_pages} pages were processed."
                 )
-            for i, page in enumerate(pdf.pages[:max_pages]):
+            for i, page in enumerate(pdf.pages[:effective_max_pages]):
                 text = page.extract_text() or ""
                 if len(text.strip()) < 10:
                     ocr_needed.append(i + 1)

@@ -244,6 +244,18 @@ async def aggregate_script_activity(job_data: dict[str, Any]) -> dict[str, Any]:
     t0 = time.monotonic()
     logger.info("Aggregating %d scenes into ParsedScript", len(scene_ref_keys))
 
+    # M07-Tripwire: Bei sehr großen Drehbüchern (z.B. 300+ Seiten unter
+    # paralleler Strukturierung) können mehrere hundert Scene-Refs
+    # gleichzeitig in Redis liegen. Eine Warn-Schwelle hilft im Betrieb,
+    # frühzeitig zu erkennen, falls der SecureBuffer ungewöhnlich wächst.
+    if len(scene_ref_keys) > 200:
+        logger.warning(
+            "aggregate_script_activity: %d pending scene refs to clean up "
+            "(Großdokument-Pfad, M07). Wird inkrementell in dieser "
+            "Activity abgeräumt.",
+            len(scene_ref_keys),
+        )
+
     buffer = _get_buffer()
 
     from collections import defaultdict

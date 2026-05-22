@@ -1,9 +1,12 @@
 """Ollama local LLM provider."""
 
+import asyncio
 import json
 import logging
 import re
-from typing import Any
+import time
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator
 
 import httpx
 
@@ -17,6 +20,112 @@ logger = logging.getLogger(__name__)
 # qwen3.x) may emit before the actual answer, even with think=False set.
 # Acts as a safety net so the downstream JSON parser does not break.
 _THINKING_TAG_PATTERN = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
+
+
+# =====================================================================
+# M07 – Prozessweite Ollama-Drosselung
+#
+# OllamaProvider wird im aktuellen Code für jede Activity neu instanziiert
+# (siehe llm/factory.py: get_llm_provider). Damit ein Concurrency-Cap über
+# Activities und parallele Workflows hinweg überhaupt greifen kann, MUSS
+# der Semaphore modul-global sein. Lazy-Initialisierung wird benötigt, weil
+# asyncio.Semaphore() im Modul-Top-Level zur Import-Zeit den dann noch
+# nicht laufenden Event-Loop binden würde.
+#
+# Schalter:
+#   ollama_max_concurrent_requests   -> Größe des Semaphore
+#   ollama_min_interval_ms           -> optionaler Mindestabstand
+#
+# Beide Defaults (1 bzw. 0) ergeben das M06-Verhalten.
+# =====================================================================
+
+_OLLAMA_SEM: asyncio.Semaphore | None = None
+_OLLAMA_SEM_CAPACITY: int = 0
+_OLLAMA_THROTTLE_LOCK: asyncio.Lock | None = None
+_OLLAMA_LAST_CALL_MONOTONIC: float = 0.0
+
+
+def _get_throttle_config() -> tuple[int, int]:
+    """Lazy-load Concurrency-Cap and Throttle-Intervall from settings.
+
+    Wrapped in try/except so any settings import problem (zirkulärer
+    Import in Tests, fehlende env vars) niemals den LLM-Pfad bricht --
+    Default-Werte ergeben dann das aktuelle (serialisierte) Verhalten.
+    """
+    try:
+        from api.config import get_settings
+
+        s = get_settings()
+        return (
+            int(getattr(s, "ollama_max_concurrent_requests", 1) or 1),
+            int(getattr(s, "ollama_min_interval_ms", 0) or 0),
+        )
+    except Exception:
+        return (1, 0)
+
+
+def _get_or_create_semaphore(capacity: int) -> asyncio.Semaphore:
+    """Get the process-wide semaphore, recreating it if capacity changed.
+
+    Re-Allokation passiert nur, wenn sich die konfigurierte Kapazität
+    zur Laufzeit ändert (z.B. in Tests oder bei Live-Reload). Im
+    Produktivbetrieb bleibt der Semaphore über die Lebensdauer des
+    Prozesses derselbe.
+    """
+    global _OLLAMA_SEM, _OLLAMA_SEM_CAPACITY
+    if _OLLAMA_SEM is None or _OLLAMA_SEM_CAPACITY != capacity:
+        _OLLAMA_SEM = asyncio.Semaphore(capacity)
+        _OLLAMA_SEM_CAPACITY = capacity
+    return _OLLAMA_SEM
+
+
+def _get_throttle_lock() -> asyncio.Lock:
+    global _OLLAMA_THROTTLE_LOCK
+    if _OLLAMA_THROTTLE_LOCK is None:
+        _OLLAMA_THROTTLE_LOCK = asyncio.Lock()
+    return _OLLAMA_THROTTLE_LOCK
+
+
+@asynccontextmanager
+async def _ollama_slot() -> AsyncIterator[None]:
+    """Acquire a slot for one Ollama call: semaphore + optional throttle.
+
+    Reihenfolge:
+      1. Semaphore acquire (Hard-Cap)
+      2. Optionaler Mindestabstand zum letzten Call (zusätzlicher Schutz
+         für sehr knapp dimensionierte Shared-GPU-Systeme)
+      3. Yield (Call ausführen)
+      4. Last-Call-Zeitstempel auf jetzt setzen
+      5. Semaphore release (via Context-Exit)
+    """
+    capacity, interval_ms = _get_throttle_config()
+    sem = _get_or_create_semaphore(capacity)
+
+    await sem.acquire()
+    try:
+        if interval_ms > 0:
+            global _OLLAMA_LAST_CALL_MONOTONIC
+            async with _get_throttle_lock():
+                wait = (
+                    _OLLAMA_LAST_CALL_MONOTONIC + (interval_ms / 1000.0)
+                    - time.monotonic()
+                )
+                if wait > 0:
+                    await asyncio.sleep(wait)
+                _OLLAMA_LAST_CALL_MONOTONIC = time.monotonic()
+        yield
+    finally:
+        sem.release()
+
+
+def reset_ollama_throttle_state_for_testing() -> None:
+    """Reset module-global state. Test-Only Helper, nicht im Produktivpfad."""
+    global _OLLAMA_SEM, _OLLAMA_SEM_CAPACITY
+    global _OLLAMA_THROTTLE_LOCK, _OLLAMA_LAST_CALL_MONOTONIC
+    _OLLAMA_SEM = None
+    _OLLAMA_SEM_CAPACITY = 0
+    _OLLAMA_THROTTLE_LOCK = None
+    _OLLAMA_LAST_CALL_MONOTONIC = 0.0
 
 
 class OllamaProvider(BaseLLMProvider):
@@ -91,14 +200,15 @@ class OllamaProvider(BaseLLMProvider):
         payload["options"].update(kwargs)
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    f"{self.base_url}/api/generate",
-                    json=payload,
-                )
-                response.raise_for_status()
-                result = response.json()
-                return result["response"]
+            async with _ollama_slot():
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    response = await client.post(
+                        f"{self.base_url}/api/generate",
+                        json=payload,
+                    )
+                    response.raise_for_status()
+                    result = response.json()
+                    return result["response"]
 
         except httpx.HTTPError as e:
             logger.error(f"Ollama API error: {e}")
@@ -140,14 +250,15 @@ class OllamaProvider(BaseLLMProvider):
         payload["options"].update(kwargs)
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    f"{self.base_url}/api/chat",
-                    json=payload,
-                )
-                response.raise_for_status()
-                result = response.json()
-                return result["message"]["content"]
+            async with _ollama_slot():
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    response = await client.post(
+                        f"{self.base_url}/api/chat",
+                        json=payload,
+                    )
+                    response.raise_for_status()
+                    result = response.json()
+                    return result["message"]["content"]
 
         except httpx.HTTPError as e:
             logger.error(f"Ollama Chat API error: {e}")
@@ -208,13 +319,14 @@ class OllamaProvider(BaseLLMProvider):
         payload["options"].update(kwargs)
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    f"{self.base_url}/api/chat",
-                    json=payload,
-                )
-                response.raise_for_status()
-                result = response.json()
+            async with _ollama_slot():
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    response = await client.post(
+                        f"{self.base_url}/api/chat",
+                        json=payload,
+                    )
+                    response.raise_for_status()
+                    result = response.json()
         except httpx.HTTPError as e:
             logger.error(f"Ollama Chat API error: {e}")
             raise LLMException(

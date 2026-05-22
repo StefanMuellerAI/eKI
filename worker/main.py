@@ -48,7 +48,9 @@ async def main() -> None:
 
         logger.info(f"Connected to Temporal namespace: {settings.temporal_namespace}")
 
-        # Create and start worker
+        # Create and start worker. Concurrency-Caps werden aus den Settings
+        # gelesen (M07), damit Betrieb die Werte ohne Code-Änderung tunen
+        # kann. Defaults entsprechen dem Stand vor M07.
         worker = Worker(
             client,
             task_queue=settings.temporal_task_queue,
@@ -67,8 +69,14 @@ async def main() -> None:
                 deliver_report_activity,
                 update_job_status_activity,
             ],
-            max_concurrent_workflow_tasks=10,
-            max_concurrent_activities=20,
+            max_concurrent_workflow_tasks=settings.worker_max_concurrent_workflow_tasks,
+            max_concurrent_activities=settings.worker_max_concurrent_activities,
+        )
+
+        logger.info(
+            "Worker concurrency caps: workflow_tasks=%d, activities=%d",
+            settings.worker_max_concurrent_workflow_tasks,
+            settings.worker_max_concurrent_activities,
         )
 
         logger.info(f"Starting worker on task queue: {settings.temporal_task_queue}")

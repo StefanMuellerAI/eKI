@@ -32,3 +32,45 @@ services:
       - LLM_PROVIDER=ollama
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_MODEL=mistral
+    # ---------------------------------------------------------------
+    # M07 – Ressourcenlimits (Pflichtenheft §7 Abnahmetest 6:
+    # "Ressourcenlimits werden eingehalten")
+    #
+    # Die folgenden Werte sind KONSERVATIVE Startwerte. Sobald die
+    # finale Zielhardware steht (siehe Pflichtenheft §5: Server mit
+    # GPU ≥ 24 GB VRAM), bitte hier an die tatsächliche Maschine
+    # anpassen. Aktivieren durch Auskommentieren.
+    # ---------------------------------------------------------------
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 4g
+    #       cpus: "2"
+    #     reservations:
+    #       memory: 1g
+
+  # ----------------------------------------------------------------
+  # M07 – API-Ressourcen (analog Worker, niedrigerer Bedarf)
+  # ----------------------------------------------------------------
+  # api:
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 2g
+  #         cpus: "1"
+  #       reservations:
+  #         memory: 512m
+
+  # ----------------------------------------------------------------
+  # M07 – Ollama-Limits (Vorsicht: Ollama läuft auf einer geteilten
+  # GPU-Instanz, andere Anwendungen können denselben Endpoint nutzen.
+  # Memory-Limit hier referenziert NUR den Container-RAM, nicht VRAM.
+  # Den prozessweiten Concurrency-Cap setzen wir software-seitig via
+  # OLLAMA_MAX_CONCURRENT_REQUESTS in .env.local).
+  # ----------------------------------------------------------------
+  # ollama:
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 16g
+  #         cpus: "4"

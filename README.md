@@ -1,6 +1,6 @@
 # eKI API -- KI-gestuetzte Sicherheitspruefung fuer Drehbuecher
 
-**Version:** 0.6.0 (Meilenstein M06 abgeschlossen)
+**Version:** 0.7.0 (Meilenstein M07 abgeschlossen)
 **Auftraggeber:** Filmakademie Baden-Wuerttemberg
 **Auftragnehmer:** StefanAI -- Research & Development
 
@@ -305,6 +305,76 @@ python scripts/seed_kb.py --reseed              # ingestet alles aus real/
 
 Details in `docs/M06_KB_GUIDE.md`.
 
+## Grossdokument-Optimierung (M07)
+
+### Pflichtenheft-Ziel
+
+300-350-Seiten-Drehbuecher muessen asynchron in <= 120 Min verarbeitet
+werden (Pflichtenheft §5 + §7 Abnahmetest 6). Erreicht wird das durch
+optionale Parallelisierung der LLM-Strukturierung und der Risikoanalyse,
+geschuetzt durch drei abgestufte Concurrency-Schichten.
+
+### Drei-Schicht-Schutz gegen Ollama-Ueberlast
+
+| Schicht | Variable | Default | Wirkung |
+|---|---|---|---|
+| Master-Flag | `LLM_PARALLEL_ENABLED` | `false` | Wenn `false`: strikt sequenziell, bytewise identisch zu M06. |
+| Prozess-Cap | `OLLAMA_MAX_CONCURRENT_REQUESTS` | `1` | Modul-globaler Semaphore in `llm/ollama.py`. Greift ueber alle Workflows und Activities hinweg. |
+| Throttle | `OLLAMA_MIN_INTERVAL_MS` | `0` | Optionaler Mindestabstand zwischen zwei Calls fuer knapp dimensionierte Shared-GPU-Systeme. |
+| Workflow-Cap | `PDF_STRUCTURE_CONCURRENCY`, `RISK_ANALYSIS_CONCURRENCY` | `1` | Per-Workflow-Cap fuer parallel ausgefuehrte LLM-Activities. |
+
+Parallel-Pfad wird nur aktiv, wenn `LLM_PARALLEL_ENABLED=true` UND
+mindestens einer der `*_CONCURRENCY`-Werte > 1 ist.
+
+### Empfohlene Concurrency-Stufen
+
+| Stufe | Flag | OLLAMA-Cap | Workflow-Cap | Erwartete Wirkung |
+|---|---|---|---|---|
+| Default | `false` | 1 | 1 | identisch zu M06 |
+| Konservativ | `true` | 2 | 2 | ca. 1.6-1.8x Speedup bei 1 GPU |
+| Sportlich | `true` | 3 | 3 | nur lohnend mit reichlich VRAM |
+| Verboten | `true` | `>=4` | beliebig | nicht empfohlen, VRAM-Risiko |
+
+> **WICHTIG:** Ollama laeuft i.d.R. auf einer geteilten GPU-Instanz.
+> Erhoehe `OLLAMA_MAX_CONCURRENT_REQUESTS` nur, wenn Du sicher weisst,
+> dass die GPU genug VRAM fuer N gleichzeitige Inferenzen hat. Im
+> Zweifel auf 1 lassen.
+
+### Benchmark 300 Seiten
+
+```bash
+# Fixture bauen
+python tests/build_large_fixture.py
+
+# Baseline (Concurrency 1, M06-Verhalten)
+export EKI_API_KEY="eki_..."
+python tests/run_pdf_m07_benchmark.py --concurrency 1
+
+# Parallel-Lauf
+sed -i '' 's/^LLM_PARALLEL_ENABLED=.*/LLM_PARALLEL_ENABLED=true/' .env.local
+sed -i '' 's/^OLLAMA_MAX_CONCURRENT_REQUESTS=.*/OLLAMA_MAX_CONCURRENT_REQUESTS=2/' .env.local
+sed -i '' 's/^PDF_STRUCTURE_CONCURRENCY=.*/PDF_STRUCTURE_CONCURRENCY=2/' .env.local
+sed -i '' 's/^RISK_ANALYSIS_CONCURRENCY=.*/RISK_ANALYSIS_CONCURRENCY=2/' .env.local
+docker compose restart api worker
+python tests/run_pdf_m07_benchmark.py --concurrency 2
+```
+
+Ergebnisse landen in `tests/reports/m07_benchmark_<timestamp>.json` mit
+`acceptance.passed_overall` (Pflichtenheft-Schwelle 7200 s).
+
+### Konfigurierbare Limits
+
+| Setting | Default | Wirkung |
+|---|---|---|
+| `MAX_PDF_PAGES` | 500 | PDF-Parser-Obergrenze in Seiten |
+| `MAX_PDF_SIZE_BYTES` | 10 MB | PDF-Parser-Obergrenze in Bytes |
+| `MAX_UPLOAD_SIZE_BYTES` | 10 MB | Multipart-Upload-Cap |
+| `LLM_ACTIVITY_TIMEOUT_SECONDS` | 600 | start_to_close fuer LLM-Activities |
+| `WORKER_MAX_CONCURRENT_WORKFLOW_TASKS` | 10 | Temporal-Worker-Cap |
+| `WORKER_MAX_CONCURRENT_ACTIVITIES` | 20 | Temporal-Worker-Cap |
+
+Details und Abnahme-Belege in `docs/M07_ACCEPTANCE_EVIDENCE.md`.
+
 ## Prompt-Management
 
 Alle LLM-Prompts werden zentral in `config/prompts/prompts.yaml` verwaltet:
@@ -493,7 +563,7 @@ MISTRAL_API_KEY=your-key
 | M04 | Risiko-Taxonomie v1 & Scoring | Abgeschlossen | 23 Risiko-Klassen, Scoring-Engine, 20 Massnahmen-Codes, TaxonomyManager, 111 Tests |
 | M05 | Reports (JSON/PDF) & One-Shot-GET | Abgeschlossen | JSON+PDF-Report, One-Shot-GET, Push/Pull Delivery, Job-Tracking, Idempotenz, 124 Tests |
 | M06 | LLM-Adapter (Mistral Cloud) & KB-Grundlage | Abgeschlossen | Mistral Cloud Structured Output (Schema-validiert, Retry), pgvector-KB (kb_documents + kb_embeddings), Ollama-Embeddings (mxbai-embed-large), KB-Endpoints /v1/kb/*, 6 Placeholder-SOPs, idempotenter Seeder, Feature-Flag KB_RETRIEVAL_ENABLED (Default OFF), PromptManager-Bugfix, 40 zusaetzliche Tests |
-| M07 | Grossdokument-Optimierung | Ausstehend | |
+| M07 | Grossdokument-Optimierung | Abgeschlossen | Opt-in Parallelisierung von PDF-Strukturierung und Risikoanalyse, prozessweiter Ollama-Concurrency-Cap, konfigurierbare Limits/Timeouts, 300-Seiten-Fixture + Benchmark-Runner mit `docker stats`-Snapshot, 16 zusaetzliche Tests |
 | M08 | Security/Privacy & Delete-on-Delivery | Ausstehend | |
 | M09 | Observability & SLOs | Ausstehend | |
 | M10 | Outbound-Adapter Hardening | Ausstehend | |

@@ -6,11 +6,24 @@ The main ``SecurityCheckWorkflow`` routes to format-specific logic:
        -> analyze per scene -> aggregate report -> deliver
 
 Activities exchange only encrypted Redis reference keys.
+
+M07: Die LLM-Strukturierungs- und Risikoanalyse-Schleifen können wahlweise
+parallelisiert werden. Geschützt wird das durch zwei Schalter, die per
+job_data deterministisch in den Workflow getragen werden:
+
+* ``llm_parallel_enabled``        -> Master-Flag (Default false)
+* ``pdf_structure_concurrency``   -> per-Workflow-Cap für structure_scene_llm
+* ``risk_analysis_concurrency``   -> per-Workflow-Cap für analyze_scene_risk
+
+Zusätzlich greift der prozessweite Ollama-Semaphore in ``llm/ollama.py``,
+damit auch parallele Workflows die LLM-Last nie über
+``ollama_max_concurrent_requests`` heben können.
 """
 
+import asyncio
 import logging
 from datetime import timedelta
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -51,9 +64,88 @@ _RETRY_DELIVERY = RetryPolicy(
 )
 
 
+def _resolve_concurrency(job_data: dict[str, Any], key: str) -> int:
+    """Return the effective concurrency for a per-scene loop.
+
+    Wenn ``llm_parallel_enabled`` nicht explizit True ist, wird IMMER 1
+    zurückgegeben -- damit greift der strikt sequenzielle Pfad und das
+    Verhalten ist bytewise identisch zu M06. Das gilt auch für
+    Workflows, die noch ohne die neuen Felder gestartet wurden (sicheres
+    Default-Verhalten).
+    """
+    if not job_data.get("llm_parallel_enabled", False):
+        return 1
+    value = job_data.get(key, 1) or 1
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return 1
+    return max(1, value)
+
+
+def _resolve_activity_timeout(job_data: dict[str, Any]) -> timedelta:
+    """Return the start_to_close_timeout for LLM activities.
+
+    Default 600s entspricht der vor M07 hardcodeten 5-Minuten-Marke,
+    verdoppelt, um Backoff bei voller Ollama-Queue abzufedern. Liest
+    aus job_data, damit der Workflow deterministisch bleibt.
+    """
+    seconds = job_data.get("llm_activity_timeout_seconds", 600) or 600
+    try:
+        seconds = int(seconds)
+    except (TypeError, ValueError):
+        seconds = 600
+    return timedelta(seconds=max(60, seconds))
+
+
 @workflow.defn(name="SecurityCheckWorkflow")
 class SecurityCheckWorkflow:
     """Routes to FDX or PDF pipeline based on script_format."""
+
+    async def _run_indexed(
+        self,
+        total: int,
+        concurrency: int,
+        factory: Callable[[int], Awaitable[Any]],
+        progress_cb: Callable[[int], Awaitable[None]] | None = None,
+    ) -> list[Any]:
+        """Execute ``factory(i)`` for i in range(total), preserving order.
+
+        * Bei ``concurrency <= 1`` läuft die Schleife strikt sequenziell --
+          bytewise identisch zum Pfad vor M07: erst factory(i) awaiten,
+          danach progress_cb awaiten, dann nächste Iteration.
+        * Bei ``concurrency > 1`` werden bis zu ``concurrency`` Tasks
+          gleichzeitig gestartet, indexerhaltend per asyncio.gather.
+          Reihenfolge der Ergebnisliste entspricht 0..total-1.
+
+        progress_cb (optional, async) wird nach jedem erfolgreich
+        abgeschlossenen Task mit der Anzahl bereits fertiger Tasks
+        aufgerufen. Im sequenziellen Pfad ist done == i + 1; im parallelen
+        Pfad entspricht done der Eintreffe-Reihenfolge, was für ein
+        prozentuales Progress-Update vollkommen ausreicht.
+        """
+        results: list[Any] = [None] * total
+
+        if concurrency <= 1:
+            for i in range(total):
+                results[i] = await factory(i)
+                if progress_cb is not None:
+                    await progress_cb(i + 1)
+            return results
+
+        sem = asyncio.Semaphore(concurrency)
+        completed = 0
+
+        async def _bounded(idx: int) -> None:
+            nonlocal completed
+            async with sem:
+                results[idx] = await factory(idx)
+                completed += 1
+                if progress_cb is not None:
+                    await progress_cb(completed)
+
+        await asyncio.gather(*[_bounded(i) for i in range(total)])
+        return results
 
     async def _update_job(
         self, job_id: str, status: str, progress: int | None = None, error: str | None = None,
@@ -116,7 +208,11 @@ class SecurityCheckWorkflow:
 
         # Step 2: Analyze risk per scene
         all_findings = await self._analyze_scenes(
-            parsed_result["parsed_ref_key"], total, job_id=job_id, progress_range=(10, 90),
+            parsed_result["parsed_ref_key"],
+            total,
+            job_data=job_data,
+            job_id=job_id,
+            progress_range=(10, 90),
         )
 
         # Step 3 & 4: Aggregate report and deliver
@@ -164,36 +260,57 @@ class SecurityCheckWorkflow:
             logger.info("Split into %d blocks (%d scenes)", block_count, scene_count)
         await self._update_job(job_id, "running", progress=5)
 
-        # Step 3: LLM structuring per block (sequential) -- progress 8% -> 50%
-        scene_ref_keys: list[str] = []
-        title: str | None = None
+        # Step 3: LLM structuring per block -- progress 8% -> 50%.
+        # Optionaler Parallel-Pfad (M07): per pdf_structure_concurrency und
+        # gating durch llm_parallel_enabled. Default = strikt sequenziell.
+        structure_concurrency = _resolve_concurrency(
+            job_data, "pdf_structure_concurrency"
+        )
+        activity_timeout = _resolve_activity_timeout(job_data)
+        blocks_ref_key = split_result["blocks_ref_key"]
         last_reported_pct = 8
 
-        for i in range(block_count):
-            llm_result = await workflow.execute_activity(
+        async def _structure_block(i: int) -> dict[str, Any]:
+            return await workflow.execute_activity(
                 structure_scene_llm_activity,
                 {
-                    "blocks_ref_key": split_result["blocks_ref_key"],
+                    "blocks_ref_key": blocks_ref_key,
                     "block_index": i,
                     "used_page_fallback": used_page_fallback,
                 },
-                start_to_close_timeout=timedelta(minutes=5),
+                start_to_close_timeout=activity_timeout,
                 retry_policy=_RETRY_LLM,
             )
 
+        async def _report_structure_progress(done: int) -> None:
+            nonlocal last_reported_pct
+            if block_count <= 0:
+                return
+            pct = 8 + int(42 * done / block_count)
+            if pct >= last_reported_pct + 10 or done == block_count:
+                await self._update_job(job_id, "running", progress=pct)
+                last_reported_pct = pct
+
+        llm_results = await self._run_indexed(
+            total=block_count,
+            concurrency=structure_concurrency,
+            factory=_structure_block,
+            progress_cb=_report_structure_progress,
+        )
+
+        scene_ref_keys: list[str] = []
+        title: str | None = None
+        for llm_result in llm_results:
             if llm_result.get("is_preamble"):
                 title = llm_result.get("title")
                 logger.info("Preamble processed, title=%s", title)
             else:
                 scene_ref_keys.append(llm_result["scene_ref_key"])
 
-            if block_count > 0:
-                pct = 8 + int(42 * (i + 1) / block_count)
-                if pct >= last_reported_pct + 10 or i == block_count - 1:
-                    await self._update_job(job_id, "running", progress=pct)
-                    last_reported_pct = pct
-
-        logger.info("LLM structured %d scenes", len(scene_ref_keys))
+        logger.info(
+            "LLM structured %d scenes (concurrency=%d)",
+            len(scene_ref_keys), structure_concurrency,
+        )
 
         # Collect extraction warnings
         extraction_warnings = text_result.get("extraction_warnings", [])
@@ -228,6 +345,7 @@ class SecurityCheckWorkflow:
         all_findings = await self._analyze_scenes(
             agg_result["parsed_ref_key"],
             agg_result["total_scenes"],
+            job_data=job_data,
             job_id=job_id,
             progress_range=(52, 92),
         )
@@ -250,27 +368,46 @@ class SecurityCheckWorkflow:
         parsed_ref_key: str,
         total_scenes: int,
         *,
+        job_data: dict[str, Any],
         job_id: str = "",
         progress_range: tuple[int, int] = (10, 90),
     ) -> list[dict[str, Any]]:
-        """Call ``analyze_scene_risk_activity`` for each scene."""
-        all_findings: list[dict[str, Any]] = []
+        """Call ``analyze_scene_risk_activity`` for each scene.
+
+        Optional parallelisiert (M07): per risk_analysis_concurrency und
+        gating durch llm_parallel_enabled. Default = strikt sequenziell
+        (Verhalten bytewise identisch zu M06). Reihenfolge der Findings
+        bleibt fest an scene_index gebunden -- der Report sortiert intern
+        nach scene_number/scene_index, das ändert sich durch M07 nicht.
+        """
         start_pct, end_pct = progress_range
         last_reported_pct = start_pct
-        for i in range(total_scenes):
-            finding = await workflow.execute_activity(
+        concurrency = _resolve_concurrency(job_data, "risk_analysis_concurrency")
+        activity_timeout = _resolve_activity_timeout(job_data)
+
+        async def _analyze(i: int) -> dict[str, Any]:
+            return await workflow.execute_activity(
                 analyze_scene_risk_activity,
                 {"parsed_ref_key": parsed_ref_key, "scene_index": i},
-                start_to_close_timeout=timedelta(minutes=5),
+                start_to_close_timeout=activity_timeout,
                 retry_policy=_RETRY_LLM,
             )
-            all_findings.append(finding)
-            if total_scenes > 0 and job_id:
-                pct = start_pct + int((end_pct - start_pct) * (i + 1) / total_scenes)
-                if pct >= last_reported_pct + 10 or i == total_scenes - 1:
-                    await self._update_job(job_id, "running", progress=pct)
-                    last_reported_pct = pct
-        return all_findings
+
+        async def _report(done: int) -> None:
+            nonlocal last_reported_pct
+            if total_scenes <= 0 or not job_id:
+                return
+            pct = start_pct + int((end_pct - start_pct) * done / total_scenes)
+            if pct >= last_reported_pct + 10 or done == total_scenes:
+                await self._update_job(job_id, "running", progress=pct)
+                last_reported_pct = pct
+
+        return await self._run_indexed(
+            total=total_scenes,
+            concurrency=concurrency,
+            factory=_analyze,
+            progress_cb=_report,
+        )
 
     async def _report_and_deliver(
         self,

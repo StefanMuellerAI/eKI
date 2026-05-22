@@ -59,7 +59,17 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Fallback-Konstante: gilt nur, wenn Settings nicht ladbar sind. Im
+# Produktivpfad zieht _max_upload_size() aus settings.max_upload_size_bytes.
 _MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+
+
+def _max_upload_size() -> int:
+    """Resolve effective max upload size from settings, falling back to 10 MB."""
+    try:
+        return int(get_settings().max_upload_size_bytes)
+    except Exception:
+        return _MAX_UPLOAD_SIZE
 
 
 # ---------------------------------------------------------------------------
@@ -134,10 +144,11 @@ async def _resolve_multipart(request: Request) -> ResolvedRequest:
         )
 
     raw = await upload.read()
-    if len(raw) > _MAX_UPLOAD_SIZE:
+    max_size = _max_upload_size()
+    if len(raw) > max_size:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File exceeds maximum size of {_MAX_UPLOAD_SIZE} bytes",
+            detail=f"File exceeds maximum size of {max_size} bytes",
         )
     if not raw:
         raise HTTPException(
@@ -324,7 +335,10 @@ async def security_check_async(
     # Store script content encrypted in Redis -- NOT in Temporal
     ref_key = await buffer.store({"script_content": resolved.b64_content})
 
-    # Temporal receives only metadata + ref_key
+    # Temporal receives only metadata + ref_key.  Die M07-Konfiguration wird
+    # beim Workflow-Start in job_data eingefroren, damit der Workflow rein
+    # deterministisch (ohne env-Zugriff im Replay) entscheiden kann, ob er
+    # den Parallel-Pfad nutzt und welches Activity-Timeout gilt.
     job_data = {
         "ref_key": ref_key,
         "script_format": resolved.script_format.value,
@@ -336,6 +350,10 @@ async def security_check_async(
         "delivery_mode": delivery_mode,
         "metadata": resolved.metadata,
         "script_id": resolved.script_id,
+        "llm_parallel_enabled": settings.llm_parallel_enabled,
+        "pdf_structure_concurrency": settings.pdf_structure_concurrency,
+        "risk_analysis_concurrency": settings.risk_analysis_concurrency,
+        "llm_activity_timeout_seconds": settings.llm_activity_timeout_seconds,
     }
 
     try:

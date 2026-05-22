@@ -220,6 +220,114 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", description="Logging level")
     log_format: str = Field(default="json", description="Log format: json or console")
 
+    # =====================================================================
+    # M07 – Großdokument-Optimierung
+    # Alle Defaults sind so gewählt, dass das Verhalten ohne Konfig-Wechsel
+    # bytewise identisch zum M06-Stand bleibt. Parallel-Pfad greift NUR, wenn
+    # `llm_parallel_enabled=true` UND mindestens eine Concurrency > 1 gesetzt
+    # wird.
+    # =====================================================================
+
+    llm_parallel_enabled: bool = Field(
+        default=False,
+        description=(
+            "Master-Flag M07. Default OFF = bytewise identisch zu M06. "
+            "Erst in Kombination mit pdf_structure_concurrency oder "
+            "risk_analysis_concurrency > 1 wird Parallelität im Workflow "
+            "aktiv."
+        ),
+    )
+    ollama_max_concurrent_requests: int = Field(
+        default=1,
+        ge=1,
+        le=8,
+        description=(
+            "Prozessweiter Hard-Cap für gleichzeitige Ollama-Requests. "
+            "Wird im OllamaProvider als modul-globaler Semaphore umgesetzt "
+            "und gilt damit über alle Workflows und Activities hinweg. "
+            "Default 1 = serialisiert wie heute. Werte > 1 nur auf "
+            "dediziertem System mit ausreichend VRAM."
+        ),
+    )
+    ollama_min_interval_ms: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Optionaler Mindestabstand zwischen zwei Ollama-Calls in "
+            "Millisekunden. Schützt knapp dimensionierte Shared-GPU-"
+            "Systeme zusätzlich zum Semaphore. Default 0 = aus."
+        ),
+    )
+    pdf_structure_concurrency: int = Field(
+        default=1,
+        ge=1,
+        le=8,
+        description=(
+            "Maximale Anzahl parallel ausgeführter "
+            "structure_scene_llm-Activities pro Workflow. Default 1 = "
+            "strikt sequenziell wie heute."
+        ),
+    )
+    risk_analysis_concurrency: int = Field(
+        default=1,
+        ge=1,
+        le=8,
+        description=(
+            "Maximale Anzahl parallel ausgeführter "
+            "analyze_scene_risk-Activities pro Workflow. Default 1 = "
+            "strikt sequenziell wie heute."
+        ),
+    )
+    llm_activity_timeout_seconds: int = Field(
+        default=600,
+        ge=60,
+        description=(
+            "start_to_close_timeout für die LLM-Activities (Strukturierung "
+            "und Risikoanalyse). Vor M07 hardcoded 300s; auf 600s erhöht, "
+            "um Backoff bei voller Ollama-Queue abzufedern."
+        ),
+    )
+    max_pdf_pages: int = Field(
+        default=500,
+        ge=1,
+        description=(
+            "Obergrenze für PDF-Seiten beim Parsing. Vor M07 Modul-Konstante "
+            "in parsers/pdf.py."
+        ),
+    )
+    max_pdf_size_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        ge=1,
+        description=(
+            "Obergrenze für PDF-Größe in Bytes beim Parsing. Vor M07 "
+            "Modul-Konstante in parsers/pdf.py (10 MB)."
+        ),
+    )
+    max_upload_size_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        ge=1,
+        description=(
+            "Obergrenze für Multipart-Upload-Größe. Vor M07 Modul-Konstante "
+            "in api/routers/security.py (10 MB)."
+        ),
+    )
+    worker_max_concurrent_activities: int = Field(
+        default=20,
+        ge=1,
+        description=(
+            "Temporal Worker Cap für gleichzeitige Activities. Vor M07 "
+            "in worker/main.py hardcoded."
+        ),
+    )
+    worker_max_concurrent_workflow_tasks: int = Field(
+        default=10,
+        ge=1,
+        description=(
+            "Temporal Worker Cap für gleichzeitige Workflow Tasks. Vor "
+            "M07 in worker/main.py hardcoded."
+        ),
+    )
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, v: Any) -> list[str]:
