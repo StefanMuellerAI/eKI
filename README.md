@@ -564,7 +564,7 @@ MISTRAL_API_KEY=your-key
 | M05 | Reports (JSON/PDF) & One-Shot-GET | Abgeschlossen | JSON+PDF-Report, One-Shot-GET, Push/Pull Delivery, Job-Tracking, Idempotenz, 124 Tests |
 | M06 | LLM-Adapter (Mistral Cloud) & KB-Grundlage | Abgeschlossen | Mistral Cloud Structured Output (Schema-validiert, Retry), pgvector-KB (kb_documents + kb_embeddings), Ollama-Embeddings (mxbai-embed-large), KB-Endpoints /v1/kb/*, 6 Placeholder-SOPs, idempotenter Seeder, Feature-Flag KB_RETRIEVAL_ENABLED (Default OFF), PromptManager-Bugfix, 40 zusaetzliche Tests |
 | M07 | Grossdokument-Optimierung | Abgeschlossen | Opt-in Parallelisierung von PDF-Strukturierung und Risikoanalyse, prozessweiter Ollama-Concurrency-Cap, konfigurierbare Limits/Timeouts, 300-Seiten-Fixture + Benchmark-Runner mit `docker stats`-Snapshot, 16 zusaetzliche Tests |
-| M08 | Security/Privacy & Delete-on-Delivery | Ausstehend | |
+| M08 | Security/Privacy & Delete-on-Delivery | Abgeschlossen | 6h-Retry-Fenster (`schedule_to_close_timeout`), `cleanup_buffer_activity` im Failure-Branch, opt-in `security.delivery.failed`-Webhook (Anhang 1), `cleanup_buffer_activity`, zentrale Logging-Konfiguration mit `SensitiveContentFilter`, Request-ID-Middleware, OpenAPI-`webhooks`-Block, 34 zusaetzliche Tests |
 | M09 | Observability & SLOs | Ausstehend | |
 | M10 | Outbound-Adapter Hardening | Ausstehend | |
 | M11 | Lokaler LLM-Adapter & Paritaetstests | Ausstehend | |

@@ -805,59 +805,71 @@ async def deliver_report_activity(
 
     # Delivery mode handling
     if delivery_mode == "push":
-        # Push: multipart POST to ePro set-risk-assessment, then delete from Redis
-        try:
-            import base64 as b64mod
+        # Push: multipart POST to ePro set-risk-assessment, then delete from Redis.
+        #
+        # M08-Fehlerklassifikation:
+        #   * 2xx               -> Erfolg, Buffer wird geloescht.
+        #   * 4xx (Hard-Fail)   -> kein Retry sinnvoll (Bad Request, etc).
+        #                          Activity gibt ``delivered=False, hard_fail=True``
+        #                          zurueck. Workflow-Failure-Branch uebernimmt.
+        #   * 5xx               -> Transient. ``raise`` damit Temporal-Retry
+        #                          innerhalb des 6h-Fensters greift.
+        #   * Transport-Errors  -> Transient (Netzwerk-/DNS-/Timeout-Probleme).
+        #                          ``raise`` fuer Temporal-Retry.
+        import base64 as b64mod
 
-            import httpx
+        import httpx
 
-            from api.config import get_settings
-            from services.report_generator import compute_epro_status, generate_assessment_text
+        from api.config import get_settings
+        from services.report_generator import compute_epro_status, generate_assessment_text
 
-            settings = get_settings()
-            report_package = await buffer.retrieve(report_ref_key)
-            report = report_package.get("report", {})
-            pdf_b64 = report_package.get("pdf_base64", "")
+        settings = get_settings()
+        report_package = await buffer.retrieve(report_ref_key)
+        report = report_package.get("report", {})
+        pdf_b64 = report_package.get("pdf_base64", "")
 
-            epro_status = compute_epro_status(report)
-            assessment = generate_assessment_text(report)
-            script_id = delivery_config.get("script_id")
-            if script_id is None:
-                script_id = -1
+        epro_status = compute_epro_status(report)
+        assessment = generate_assessment_text(report)
+        script_id = delivery_config.get("script_id")
+        if script_id is None:
+            script_id = -1
 
-            push_url = (
-                f"{settings.epro_base_url}/eki/scl/"
-                f"set-risk-assessment/{project_id}"
+        push_url = (
+            f"{settings.epro_base_url}/eki/scl/"
+            f"set-risk-assessment/{project_id}"
+        )
+
+        form_data = {
+            "script_id": str(int(script_id)),
+            "status": str(epro_status),
+            "assessment": assessment,
+        }
+
+        files = {}
+        if pdf_b64:
+            pdf_bytes = b64mod.b64decode(pdf_b64)
+            files["file"] = (
+                f"safety-check-result_{project_id}.pdf",
+                pdf_bytes,
+                "application/pdf",
+            )
+            # Log-Hygiene (M08, Abnahmetest 7): kein Inhalt aus assessment
+            # oder pdf_bytes wird geloggt -- nur Laengen/Counts.
+            logger.info(
+                "Push payload: script_id=%s, status=%s, assessment=%d chars, PDF=%d bytes",
+                script_id, epro_status, len(assessment), len(pdf_bytes),
+            )
+        else:
+            logger.warning(
+                "Push payload: script_id=%s, status=%s, assessment=%d chars, PDF=MISSING",
+                script_id, epro_status, len(assessment),
             )
 
-            form_data = {
-                "script_id": str(int(script_id)),
-                "status": str(epro_status),
-                "assessment": assessment,
-            }
+        headers: dict[str, str] = {}
+        if settings.epro_auth_token:
+            headers["Authorization"] = f"Bearer {settings.epro_auth_token}"
 
-            files = {}
-            if pdf_b64:
-                pdf_bytes = b64mod.b64decode(pdf_b64)
-                files["file"] = (
-                    f"safety-check-result_{project_id}.pdf",
-                    pdf_bytes,
-                    "application/pdf",
-                )
-                logger.info(
-                    "Push payload: script_id=%s, status=%s, assessment=%d chars, PDF=%d bytes",
-                    script_id, epro_status, len(assessment), len(pdf_bytes),
-                )
-            else:
-                logger.warning(
-                    "Push payload: script_id=%s, status=%s, assessment=%d chars, PDF=MISSING",
-                    script_id, epro_status, len(assessment),
-                )
-
-            headers: dict[str, str] = {}
-            if settings.epro_auth_token:
-                headers["Authorization"] = f"Bearer {settings.epro_auth_token}"
-
+        try:
             async with httpx.AsyncClient(timeout=settings.epro_timeout) as client:
                 response = await client.post(
                     push_url,
@@ -865,30 +877,74 @@ async def deliver_report_activity(
                     files=files if files else None,
                     headers=headers or None,
                 )
-                response.raise_for_status()
-                epro_body = response.json()
+
+            status_code = response.status_code
+
+            if 200 <= status_code < 300:
+                try:
+                    epro_body = response.json()
+                except Exception:
+                    epro_body = {}
                 logger.info(
-                    "Push delivery succeeded: HTTP %d — %s",
-                    response.status_code,
-                    epro_body.get("message", ""),
+                    "Push delivery succeeded: HTTP %d -- msg=%s",
+                    status_code,
+                    str(epro_body.get("message", ""))[:120],
                 )
 
-            await buffer.delete(report_ref_key)
+                # Pflichtenheft Abnahmetest 2: Buffer-Cleanup direkt nach 2xx.
+                await buffer.delete(report_ref_key)
 
-            return {
-                "delivered": True,
-                "delivery_mode": "push",
-                "epro_status": epro_status,
-                "epro_response": epro_body,
-            }
+                return {
+                    "delivered": True,
+                    "delivery_mode": "push",
+                    "epro_status": epro_status,
+                    "status_code": status_code,
+                    "epro_response": epro_body,
+                }
 
+            if 400 <= status_code < 500:
+                # Hard-Fail: kein Temporal-Retry. Workflow-Failure-Branch
+                # uebernimmt Buffer-Cleanup, Job-Status und Webhook.
+                logger.error(
+                    "Push delivery hard-fail (HTTP %d, no retry): job=%s",
+                    status_code, delivery_config.get("job_id", ""),
+                )
+                return {
+                    "delivered": False,
+                    "delivery_mode": "push",
+                    "hard_fail": True,
+                    "status_code": status_code,
+                    "error": f"HTTP {status_code}",
+                    "attempts_used": 1,
+                }
+
+            # 5xx -> transient, raise damit RetryPolicy greift.
+            logger.warning(
+                "Push delivery 5xx, will retry (HTTP %d): job=%s",
+                status_code, delivery_config.get("job_id", ""),
+            )
+            response.raise_for_status()
+            # Defensiv: falls raise_for_status nichts wirft (3xx z.B.),
+            # explizit selbst raisen, damit der Workflow nicht
+            # versehentlich auf "delivered=False" abrutscht.
+            raise httpx.HTTPStatusError(
+                f"unexpected status {status_code}",
+                request=response.request,
+                response=response,
+            )
+
+        except httpx.HTTPStatusError:
+            # 5xx wurde gerade gehoben -- weiterreichen zum Workflow-Retry.
+            raise
         except Exception as exc:
-            logger.error("Push delivery failed: %s", exc)
-            return {
-                "delivered": False,
-                "delivery_mode": "push",
-                "error": str(exc),
-            }
+            # Transport-Fehler (DNS, Timeout, Connection-Reset).
+            # Log NICHT den Exception-Text, weil der durch ePro
+            # einen Auszug aus Payload-Bytes enthalten koennte. Nur Typ.
+            logger.warning(
+                "Push delivery transport error, will retry: job=%s exc_type=%s",
+                delivery_config.get("job_id", ""), type(exc).__name__,
+            )
+            raise
 
     else:
         # Pull: Report stays in Redis for One-Shot-GET
@@ -899,3 +955,160 @@ async def deliver_report_activity(
             "delivery_mode": "pull",
             "report_url": f"/v1/security/reports/{report_id}",
         }
+
+
+# ===================================================================
+# M08 - Buffer-Cleanup nach endgueltigem Delivery-Fehler
+# Wird vom Workflow-Failure-Branch aufgerufen, wenn der 6h-Retry erschoepft
+# ist oder ein 4xx-Hard-Fail die Zustellung beendet hat. Garantiert die
+# Pflichtenheft-Forderung "keine Inhalte in der eKI nach Abschluss".
+# ===================================================================
+
+
+@activity.defn(name="cleanup_buffer")
+async def cleanup_buffer_activity(payload: dict[str, Any]) -> dict[str, Any]:
+    """Explicitly delete one or more SecureBuffer keys.
+
+    Defensiv: leere oder fehlende Keys werden uebersprungen. Schlaegt die
+    eigentliche Redis-Loeschung fehl, wird das nur geloggt; der
+    Workflow-Failure-Branch laeuft auch dann weiter, weil der Redis-TTL
+    (6h) als sicheres Netz wirkt.
+    """
+    ref_keys_raw = payload.get("ref_keys") or []
+    if isinstance(ref_keys_raw, str):
+        ref_keys_raw = [ref_keys_raw]
+    ref_keys = [k for k in ref_keys_raw if k]
+
+    if not ref_keys:
+        return {"deleted": 0, "reason": "no_keys"}
+
+    buffer = _get_buffer()
+    try:
+        count = await buffer.delete(*ref_keys)
+    except Exception as exc:
+        logger.warning(
+            "cleanup_buffer_activity: delete failed (non-fatal, "
+            "TTL will reap eventually): keys=%d exc_type=%s",
+            len(ref_keys), type(exc).__name__,
+        )
+        return {"deleted": 0, "reason": "delete_error"}
+
+    logger.info(
+        "cleanup_buffer_activity: removed %d/%d keys", count, len(ref_keys),
+    )
+    return {"deleted": int(count)}
+
+
+# ===================================================================
+# M08 - security.delivery.failed Webhook (opt-in)
+# Pflichtenheft Anhang 1 + Abnahmetest 4: Bei dauerhaft gescheiterter
+# Zustellung oder Ablauf des 6h-Retry-Fensters wird ein
+# Metadaten-Webhook an ePro abgesetzt. Default ist OFF, d.h. ohne
+# konfigurierte EPRO_WEBHOOK_URL ist die Activity ein No-Op-Log.
+# ===================================================================
+
+
+@activity.defn(name="send_delivery_failed_webhook")
+async def send_delivery_failed_webhook_activity(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """POST a security.delivery.failed metadata webhook to ePro.
+
+    Pflichtenheft Anhang 1 schreibt vor:
+        {"job_id", "report_id", "reason", "attempts"}
+
+    Diese Activity ist defensiv:
+    * No-Op, wenn EPRO_WEBHOOK_URL leer ist.
+    * Wirft NIE -- ein Webhook-Fehler darf den Workflow nicht erneut
+      faillen lassen. Stattdessen wird der Fehler nur geloggt und in
+      der Rueckgabe als ``sent=False`` markiert. Temporal-Retry des
+      Webhook-Calls erfolgt ausschliesslich ueber die hier konfigurierte
+      kleine Retry-Schleife innerhalb des Webhook-Requests.
+    * Schreibt KEINE Reportinhalte ins Log (Log-Hygiene, Test 7) --
+      nur job_id, report_id, reason, attempts und HTTP-Statuscode.
+    """
+    import httpx
+
+    from api.config import get_settings
+
+    settings = get_settings()
+    webhook_url = (settings.epro_webhook_url or "").strip()
+
+    job_id = payload.get("job_id") or ""
+    report_id = payload.get("report_id") or ""
+    reason = payload.get("reason") or "unknown"
+    attempts = int(payload.get("attempts") or 0)
+
+    body = {
+        "job_id": str(job_id),
+        "report_id": str(report_id),
+        "reason": str(reason),
+        "attempts": attempts,
+    }
+
+    if not webhook_url:
+        logger.info(
+            "delivery.failed webhook skipped (EPRO_WEBHOOK_URL unset): "
+            "job_id=%s report_id=%s reason=%s attempts=%d",
+            job_id, report_id, reason, attempts,
+        )
+        return {"sent": False, "reason": "no_webhook_url"}
+
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if settings.epro_auth_token:
+        headers["Authorization"] = f"Bearer {settings.epro_auth_token}"
+
+    last_error: str | None = None
+    last_status: int | None = None
+
+    # Kleine interne Retry-Schleife (drei Versuche, kurzer Backoff).
+    # Bewusst kein workflow.execute_activity retry, damit dieser Pfad
+    # nie selbst zur Endlos-Schleife wird. Falls Temporal die Activity
+    # spaeter ein zweites Mal aufruft, ist das idempotent (gleiche
+    # Payload, ePro-Seite muss idempotent reagieren).
+    import asyncio
+
+    for attempt in range(1, 4):
+        try:
+            async with httpx.AsyncClient(timeout=settings.epro_timeout) as client:
+                response = await client.post(webhook_url, json=body, headers=headers)
+            last_status = response.status_code
+            if 200 <= response.status_code < 300:
+                logger.info(
+                    "delivery.failed webhook delivered: job_id=%s "
+                    "report_id=%s status=%d attempt=%d",
+                    job_id, report_id, response.status_code, attempt,
+                )
+                return {
+                    "sent": True,
+                    "status_code": response.status_code,
+                    "attempts_used": attempt,
+                }
+            # Non-2xx -> retry
+            last_error = f"HTTP {response.status_code}"
+            logger.warning(
+                "delivery.failed webhook non-2xx response: job_id=%s "
+                "status=%d attempt=%d",
+                job_id, response.status_code, attempt,
+            )
+        except Exception as exc:
+            last_error = type(exc).__name__
+            logger.warning(
+                "delivery.failed webhook transport error: job_id=%s "
+                "error=%s attempt=%d",
+                job_id, last_error, attempt,
+            )
+        if attempt < 3:
+            await asyncio.sleep(2 ** (attempt - 1))
+
+    logger.error(
+        "delivery.failed webhook gave up after 3 attempts: job_id=%s "
+        "report_id=%s last_error=%s last_status=%s",
+        job_id, report_id, last_error, last_status,
+    )
+    return {
+        "sent": False,
+        "status_code": last_status,
+        "error": last_error,
+        "attempts_used": 3,
+    }

@@ -112,6 +112,27 @@ class Settings(BaseSettings):
     )
     epro_timeout: int = Field(default=30, description="eProjekt API timeout in seconds")
 
+    # M08 - security.delivery.failed Webhook (opt-in)
+    # Default leer = Webhook deaktiviert; bestehende Funktion bleibt
+    # unveraendert. Wird gesendet, wenn der 6h-Push-Retry erschoepft ist
+    # oder ein 4xx-Hard-Fail eintritt (Pflichtenheft Anhang 1 + Abnahmetest 4).
+    epro_webhook_url: str = Field(
+        default="",
+        description=(
+            "URL fuer security.delivery.failed Webhook-POST. "
+            "Leer = Webhook deaktiviert. Erwartet vollstaendige URL "
+            "(inkl. Schema), z.B. https://staging.epro.filmakademie.de/"
+            "api/eki/scl/delivery-failed."
+        ),
+    )
+    epro_webhook_url_file: str | None = Field(
+        default=None,
+        description=(
+            "Optionaler Pfad zu einer Datei mit der Webhook-URL "
+            "(Docker-Secrets-Pattern, analog zu EPRO_AUTH_TOKEN_FILE)."
+        ),
+    )
+
     # LLM Provider (for future milestones)
     llm_provider: str = Field(
         default="mistral_cloud",
@@ -407,6 +428,7 @@ class Settings(BaseSettings):
             "database_url_file": "database_url",
             "api_secret_key_file": "api_secret_key",
             "epro_auth_token_file": "epro_auth_token",
+            "epro_webhook_url_file": "epro_webhook_url",
             "mistral_api_key_file": "mistral_api_key",
         }
 

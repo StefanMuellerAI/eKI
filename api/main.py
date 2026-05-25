@@ -18,6 +18,7 @@ from api.dependencies import verify_api_key
 from api.routers import health, knowledge_base, security
 from core.exceptions import EKIException
 from core.db_models import ApiKeyModel
+from core.logging_config import configure_logging, set_request_id
 from core.models import (
     AsyncSecurityCheckRequest,
     ErrorDetail,
@@ -25,11 +26,11 @@ from core.models import (
     SecurityCheckRequest,
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+# M08: zentrale Logging-Konfiguration. Setzt strukturierte JSON-Logs
+# (Default) oder Console-Renderer (LOG_FORMAT=console) und installiert
+# den SensitiveContentFilter, der Drehbuch-/Reportinhalte automatisch
+# maskiert (Pflichtenheft Abnahmetest 7).
+configure_logging(get_settings())
 logger = logging.getLogger(__name__)
 
 
@@ -75,6 +76,26 @@ app.add_middleware(
     ],  # Explicit headers only
     max_age=600,  # Cache preflight requests for 10 minutes
 )
+
+
+# M08: Request-ID-Middleware. Liest X-Request-ID, faellt sonst auf einen
+# neu generierten UUID4-Hex zurueck. Bindet den Wert an die Logging-
+# ContextVar, sodass alle nachfolgenden Logs den Wert tragen und legt
+# ihn in der Response-Header zurueck, damit Aufrufer Trace-Querverweise
+# ziehen koennen. Bewusst als Middleware vor allen Routern installiert.
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    incoming = request.headers.get("X-Request-ID")
+    request_id = set_request_id(incoming)
+    try:
+        response: Response = await call_next(request)
+    except Exception:
+        # Selbst bei Exception soll der Header gesetzt sein, falls ein
+        # Exception-Handler die Response noch produziert. set_request_id
+        # bleibt in der ContextVar erhalten.
+        raise
+    response.headers.setdefault("X-Request-ID", request_id)
+    return response
 
 
 # Exception handlers

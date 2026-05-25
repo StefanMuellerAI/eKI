@@ -21,6 +21,8 @@ info:
     - M04: Risiko-Taxonomie & Scoring ✓
     - M05: Reports (JSON/PDF) & One-Shot-GET ✓
     - M06: LLM-Adapter (Mistral Cloud) & KB-Grundlage ✓
+    - M07: Großdokument-Optimierung ✓
+    - M08: Security/Privacy & Delete-on-Delivery ✓
 
   contact:
     name: Filmakademie Baden-Württemberg
@@ -443,6 +445,44 @@ paths:
           $ref: '#/components/responses/NotFound'
         '401':
           $ref: '#/components/responses/Unauthorized'
+
+# -----------------------------------------------------------------------------
+# M08: Outgoing webhooks (eKI -> eProjekt)
+#
+# OpenAPI 3.1 `webhooks` block: dokumentiert Callbacks, die die eKI nach
+# aussen sendet. Aktiviert wird der Webhook nur, wenn die ENV-Variable
+# EPRO_WEBHOOK_URL gesetzt ist. Payload ist bewusst inhaltsarm und enthaelt
+# ausschliesslich Metadaten (Pflichtenheft Anhang 1).
+# -----------------------------------------------------------------------------
+webhooks:
+  security.delivery.failed:
+    post:
+      tags:
+        - Security
+      summary: Zustellung fehlgeschlagen (Metadaten-Webhook)
+      description: >-
+        Wird von der eKI an die in `EPRO_WEBHOOK_URL` konfigurierte
+        Empfaenger-URL gepostet, wenn die Zustellung eines Security-Reports
+        endgueltig fehlgeschlagen ist -- entweder nach Erschoepfung des
+        6-Stunden-Retry-Fensters oder bei einem nicht-retrybaren 4xx-Hard-Fail.
+        Enthaelt ausschliesslich Metadaten; KEINE Reportinhalte und KEINE
+        Drehbuchtexte. Pflichtenheft Anhang 1 + Abnahmetest 4.
+      operationId: securityDeliveryFailedWebhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeliveryFailedPayload'
+      responses:
+        '2XX':
+          description: >-
+            Empfaenger hat den Webhook akzeptiert. Die eKI macht keine
+            weiteren Zustellversuche fuer diesen Webhook.
+        '4XX':
+          description: Empfaenger lehnt Webhook ab (kein eKI-Retry)
+        '5XX':
+          description: Empfaenger-Fehler (eKI versucht bis zu 3x intern)
 
 components:
   securitySchemes:
@@ -1001,6 +1041,34 @@ components:
           type: integer
           minimum: 0
           description: Number of documents deleted by this call
+
+    # -----------------------------------------------------------------------
+    # M08: Webhook payloads (eKI -> ePro)
+    # -----------------------------------------------------------------------
+    DeliveryFailedPayload:
+      type: object
+      required: [job_id, report_id, reason, attempts]
+      description: >-
+        Inhaltsarme Metadaten-Payload des security.delivery.failed Webhook.
+        Enthaelt KEINE Reportinhalte und KEINE Drehbuchtexte (Pflichtenheft
+        Anhang 1, Log-Hygiene Abnahmetest 7).
+      properties:
+        job_id:
+          type: string
+          description: Job-Identifikator (eKI-intern, UUID-String).
+        report_id:
+          type: string
+          description: Report-Identifikator (eKI-intern, UUID-String).
+        reason:
+          type: string
+          description: >-
+            Maschinenlesbarer Grund der Zustellungs-Aufgabe.
+            Beispiele: "retry_window_exhausted", "hard_4xx",
+            "epro_unreachable".
+        attempts:
+          type: integer
+          minimum: 1
+          description: Anzahl der Zustellungsversuche bis zum Abbruch.
 
   responses:
     BadRequest:

@@ -254,14 +254,87 @@ class TestDeliverReportPushMode:
         assert form_data["script_id"] == "-1"
         assert form_data["status"] == "0"
 
-    async def test_push_failure_returns_error(self):
-        """When ePro returns an error, delivery should fail gracefully."""
+    async def test_push_connection_error_raises_for_retry(self):
+        """M08: Transport-Fehler (ConnectionError) MUSS raisen, damit
+        die Temporal-RetryPolicy innerhalb des 6h-Schedule-To-Close-
+        Fensters den naechsten Versuch starten kann (Pflichtenheft
+        Abnahmetest 4). Buffer-Cleanup erfolgt erst nach 2xx oder im
+        Workflow-Failure-Branch."""
         report_package = _make_report_package()
         patches, _, buf = _setup_push_mocks(
             report_package, post_side_effect=ConnectionError("ePro unreachable"),
         )
 
         with patches["buf"], patches["httpx"], patches["settings"]:
+            with pytest.raises(ConnectionError):
+                await deliver_report_activity(
+                    {"report_ref_key": "eki:buf:x", "report_id": str(uuid4()), "total_findings": 1},
+                    {"delivery_mode": "push", "job_id": str(uuid4()), "project_id": "75",
+                     "user_id": "u", "script_format": "fdx", "script_id": 10},
+                )
+
+        # Buffer bleibt erhalten -- Retry kann erneut zustellen.
+        buf.delete.assert_not_awaited()
+
+    async def test_push_5xx_raises_for_retry(self):
+        """M08: 5xx vom ePro-Server gilt als transient und MUSS raisen,
+        damit Temporal-Retry den naechsten Versuch macht. Buffer bleibt
+        unangetastet."""
+        import httpx
+
+        report_package = _make_report_package()
+        mock_response = MagicMock()
+        mock_response.status_code = 503
+        mock_response.request = MagicMock()
+        mock_response.raise_for_status = MagicMock(
+            side_effect=httpx.HTTPStatusError(
+                "Service Unavailable",
+                request=mock_response.request,
+                response=mock_response,
+            )
+        )
+
+        buf = _mock_buffer(report_package)
+        mock_http_client = AsyncMock()
+        mock_http_client.__aenter__ = AsyncMock(return_value=mock_http_client)
+        mock_http_client.__aexit__ = AsyncMock(return_value=False)
+        mock_http_client.post = AsyncMock(return_value=mock_response)
+
+        settings = _mock_settings()
+        with patch("workflows.activities._get_buffer", return_value=buf), \
+             patch("httpx.AsyncClient", return_value=mock_http_client), \
+             patch("api.config.get_settings", return_value=settings):
+            with pytest.raises(httpx.HTTPStatusError):
+                await deliver_report_activity(
+                    {"report_ref_key": "eki:buf:x", "report_id": str(uuid4()), "total_findings": 1},
+                    {"delivery_mode": "push", "job_id": str(uuid4()), "project_id": "75",
+                     "user_id": "u", "script_format": "fdx", "script_id": 10},
+                )
+
+        buf.delete.assert_not_awaited()
+
+    async def test_push_4xx_hard_fail_returns_delivered_false(self):
+        """M08: 4xx (Bad Request, Forbidden, ...) ist nicht-retrybar.
+        Activity gibt delivered=False, hard_fail=True zurueck. Der
+        Workflow-Failure-Branch kuemmert sich um Buffer-Cleanup,
+        Job-Status und Webhook."""
+        report_package = _make_report_package()
+        mock_response = MagicMock()
+        mock_response.status_code = 422
+        mock_response.json.return_value = {"detail": "invalid script_id"}
+        mock_response.raise_for_status = MagicMock()
+        mock_response.request = MagicMock()
+
+        buf = _mock_buffer(report_package)
+        mock_http_client = AsyncMock()
+        mock_http_client.__aenter__ = AsyncMock(return_value=mock_http_client)
+        mock_http_client.__aexit__ = AsyncMock(return_value=False)
+        mock_http_client.post = AsyncMock(return_value=mock_response)
+
+        settings = _mock_settings()
+        with patch("workflows.activities._get_buffer", return_value=buf), \
+             patch("httpx.AsyncClient", return_value=mock_http_client), \
+             patch("api.config.get_settings", return_value=settings):
             result = await deliver_report_activity(
                 {"report_ref_key": "eki:buf:x", "report_id": str(uuid4()), "total_findings": 1},
                 {"delivery_mode": "push", "job_id": str(uuid4()), "project_id": "75",
@@ -270,7 +343,10 @@ class TestDeliverReportPushMode:
 
         assert result["delivered"] is False
         assert result["delivery_mode"] == "push"
-        assert "error" in result
+        assert result["hard_fail"] is True
+        assert result["status_code"] == 422
+        # Buffer bleibt unangetastet -- Workflow-Failure-Branch ruft
+        # cleanup_buffer_activity auf.
         buf.delete.assert_not_awaited()
 
     async def test_push_no_auth_header_when_token_empty(self):

@@ -12,24 +12,25 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from api.config import get_settings
+from core.logging_config import configure_logging
 from workflows.activities import (
     aggregate_report_activity,
     aggregate_script_activity,
     analyze_scene_risk_activity,
+    cleanup_buffer_activity,
     deliver_report_activity,
     extract_pdf_text_activity,
     parse_fdx_activity,
+    send_delivery_failed_webhook_activity,
     split_scenes_activity,
     structure_scene_llm_activity,
     update_job_status_activity,
 )
 from workflows.security_check import SecurityCheckWorkflow
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+# M08: dieselbe zentrale Logging-Konfiguration wie im API-Prozess.
+# Damit greifen Log-Hygiene-Filter und JSON-Format auch fuer Activities.
+configure_logging(get_settings())
 logger = logging.getLogger(__name__)
 
 
@@ -68,6 +69,9 @@ async def main() -> None:
                 aggregate_report_activity,
                 deliver_report_activity,
                 update_job_status_activity,
+                # M08 -- failure-branch helpers
+                cleanup_buffer_activity,
+                send_delivery_failed_webhook_activity,
             ],
             max_concurrent_workflow_tasks=settings.worker_max_concurrent_workflow_tasks,
             max_concurrent_activities=settings.worker_max_concurrent_activities,

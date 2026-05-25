@@ -33,9 +33,11 @@ with workflow.unsafe.imports_passed_through():
         aggregate_report_activity,
         aggregate_script_activity,
         analyze_scene_risk_activity,
+        cleanup_buffer_activity,
         deliver_report_activity,
         extract_pdf_text_activity,
         parse_fdx_activity,
+        send_delivery_failed_webhook_activity,
         split_scenes_activity,
         structure_scene_llm_activity,
         update_job_status_activity,
@@ -57,11 +59,17 @@ _RETRY_LLM = RetryPolicy(
     backoff_coefficient=2.0,
 )
 _RETRY_DELIVERY = RetryPolicy(
-    maximum_attempts=5,
     initial_interval=timedelta(seconds=2),
-    maximum_interval=timedelta(minutes=1),
+    maximum_interval=timedelta(minutes=10),
     backoff_coefficient=2.0,
 )
+# M08: ``maximum_attempts`` bewusst NICHT gesetzt. Die Begrenzung erfolgt
+# ueber das ``schedule_to_close_timeout`` von 6 Stunden im Aufrufer von
+# deliver_report_activity (Pflichtenheft Abnahmetest 4). 4xx-Hard-Fails
+# werden in der Activity selbst erkannt und ohne Retry direkt
+# zurueckgegeben (siehe ``deliver_report_activity``).
+_DELIVERY_SCHEDULE_TO_CLOSE = timedelta(hours=6)
+_DELIVERY_START_TO_CLOSE_PER_ATTEMPT = timedelta(minutes=5)
 
 
 def _resolve_concurrency(job_data: dict[str, Any], key: str) -> int:
@@ -416,7 +424,16 @@ class SecurityCheckWorkflow:
         job_data: dict[str, Any],
         workflow_id: str,
     ) -> dict[str, Any]:
-        """Aggregate findings into report (with PDF), then deliver."""
+        """Aggregate findings into report (with PDF), then deliver.
+
+        M08: Der Push-Delivery-Pfad wird durch ein
+        ``schedule_to_close_timeout`` von 6 Stunden begrenzt
+        (Pflichtenheft Abnahmetest 4). Innerhalb dieses Fensters retried
+        Temporal die Activity mit exponentiellem Backoff. Schlaegt die
+        Zustellung endgueltig fehl (5xx ueber 6h hinweg oder 4xx-Hard-Fail),
+        wird der Failure-Branch ausgefuehrt: Buffer-Cleanup, Job-Status auf
+        ``failed`` und optionaler security.delivery.failed-Webhook.
+        """
         job_metadata = {
             "report_id": job_data.get("report_id"),
             "project_id": job_data.get("project_id"),
@@ -444,20 +461,145 @@ class SecurityCheckWorkflow:
             "script_format": job_data.get("script_format"),
             "script_id": job_data.get("script_id"),
         }
+        job_id = job_data.get("job_id", "")
+        report_id = report_result.get("report_id", "")
+        report_ref_key = report_result.get("report_ref_key", "")
 
-        delivery_result = await workflow.execute_activity(
-            deliver_report_activity,
-            args=[report_result, delivery_config],
-            start_to_close_timeout=timedelta(minutes=5),
-            retry_policy=_RETRY_DELIVERY,
-        )
-        logger.info("Report delivered: %s (mode=%s)", delivery_result.get("delivered"), delivery_result.get("delivery_mode"))
+        delivery_result: dict[str, Any] | None = None
+        delivery_failure_reason: str | None = None
+        delivery_attempts: int = 0
+
+        try:
+            delivery_result = await workflow.execute_activity(
+                deliver_report_activity,
+                args=[report_result, delivery_config],
+                start_to_close_timeout=_DELIVERY_START_TO_CLOSE_PER_ATTEMPT,
+                schedule_to_close_timeout=_DELIVERY_SCHEDULE_TO_CLOSE,
+                retry_policy=_RETRY_DELIVERY,
+            )
+            logger.info(
+                "Report delivered: %s (mode=%s)",
+                delivery_result.get("delivered"),
+                delivery_result.get("delivery_mode"),
+            )
+        except Exception as exc:
+            # Retry-Fenster (6h) erschoepft -- Pflichtenheft Abnahmetest 4.
+            # Wir loggen nur den Exception-Typ, NICHT die Nachricht, damit
+            # keine Reportinhalte ins Log gelangen koennen.
+            delivery_failure_reason = "retry_window_exhausted"
+            delivery_attempts = -1  # unbekannt von hier aus
+            logger.error(
+                "Report delivery exhausted 6h retry window: job=%s "
+                "report=%s exc_type=%s",
+                job_id, report_id, type(exc).__name__,
+            )
+
+        # 4xx-Hard-Fail: Activity hat ohne Retry zurueckgegeben.
+        if (
+            delivery_failure_reason is None
+            and delivery_result is not None
+            and not delivery_result.get("delivered", False)
+            and delivery_result.get("delivery_mode") == "push"
+        ):
+            delivery_failure_reason = (
+                "hard_4xx" if delivery_result.get("hard_fail") else "delivery_failed"
+            )
+            delivery_attempts = int(delivery_result.get("attempts_used", 1))
+
+        if delivery_failure_reason is not None:
+            return await self._handle_delivery_failure(
+                job_id=job_id,
+                report_id=report_id,
+                report_ref_key=report_ref_key,
+                reason=delivery_failure_reason,
+                attempts=delivery_attempts,
+                workflow_id=workflow_id,
+                total_findings=report_result.get("total_findings", 0),
+            )
 
         return {
             "status": "completed",
             "report_id": report_result.get("report_id"),
             "total_findings": report_result.get("total_findings"),
-            "delivered": delivery_result.get("delivered"),
-            "delivery_mode": delivery_result.get("delivery_mode"),
+            "delivered": delivery_result.get("delivered") if delivery_result else False,
+            "delivery_mode": delivery_result.get("delivery_mode") if delivery_result else None,
+            "workflow_id": workflow_id,
+        }
+
+    async def _handle_delivery_failure(
+        self,
+        *,
+        job_id: str,
+        report_id: str,
+        report_ref_key: str,
+        reason: str,
+        attempts: int,
+        workflow_id: str,
+        total_findings: int,
+    ) -> dict[str, Any]:
+        """Centralised handling of definitive delivery failures (M08).
+
+        Macht in dieser Reihenfolge:
+        1. Buffer-Cleanup (Inhalt aus eKI loeschen).
+        2. JobMetadata auf ``failed`` setzen, mit inhaltsarmer Fehlermeldung.
+        3. security.delivery.failed Webhook (opt-in via EPRO_WEBHOOK_URL).
+
+        Alle drei Schritte sind best-effort. Schlaegt einer fehl, fahren
+        die anderen trotzdem fort, weil die Information moeglichst auch
+        ohne perfekten Pfad ankommen soll.
+        """
+        # 1) Buffer-Cleanup -- expliziter Aufruf der dedizierten
+        # cleanup_buffer_activity (M08). Damit ist sichergestellt, dass
+        # der Report nach erschoepftem Retry oder 4xx-Hard-Fail nicht im
+        # Redis verbleibt (Pflichtenheft Abnahmetest 4).
+        if report_ref_key:
+            try:
+                await workflow.execute_activity(
+                    cleanup_buffer_activity,
+                    {"ref_keys": [report_ref_key]},
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=_RETRY_STANDARD,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failure-branch buffer cleanup failed (non-fatal): "
+                    "job=%s exc_type=%s",
+                    job_id, type(exc).__name__,
+                )
+
+        # 2) Job-Status auf failed
+        await self._update_job(
+            job_id,
+            "failed",
+            error=f"delivery_failed:{reason}",
+        )
+
+        # 3) Webhook (opt-in)
+        try:
+            await workflow.execute_activity(
+                send_delivery_failed_webhook_activity,
+                {
+                    "job_id": job_id,
+                    "report_id": report_id,
+                    "reason": reason,
+                    "attempts": max(1, attempts) if attempts >= 0 else 0,
+                },
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=_RETRY_STANDARD,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failure-branch webhook dispatch failed (non-fatal): "
+                "job=%s exc_type=%s",
+                job_id, type(exc).__name__,
+            )
+
+        return {
+            "status": "delivery_failed",
+            "report_id": report_id,
+            "total_findings": total_findings,
+            "delivered": False,
+            "delivery_mode": "push",
+            "failure_reason": reason,
             "workflow_id": workflow_id,
         }
