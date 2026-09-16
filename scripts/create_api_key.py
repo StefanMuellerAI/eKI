@@ -30,6 +30,7 @@ async def insert_api_key(
     description: str,
     key_hash: str,
     expires_at: datetime,
+    is_admin: bool = False,
 ) -> str:
     """Insert API key record via ORM (parameterized, no SQL string interpolation)."""
     engine = create_async_engine(database_url)
@@ -44,6 +45,7 @@ async def insert_api_key(
                 name=name,
                 description=description,
                 is_active=True,
+                is_admin=is_admin,
                 created_at=datetime.utcnow(),
                 expires_at=expires_at,
                 usage_count=0,
@@ -62,6 +64,11 @@ def parse_args() -> argparse.Namespace:
         "--insert",
         action="store_true",
         help="Insert key metadata directly into the database using DATABASE_URL",
+    )
+    parser.add_argument(
+        "--admin",
+        action="store_true",
+        help="Grant access to the /v1/ops/* operations endpoints (M10)",
     )
     return parser.parse_args()
 
@@ -103,6 +110,7 @@ def main() -> None:
         print(f"Organization ID: {organization_id}")
     print(f"Name: {name}")
     print(f"Description: {description}")
+    print(f"Admin (ops endpoints): {'yes' if args.admin else 'no'}")
     print(f"Expires: {expires_at.isoformat()}\n")
 
     if args.insert:
@@ -120,6 +128,7 @@ def main() -> None:
                 description=description,
                 key_hash=key_hash,
                 expires_at=expires_at,
+                is_admin=args.admin,
             )
         )
         print("Record inserted successfully.")

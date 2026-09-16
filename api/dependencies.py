@@ -124,6 +124,16 @@ async def verify_api_key(
     return api_key
 
 
+async def require_admin_key(api_key: ApiKeyModel = Depends(verify_api_key)) -> ApiKeyModel:
+    """Gate for ``/v1/ops/*``: the key must carry ``is_admin`` (M10)."""
+    if not getattr(api_key, "is_admin", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin API key required for operations endpoints",
+        )
+    return api_key
+
+
 def get_actor_headers(
     x_actor_user_id: str | None = Header(
         None,

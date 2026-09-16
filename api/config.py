@@ -67,8 +67,11 @@ class Settings(BaseSettings):
     temporal_task_queue: str = Field(
         default="security-check", description="Temporal task queue name"
     )
+    # M10: must exceed max processing time (2h, Pflichtenheft §5) plus the 6h
+    # delivery retry / pull TTL window, otherwise Temporal kills the workflow
+    # before the failure branch (cleanup + webhook) can run. 10h leaves margin.
     temporal_workflow_execution_timeout: int = Field(
-        default=14400, description="Workflow execution timeout in seconds (4h)"
+        default=36000, description="Workflow execution timeout in seconds (10h)"
     )
 
     # Security

@@ -140,7 +140,11 @@ Authorization: Bearer eki_<api_key>
   "report_id": "7c84b9c2-493f-40ca-8cfc-8e8535e6c1c2",
   "error_message": null,
   "metadata": {
-    "delivery_mode": "pull"
+    "delivery_mode": "pull",
+    "delivery_status": "pending",
+    "delivery_attempts": 0,
+    "delivery_last_status_code": null,
+    "delivered_at": null
   }
 }
 ```
@@ -151,9 +155,18 @@ Authorization: Bearer eki_<api_key>
 |--------|-----------|-------------------|
 | pending | Job angenommen, Verarbeitung steht aus | Weiter pollen |
 | running | Verarbeitung laeuft | Weiter pollen |
-| completed | Fertig, report_id vorhanden | Report abholen |
-| failed | Fehlgeschlagen, error_message vorhanden | Fehler pruefen |
+| delivering | Report erzeugt, Zustellung an ePro laeuft (nur Push, M10) | Weiter pollen |
+| completed | Fertig, report_id vorhanden | Report abholen (Pull) bzw. bereits zugestellt (Push) |
+| failed | Fehlgeschlagen, error_message vorhanden | Fehler pruefen; `delivery_failed:*` = Zustellung endgueltig gescheitert |
 | cancelled | Abgebrochen | -- |
+
+### Zustell-Metadaten (M10)
+
+`metadata.delivery_status` beschreibt den Lieferweg unabhaengig vom Job-Status:
+`pending` (noch nicht zugestellt/abgeholt), `delivering` (Push-Versuche laufen),
+`delivered` (Push 2xx bzw. One-Shot-GET erfolgt), `failed`, `dead_lettered`
+(endgueltig gescheitert, Inhalt geloescht, Webhook gesendet).
+`delivery_attempts` und `delivery_last_status_code` zeigen den letzten Push-Versuch.
 
 ### Empfohlenes Polling-Intervall
 
@@ -310,6 +323,20 @@ Content-Type: multipart/form-data
 | assessment | string | Textuelle Zusammenfassung aller Findings |
 | file | PDF | Report als PDF-Datei (max 7 MB) |
 
+Zusaetzlich sendet eKI seit M10 folgende HTTP-Header, damit ePro wiederholte
+Pushes (Temporal-Retry nach Timeout) als Duplikat erkennen kann
+(Pflichtenheft Abnahmetest 5):
+
+| Header | Inhalt |
+|--------|--------|
+| `Idempotency-Key` | `report_id` -- pro Job stabil ueber alle Retries |
+| `X-EKI-Job-Id` | `job_id` |
+| `X-EKI-Attempt` | laufende Nummer des Zustellversuchs (1, 2, ...) |
+| `X-Request-ID` | Korrelations-ID des urspruenglichen Requests (falls vorhanden) |
+
+Empfehlung fuer ePro: `Idempotency-Key` persistieren und bei erneutem Eingang
+mit demselben Key `200 OK` ohne zweite Speicherung antworten.
+
 ### Autorisierung
 
 Die Autorisierung beim Push zu ePro erfolgt **ausschliesslich per IP-Whitelist**
@@ -324,9 +351,21 @@ Die Autorisierung beim Push zu ePro erfolgt **ausschliesslich per IP-Whitelist**
 
 ### Fehlerverhalten
 
-Wenn der Push fehlschlaegt (ePro nicht erreichbar, HTTP-Fehler), bleibt der
-Report in Redis gespeichert. Er kann dann per Pull (One-Shot-GET) als Fallback
-abgeholt werden, sofern die TTL noch nicht abgelaufen ist.
+| ePro-Antwort | Verhalten der eKI |
+|--------------|-------------------|
+| 2xx | Zustellung abgeschlossen, Report wird sofort aus dem Buffer geloescht |
+| 5xx, 408, 425, 429, Netzwerkfehler | Automatischer Retry mit exponentiellem Backoff (2 s ... 10 min) bis zu 6 Stunden |
+| sonstige 4xx | Kein Retry (Hard-Fail): Loeschung, Job `failed`, Dead Letter, Webhook |
+| 6 h ohne Erfolg | Loeschung, Job `failed` (`delivery_failed:retry_window_exhausted`), Dead Letter, Webhook |
+
+Waehrend des Retry-Fensters bleibt der Report verschluesselt im Buffer und kann
+alternativ per One-Shot-GET abgeholt werden. Nach endgueltigem Scheitern
+existiert kein Inhalt mehr in der eKI; ePro muss den Check erneut ausloesen.
+Der Metadaten-Webhook `security.delivery.failed` (siehe OpenAPI `webhooks`)
+informiert darueber, sofern `EPRO_WEBHOOK_URL` konfiguriert ist.
+
+Im Pull-Modus gilt dieselbe 6-h-Frist: Wird der Report nicht per One-Shot-GET
+abgeholt, wird er geloescht und `delivery_failed:pull_ttl_expired` gemeldet.
 
 ### Beispiel-Request (wie ePro ihn empfaengt)
 

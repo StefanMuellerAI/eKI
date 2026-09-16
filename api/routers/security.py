@@ -19,10 +19,12 @@ from fastapi import (
     HTTPException,
     Path,
     Request,
+    Response,
     status,
 )
 from pydantic import ValidationError
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from temporalio.client import Client as TemporalClient
 
@@ -225,6 +227,26 @@ async def _resolve_multipart(request: Request, *, is_async: bool = False) -> Res
     )
 
 
+async def _find_idempotent_job(
+    db: AsyncSession, user_id: str, idempotency_key: str
+) -> JobMetadata | None:
+    stmt = select(JobMetadata).where(
+        JobMetadata.user_id == user_id,
+        JobMetadata.idempotency_key == idempotency_key,
+    )
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
+def _existing_job_response(job: JobMetadata) -> AsyncSecurityCheckResponse:
+    return AsyncSecurityCheckResponse(
+        job_id=job.job_id,
+        status=job.status,
+        message="Existing job returned (idempotency key matched)",
+        status_url=f"/v1/security/jobs/{job.job_id}",
+        estimated_completion_seconds=120,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Sync endpoint
 # ---------------------------------------------------------------------------
@@ -327,20 +349,15 @@ async def security_check_async(
     buffer = _get_buffer(redis_client)
 
     resolved = await _resolve_request(request, is_async=True)
+    user_id = actor_info.get("user_id") or ""
 
-    # Idempotency check: if key exists, return existing job
+    # Idempotency (M10): scoped to the authenticated user. Fast path first;
+    # the unique constraint (user_id, idempotency_key) closes the race between
+    # two concurrent POSTs -- see the IntegrityError handling below.
     if resolved.idempotency_key:
-        stmt = select(JobMetadata).where(JobMetadata.idempotency_key == resolved.idempotency_key)
-        existing = await db.execute(stmt)
-        existing_job = existing.scalar_one_or_none()
+        existing_job = await _find_idempotent_job(db, user_id, resolved.idempotency_key)
         if existing_job:
-            return AsyncSecurityCheckResponse(
-                job_id=existing_job.job_id,
-                status=existing_job.status,
-                message="Existing job returned (idempotency key matched)",
-                status_url=f"/v1/security/jobs/{existing_job.job_id}",
-                estimated_completion_seconds=120,
-            )
+            return _existing_job_response(existing_job)
 
     job_id = uuid.uuid4()
     report_id = uuid.uuid4()
@@ -352,14 +369,24 @@ async def security_check_async(
         project_id=resolved.project_id or "unknown",
         script_format=resolved.script_format,
         status=JobStatus.PENDING,
-        user_id=actor_info.get("user_id") or "",
+        user_id=user_id,
         priority=resolved.priority,
         idempotency_key=resolved.idempotency_key,
         delivery_mode=delivery_mode,
         script_id=resolved.script_id,
     )
     db.add(job_meta)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Lost the race against a concurrent request with the same key:
+        # roll back and return the winner's job (Pflichtenheft Abnahmetest 5).
+        await db.rollback()
+        if resolved.idempotency_key:
+            existing_job = await _find_idempotent_job(db, user_id, resolved.idempotency_key)
+            if existing_job:
+                return _existing_job_response(existing_job)
+        raise
 
     # Store script content encrypted in Redis -- NOT in Temporal
     ref_key = await buffer.store({"script_content": resolved.b64_content})
@@ -383,6 +410,8 @@ async def security_check_async(
         "pdf_structure_concurrency": settings.pdf_structure_concurrency,
         "risk_analysis_concurrency": settings.risk_analysis_concurrency,
         "llm_activity_timeout_seconds": settings.llm_activity_timeout_seconds,
+        # M10: Pull-TTL-Watch laeuft deterministisch mit dem beim Start gueltigen TTL.
+        "buffer_ttl_seconds": settings.buffer_ttl_seconds,
     }
 
     try:
@@ -397,6 +426,12 @@ async def security_check_async(
         raise
     except Exception as exc:
         logger.error(f"Failed to start workflow for job {job_id}: {exc}", exc_info=True)
+        # M10: no orphaned script content in Redis when the workflow never starts.
+        try:
+            await buffer.delete(ref_key)
+            metrics.BUFFER_DELETES_TOTAL.labels(source="cleanup").inc()
+        except Exception:
+            logger.warning("Buffer cleanup after failed workflow start failed (TTL will reap)")
         await db.execute(
             update(JobMetadata)
             .where(JobMetadata.job_id == job_id)
@@ -460,7 +495,13 @@ async def get_job_status(
         progress_percentage=job.progress_percentage,
         report_id=job.report_id,
         error_message=job.error_message,
-        metadata={"delivery_mode": job.delivery_mode},
+        metadata={
+            "delivery_mode": job.delivery_mode,
+            "delivery_status": job.delivery_status,
+            "delivery_attempts": job.delivery_attempts,
+            "delivery_last_status_code": job.delivery_last_status_code,
+            "delivered_at": job.delivered_at.isoformat() if job.delivered_at else None,
+        },
     )
 
 
@@ -473,6 +514,7 @@ async def get_job_status(
     dependencies=[Depends(rate_limit_combined)],
 )
 async def get_report(
+    http_response: Response,
     report_id: uuid.UUID = Path(..., description="Report ID to retrieve"),
     api_key: ApiKeyModel = Depends(verify_api_key),
     db: AsyncSession = Depends(get_db),
@@ -518,8 +560,17 @@ async def get_report(
             detail="Report already retrieved. URL is no longer valid.",
         )
 
+    # M10: delivery bookkeeping for pull mode -- the one-shot GET *is* the delivery.
+    await db.execute(
+        update(JobMetadata)
+        .where(JobMetadata.report_id == report_id, JobMetadata.user_id == api_key.user_id)
+        .values(delivery_status="delivered", delivered_at=retrieved_at)
+    )
     await db.commit()
     report_ref_key = row[0]
+
+    # Pflichtenheft Anhang 1: X-One-Shot signals that this URL is now invalid.
+    http_response.headers["X-One-Shot"] = "true"
 
     # Fetch report from Redis SecureBuffer
     buffer = _get_buffer(redis_client)

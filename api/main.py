@@ -15,7 +15,7 @@ from pydantic import ValidationError
 
 from api.config import get_settings
 from api.dependencies import verify_api_key
-from api.routers import health, knowledge_base, security
+from api.routers import health, knowledge_base, ops, security
 from core.db_models import ApiKeyModel
 from core.exceptions import EKIException
 from core.logging_config import configure_logging, set_request_id
@@ -303,6 +303,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
 app.include_router(health.router, tags=["Health"])
 app.include_router(security.router, prefix="/v1/security", tags=["Security"])
 app.include_router(knowledge_base.router, prefix="/v1/kb", tags=["KnowledgeBase"])
+app.include_router(ops.router, prefix="/v1/ops", tags=["Operations"])
 
 if settings.metrics_enabled:
 

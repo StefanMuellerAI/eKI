@@ -276,3 +276,34 @@ async def auth_headers_user2(test_api_key_user2) -> dict[str, str]:
         "X-Actor-User-Id": "test-user-456",
         "X-Actor-Project-Id": "test-project-789",
     }
+
+
+@pytest.fixture
+async def test_admin_key(db_session) -> tuple[str, ApiKeyModel]:
+    """M10: API key with ``is_admin=True`` for the /v1/ops/* endpoints."""
+    api_key = f"eki_{secrets.token_hex(32)}"
+    key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+
+    api_key_model = ApiKeyModel(
+        id=uuid4(),
+        user_id="ops-admin",
+        organization_id="test-org",
+        key_hash=key_hash,
+        name="Ops Admin Key",
+        description="admin key for testing",
+        is_active=True,
+        is_admin=True,
+        created_at=datetime.utcnow(),
+        expires_at=datetime.utcnow() + timedelta(days=365),
+        usage_count=0,
+    )
+    db_session.add(api_key_model)
+    await db_session.commit()
+    await db_session.refresh(api_key_model)
+    return api_key, api_key_model
+
+
+@pytest.fixture
+async def admin_headers(test_admin_key) -> dict[str, str]:
+    api_key, _ = test_admin_key
+    return {"Authorization": f"Bearer {api_key}"}

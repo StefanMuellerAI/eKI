@@ -1,7 +1,7 @@
 openapi: 3.1.1
 info:
   title: eKI API
-  version: 0.9.0
+  version: 0.10.0
   description: |
     KI-gestützte Sicherheitsprüfung für Drehbücher - Filmakademie Baden-Württemberg
 

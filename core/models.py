@@ -19,6 +19,7 @@ class JobStatus(StrEnum):
 
     PENDING = "pending"
     RUNNING = "running"
+    DELIVERING = "delivering"  # M10: report generated, outbound delivery in progress
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -459,3 +460,79 @@ class ErrorResponse(BaseModel):
     details: list[ErrorDetail] = Field(default_factory=list, description="Detailed error info")
     request_id: str | None = Field(None, description="Request tracking ID")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="Error timestamp")
+
+
+# ---------------------------------------------------------------------------
+# M10: Operations (admin) models -- content-free by design
+# ---------------------------------------------------------------------------
+
+
+class OpsJobSummary(BaseModel):
+    """Job overview row for operations (Pflichtenheft §6 'Job-Übersicht ohne Inhalte')."""
+
+    job_id: UUID
+    project_id: str
+    user_id: str
+    script_format: ScriptFormat
+    status: JobStatus
+    progress_percentage: int | None = None
+    delivery_mode: str
+    delivery_status: str
+    delivery_attempts: int = 0
+    delivery_last_status_code: int | None = None
+    delivery_last_attempt_at: datetime | None = None
+    delivered_at: datetime | None = None
+    report_id: UUID | None = None
+    error_message: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class OpsJobListResponse(BaseModel):
+    items: list[OpsJobSummary]
+    total: int = Field(..., description="Total rows matching the filter (before paging)")
+    limit: int
+    offset: int
+
+
+class DeadLetterSummary(BaseModel):
+    """Dead-letter record (content-free)."""
+
+    id: UUID
+    job_id: UUID
+    report_id: UUID | None = None
+    project_id: str
+    user_id: str
+    delivery_mode: str
+    reason: str
+    attempts: int
+    last_status_code: int | None = None
+    last_error_type: str | None = None
+    webhook_sent: bool
+    created_at: datetime
+    acknowledged_at: datetime | None = None
+    acknowledged_by: str | None = None
+    note: str | None = None
+
+
+class DeadLetterListResponse(BaseModel):
+    items: list[DeadLetterSummary]
+    total: int
+    unacknowledged: int = Field(..., description="Unacknowledged dead letters overall")
+    limit: int
+    offset: int
+
+
+class DeadLetterAcknowledgeRequest(BaseModel):
+    note: str | None = Field(
+        None, max_length=1000, description="Optional operator note (no report content)"
+    )
+
+
+class OpsSummaryResponse(BaseModel):
+    """Aggregate counters for the operations dashboard."""
+
+    jobs_by_status: dict[str, int]
+    jobs_by_delivery_status: dict[str, int]
+    dead_letters_unacknowledged: int
+    generated_at: datetime = Field(default_factory=datetime.utcnow)

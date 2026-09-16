@@ -798,6 +798,157 @@ async def aggregate_report_activity(
     }
 
 
+# ===================================================================
+# M10 - Delivery bookkeeping helpers (metadata only)
+# ===================================================================
+
+# HTTP status codes that are transient by contract and therefore retried
+# within the 6h window even though they are 4xx.
+_RETRYABLE_4XX = frozenset({408, 425, 429})
+
+
+def _current_attempt() -> int:
+    """Temporal attempt number (1-based); 1 when called outside an activity."""
+    try:
+        if activity.in_activity():
+            return int(activity.info().attempt)
+    except Exception:  # nosec B110
+        pass
+    return 1
+
+
+def _session_factory() -> tuple[Any, Any]:
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    settings = get_settings()
+    engine = create_async_engine(str(settings.database_url))
+    return engine, async_sessionmaker(engine, expire_on_commit=False)
+
+
+async def _mark_delivering(
+    *,
+    report_id: str,
+    job_id: str,
+    project_id: str,
+    user_id: str,
+    script_format: str,
+    total_findings: int,
+    report_ref_key: str,
+    delivery_mode: str,
+) -> None:
+    """Create ReportMetadata (idempotent) and put the job into DELIVERING.
+
+    M10 fix: before, the job was flagged COMPLETED *before* the push was even
+    attempted and ReportMetadata was re-inserted on every retry (IntegrityError
+    swallowed). Now the insert is skipped when the row exists and the job only
+    reaches COMPLETED via ``_record_attempt(delivered=True)``.
+    """
+    from datetime import UTC, datetime
+    from uuid import UUID as UUIDType
+
+    from sqlalchemy import select, update
+
+    from core.db_models import JobMetadata, ReportMetadata
+    from core.models import JobStatus, ScriptFormat
+
+    engine, session_factory = _session_factory()
+    try:
+        async with session_factory() as session:
+            processing_seconds = 1.0
+            if job_id:
+                created = (
+                    await session.execute(
+                        select(JobMetadata.created_at).where(JobMetadata.job_id == UUIDType(job_id))
+                    )
+                ).scalar_one_or_none()
+                if created is not None:
+                    start = created if created.tzinfo else created.replace(tzinfo=UTC)
+                    processing_seconds = max(0.0, (datetime.now(UTC) - start).total_seconds())
+
+            if report_id:
+                exists = (
+                    await session.execute(
+                        select(ReportMetadata.report_id).where(
+                            ReportMetadata.report_id == UUIDType(report_id)
+                        )
+                    )
+                ).scalar_one_or_none()
+                if exists is None:
+                    session.add(
+                        ReportMetadata(
+                            report_id=UUIDType(report_id),
+                            job_id=UUIDType(job_id) if job_id else None,
+                            project_id=project_id,
+                            user_id=user_id,
+                            script_format=ScriptFormat(script_format),
+                            total_findings=total_findings,
+                            processing_time_seconds=round(processing_seconds, 3),
+                            report_ref_key=report_ref_key,
+                            delivery_mode=delivery_mode,
+                        )
+                    )
+
+            if job_id:
+                await session.execute(
+                    update(JobMetadata)
+                    .where(JobMetadata.job_id == UUIDType(job_id))
+                    .values(
+                        status=JobStatus.DELIVERING,
+                        delivery_status="delivering",
+                        report_id=UUIDType(report_id) if report_id else None,
+                    )
+                )
+            await session.commit()
+    finally:
+        await engine.dispose()
+
+
+async def _record_attempt(
+    *,
+    job_id: str,
+    attempt: int,
+    status_code: int | None,
+    delivered: bool,
+    delivery_mode: str,
+) -> None:
+    """Persist one delivery attempt (count, last status code, timestamps)."""
+    from datetime import UTC, datetime
+    from uuid import UUID as UUIDType
+
+    from sqlalchemy import update
+
+    from core.db_models import JobMetadata
+    from core.models import JobStatus
+
+    if not job_id:
+        return
+
+    now = datetime.now(UTC)
+    values: dict[str, Any] = {
+        "delivery_attempts": attempt,
+        "delivery_last_status_code": status_code,
+        "delivery_last_attempt_at": now,
+    }
+    if delivered:
+        values.update(
+            status=JobStatus.COMPLETED,
+            progress_percentage=100,
+            delivered_at=now,
+            # Pull: the report is *ready*; "delivered" is set by the one-shot GET.
+            delivery_status="delivered" if delivery_mode == "push" else "pending",
+        )
+
+    engine, session_factory = _session_factory()
+    try:
+        async with session_factory() as session:
+            await session.execute(
+                update(JobMetadata).where(JobMetadata.job_id == UUIDType(job_id)).values(**values)
+            )
+            await session.commit()
+    finally:
+        await engine.dispose()
+
+
 @activity.defn(name="deliver_report")
 async def deliver_report_activity(
     report_data: dict[str, Any], delivery_config: dict[str, Any] | None = None
@@ -807,7 +958,13 @@ async def deliver_report_activity(
     Pull (default): Report stays in Redis for One-Shot-GET retrieval.
     Push: Report is POSTed to ePro, then deleted from Redis.
 
-    Also creates ReportMetadata and updates JobMetadata in the database.
+    M10 hardening on top of M08:
+    * job goes PENDING/RUNNING -> DELIVERING -> COMPLETED only after a real 2xx,
+    * ReportMetadata insert is idempotent across Temporal retries,
+    * every attempt is persisted (``delivery_attempts``, last status code),
+    * ``Idempotency-Key`` (= report_id) and ``X-Request-ID`` headers are sent
+      so ePro can de-duplicate retried pushes (Pflichtenheft Abnahmetest 5),
+    * 408/425/429 are treated as retryable, other 4xx as hard failures.
     """
     report_ref_key = report_data.get("report_ref_key", "")
     report_id = report_data.get("report_id", "")
@@ -817,80 +974,53 @@ async def deliver_report_activity(
     project_id = delivery_config.get("project_id", "")
     user_id = delivery_config.get("user_id", "")
     script_format = delivery_config.get("script_format", "fdx")
+    attempt = _current_attempt()
 
-    logger.info("Delivering report %s (mode=%s)", report_id, delivery_mode)
+    logger.info("Delivering report %s (mode=%s, attempt=%d)", report_id, delivery_mode, attempt)
 
     buffer = _get_buffer()
 
-    # Create ReportMetadata and update JobMetadata in DB
     try:
-        from uuid import UUID as UUIDType
+        await _mark_delivering(
+            report_id=str(report_id or ""),
+            job_id=str(job_id or ""),
+            project_id=project_id,
+            user_id=user_id,
+            script_format=script_format,
+            total_findings=int(report_data.get("total_findings", 0) or 0),
+            report_ref_key=report_ref_key,
+            delivery_mode=delivery_mode,
+        )
+    except Exception as exc:
+        logger.warning("DB update failed (non-fatal): %s", type(exc).__name__)
 
-        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
-        from api.config import get_settings
-        from core.db_models import JobMetadata, ReportMetadata
-        from core.models import JobStatus, ScriptFormat
-
-        settings = get_settings()
-        engine = create_async_engine(str(settings.database_url))
-        Session = async_sessionmaker(engine, expire_on_commit=False)
-
-        async with Session() as session:
-            # Create ReportMetadata
-            report_meta = ReportMetadata(
-                report_id=UUIDType(report_id) if report_id else None,
-                job_id=UUIDType(job_id) if job_id else None,
-                project_id=project_id,
-                user_id=user_id,
-                script_format=ScriptFormat(script_format),
-                total_findings=report_data.get("total_findings", 0),
-                processing_time_seconds=1.0,
-                report_ref_key=report_ref_key,
+    async def _persist_attempt(status_code: int | None, delivered: bool) -> None:
+        try:
+            await _record_attempt(
+                job_id=str(job_id or ""),
+                attempt=attempt,
+                status_code=status_code,
+                delivered=delivered,
                 delivery_mode=delivery_mode,
             )
-            session.add(report_meta)
+        except Exception as exc:
+            logger.warning("Attempt bookkeeping failed (non-fatal): %s", type(exc).__name__)
 
-            # Update JobMetadata status to completed
-            if job_id:
-                from sqlalchemy import update
-
-                await session.execute(
-                    update(JobMetadata)
-                    .where(JobMetadata.job_id == UUIDType(job_id))
-                    .values(
-                        status=JobStatus.COMPLETED,
-                        progress_percentage=100,
-                        report_id=UUIDType(report_id) if report_id else None,
-                    )
-                )
-
-            await session.commit()
-
-        await engine.dispose()
-        logger.info("ReportMetadata + JobMetadata updated in DB")
-
-    except Exception as exc:
-        logger.warning("DB update failed (non-fatal): %s", exc)
-
-    # Delivery mode handling
     if delivery_mode == "push":
         # Push: multipart POST to ePro set-risk-assessment, then delete from Redis.
         #
-        # M08-Fehlerklassifikation:
-        #   * 2xx               -> Erfolg, Buffer wird geloescht.
-        #   * 4xx (Hard-Fail)   -> kein Retry sinnvoll (Bad Request, etc).
-        #                          Activity gibt ``delivered=False, hard_fail=True``
-        #                          zurueck. Workflow-Failure-Branch uebernimmt.
-        #   * 5xx               -> Transient. ``raise`` damit Temporal-Retry
-        #                          innerhalb des 6h-Fensters greift.
-        #   * Transport-Errors  -> Transient (Netzwerk-/DNS-/Timeout-Probleme).
-        #                          ``raise`` fuer Temporal-Retry.
+        # Fehlerklassifikation (M08 + M10):
+        #   * 2xx                    -> Erfolg, Buffer wird geloescht.
+        #   * 408/425/429            -> transient, raise -> Temporal-Retry (6h-Fenster).
+        #   * sonstige 4xx (Hard)    -> kein Retry; ``delivered=False, hard_fail=True``.
+        #   * 5xx / 3xx              -> transient, raise -> Temporal-Retry.
+        #   * Transport-Errors       -> transient, raise -> Temporal-Retry.
         import base64 as b64mod
 
         import httpx
 
         from api.config import get_settings
+        from core.logging_config import get_request_id
         from services.report_generator import compute_epro_status, generate_assessment_text
 
         settings = get_settings()
@@ -937,7 +1067,16 @@ async def deliver_report_activity(
                 len(assessment),
             )
 
-        headers: dict[str, str] = {}
+        # M10: Idempotenz-Header. report_id ist pro Job stabil -> ePro kann
+        # wiederholte Pushes (Temporal-Retry nach Timeout) als Duplikat erkennen.
+        headers: dict[str, str] = {
+            "Idempotency-Key": str(report_id),
+            "X-EKI-Job-Id": str(job_id),
+            "X-EKI-Attempt": str(attempt),
+        }
+        request_id = get_request_id()
+        if request_id:
+            headers["X-Request-ID"] = request_id
         if settings.epro_auth_token:
             headers["Authorization"] = f"Bearer {settings.epro_auth_token}"
 
@@ -948,7 +1087,7 @@ async def deliver_report_activity(
                     push_url,
                     data=form_data,
                     files=files if files else None,
-                    headers=headers or None,
+                    headers=headers,
                 )
             metrics.DELIVERY_DURATION.labels(mode="push").observe(
                 time.perf_counter() - push_started
@@ -962,8 +1101,9 @@ async def deliver_report_activity(
                 except Exception:
                     epro_body = {}
                 logger.info(
-                    "Push delivery succeeded: HTTP %d -- msg=%s",
+                    "Push delivery succeeded: HTTP %d attempt=%d -- msg=%s",
                     status_code,
+                    attempt,
                     str(epro_body.get("message", ""))[:120],
                 )
 
@@ -971,44 +1111,49 @@ async def deliver_report_activity(
                 await buffer.delete(report_ref_key)
                 metrics.BUFFER_DELETES_TOTAL.labels(source="push").inc()
                 metrics.DELIVERY_ATTEMPTS_TOTAL.labels(mode="push", outcome="success").inc()
+                await _persist_attempt(status_code, delivered=True)
 
                 return {
                     "delivered": True,
                     "delivery_mode": "push",
                     "epro_status": epro_status,
                     "status_code": status_code,
+                    "attempts_used": attempt,
                     "epro_response": epro_body,
                 }
 
-            if 400 <= status_code < 500:
+            if 400 <= status_code < 500 and status_code not in _RETRYABLE_4XX:
                 # Hard-Fail: kein Temporal-Retry. Workflow-Failure-Branch
-                # uebernimmt Buffer-Cleanup, Job-Status und Webhook.
+                # uebernimmt Buffer-Cleanup, Job-Status, Dead Letter und Webhook.
                 logger.error(
-                    "Push delivery hard-fail (HTTP %d, no retry): job=%s",
+                    "Push delivery hard-fail (HTTP %d, no retry): job=%s attempt=%d",
                     status_code,
-                    delivery_config.get("job_id", ""),
+                    job_id,
+                    attempt,
                 )
                 metrics.DELIVERY_ATTEMPTS_TOTAL.labels(mode="push", outcome="hard_fail").inc()
+                await _persist_attempt(status_code, delivered=False)
                 return {
                     "delivered": False,
                     "delivery_mode": "push",
                     "hard_fail": True,
                     "status_code": status_code,
                     "error": f"HTTP {status_code}",
-                    "attempts_used": 1,
+                    "attempts_used": attempt,
                 }
 
-            # 5xx -> transient, raise damit RetryPolicy greift.
+            # 5xx / 3xx / retryable 4xx -> transient, raise damit RetryPolicy greift.
             logger.warning(
-                "Push delivery 5xx, will retry (HTTP %d): job=%s",
+                "Push delivery transient failure, will retry (HTTP %d): job=%s attempt=%d",
                 status_code,
-                delivery_config.get("job_id", ""),
+                job_id,
+                attempt,
             )
             metrics.DELIVERY_ATTEMPTS_TOTAL.labels(mode="push", outcome="retryable").inc()
+            await _persist_attempt(status_code, delivered=False)
             response.raise_for_status()
-            # Defensiv: falls raise_for_status nichts wirft (3xx z.B.),
-            # explizit selbst raisen, damit der Workflow nicht
-            # versehentlich auf "delivered=False" abrutscht.
+            # Defensiv: falls raise_for_status nichts wirft (3xx, 408/429 ohne
+            # raise), explizit selbst raisen.
             raise httpx.HTTPStatusError(
                 f"unexpected status {status_code}",
                 request=response.request,
@@ -1016,18 +1161,19 @@ async def deliver_report_activity(
             )
 
         except httpx.HTTPStatusError:
-            # 5xx wurde gerade gehoben -- weiterreichen zum Workflow-Retry.
             raise
         except Exception as exc:
             # Transport-Fehler (DNS, Timeout, Connection-Reset).
             # Log NICHT den Exception-Text, weil der durch ePro
             # einen Auszug aus Payload-Bytes enthalten koennte. Nur Typ.
             logger.warning(
-                "Push delivery transport error, will retry: job=%s exc_type=%s",
-                delivery_config.get("job_id", ""),
+                "Push delivery transport error, will retry: job=%s attempt=%d exc_type=%s",
+                job_id,
+                attempt,
                 type(exc).__name__,
             )
             metrics.DELIVERY_ATTEMPTS_TOTAL.labels(mode="push", outcome="transport_error").inc()
+            await _persist_attempt(None, delivered=False)
             raise
 
     else:
@@ -1035,11 +1181,131 @@ async def deliver_report_activity(
         # (already stored by aggregate_report_activity)
         logger.info("Pull mode: report %s available for One-Shot-GET (TTL 6h)", report_id)
         metrics.DELIVERY_ATTEMPTS_TOTAL.labels(mode="pull", outcome="pull_ready").inc()
+        await _persist_attempt(None, delivered=True)
         return {
             "delivered": True,
             "delivery_mode": "pull",
+            "attempts_used": attempt,
             "report_url": f"/v1/security/reports/{report_id}",
         }
+
+
+# ===================================================================
+# M10 - Dead Letter + Pull-TTL-Watch
+# ===================================================================
+
+
+@activity.defn(name="record_dead_letter")
+async def record_dead_letter_activity(payload: dict[str, Any]) -> dict[str, Any]:
+    """Persist a content-free dead letter for a definitively failed delivery.
+
+    Also flips ``job_metadata.delivery_status`` to ``dead_lettered`` and
+    refreshes the ``eki_dead_letters_unacknowledged`` gauge. Never raises.
+    """
+    from uuid import UUID as UUIDType
+
+    from sqlalchemy import func, select, update
+
+    from core.db_models import DeliveryDeadLetter, JobMetadata
+
+    job_id = str(payload.get("job_id") or "")
+    reason = str(payload.get("reason") or "delivery_failed")
+    if not job_id:
+        return {"recorded": False, "reason": "missing job_id"}
+
+    metrics.DELIVERY_FAILURES_TOTAL.labels(reason=reason).inc()
+
+    engine, session_factory = _session_factory()
+    try:
+        async with session_factory() as session:
+            job = (
+                await session.execute(
+                    select(JobMetadata).where(JobMetadata.job_id == UUIDType(job_id))
+                )
+            ).scalar_one_or_none()
+
+            report_id_raw = payload.get("report_id") or (job.report_id if job else None)
+            record = DeliveryDeadLetter(
+                job_id=UUIDType(job_id),
+                report_id=UUIDType(str(report_id_raw)) if report_id_raw else None,
+                project_id=(job.project_id if job else payload.get("project_id")) or "unknown",
+                user_id=(job.user_id if job else payload.get("user_id")) or "unknown",
+                delivery_mode=str(
+                    payload.get("delivery_mode") or (job.delivery_mode if job else "push")
+                ),
+                reason=reason[:50],
+                attempts=int(payload.get("attempts") or (job.delivery_attempts if job else 0) or 0),
+                last_status_code=payload.get("last_status_code")
+                or (job.delivery_last_status_code if job else None),
+                last_error_type=(str(payload.get("last_error_type") or "")[:100] or None),
+                webhook_sent=bool(payload.get("webhook_sent", False)),
+            )
+            session.add(record)
+            await session.execute(
+                update(JobMetadata)
+                .where(JobMetadata.job_id == UUIDType(job_id))
+                .values(delivery_status="dead_lettered")
+            )
+            await session.commit()
+
+            unacked = (
+                await session.execute(
+                    select(func.count())
+                    .select_from(DeliveryDeadLetter)
+                    .where(DeliveryDeadLetter.acknowledged_at.is_(None))
+                )
+            ).scalar_one()
+            metrics.DEAD_LETTERS_UNACKNOWLEDGED.set(int(unacked))
+            dead_letter_id = str(record.id)
+    except Exception as exc:
+        logger.error(
+            "record_dead_letter_activity failed (non-fatal): job=%s exc_type=%s",
+            job_id,
+            type(exc).__name__,
+        )
+        return {"recorded": False, "reason": type(exc).__name__}
+    finally:
+        await engine.dispose()
+
+    logger.warning(
+        "Delivery dead-lettered: job=%s reason=%s attempts=%s dead_letter_id=%s",
+        job_id,
+        reason,
+        payload.get("attempts"),
+        dead_letter_id,
+    )
+    return {"recorded": True, "dead_letter_id": dead_letter_id}
+
+
+@activity.defn(name="check_report_retrieved")
+async def check_report_retrieved_activity(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return whether a pull-mode report has been fetched via one-shot GET."""
+    from uuid import UUID as UUIDType
+
+    from sqlalchemy import select
+
+    from core.db_models import ReportMetadata
+
+    report_id = str(payload.get("report_id") or "")
+    if not report_id:
+        return {"found": False, "retrieved": False}
+
+    engine, session_factory = _session_factory()
+    try:
+        async with session_factory() as session:
+            row = (
+                await session.execute(
+                    select(ReportMetadata.is_retrieved).where(
+                        ReportMetadata.report_id == UUIDType(report_id)
+                    )
+                )
+            ).scalar_one_or_none()
+    finally:
+        await engine.dispose()
+
+    if row is None:
+        return {"found": False, "retrieved": False}
+    return {"found": True, "retrieved": bool(row)}
 
 
 # ===================================================================

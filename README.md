@@ -1,6 +1,6 @@
 # eKI API -- KI-gestuetzte Sicherheitspruefung fuer Drehbuecher
 
-**Version:** 0.9.0 (Meilenstein M09 abgeschlossen)
+**Version:** 0.10.0 (Meilenstein M10 abgeschlossen)
 **Auftraggeber:** Filmakademie Baden-Wuerttemberg
 **Auftragnehmer:** StefanAI -- Research & Development
 
@@ -142,7 +142,7 @@ curl http://localhost:8000/health
 | `POST` | `/v1/security/check` | Synchroner Check -- JSON (Base64) oder Multipart FDX/PDF-Upload |
 | `POST` | `/v1/security/check:async` | Asynchroner Check via Temporal Workflow (FDX oder PDF) |
 | `GET` | `/v1/security/jobs/{job_id}` | Echtes Job-Status-Tracking aus DB (M05) |
-| `GET` | `/v1/security/reports/{id}` | One-Shot-Report: JSON + PDF, danach geloescht (M05) |
+| `GET` | `/v1/security/reports/{id}` | One-Shot-Report: JSON + PDF, danach geloescht (M05); Header `X-One-Shot: true` (M10) |
 
 ### Knowledge Base Endpoints (M06, Auth erforderlich)
 
@@ -417,6 +417,40 @@ Der Worker legt beim Start idempotent den Temporal-Schedule `eki-kb-cleanup`
 (`KB_CLEANUP_CRON`, Default taeglich 03:00 UTC) an, der abgelaufene KB-Dokumente loescht
 und `eki_kb_documents` aktualisiert.
 
+## Outbound-Adapter Hardening (M10)
+
+### Zustell-Lebenszyklus
+
+`pending -> delivering -> delivered` bzw. `dead_lettered`. Der Job erreicht `completed`
+erst nach echtem 2xx von ePro (vorher `delivering`). Jeder Versuch wird in
+`job_metadata` protokolliert (`delivery_attempts`, `delivery_last_status_code`,
+`delivered_at`); `GET /v1/security/jobs/{id}` zeigt diese Felder in `metadata`.
+
+| ePro-Antwort | Verhalten |
+|---|---|
+| 2xx | Buffer sofort geloescht, `delivered` |
+| 5xx, 408/425/429, Netzwerkfehler | Temporal-Retry (2 s bis 10 min Backoff) bis 6 h |
+| sonstige 4xx | Hard-Fail ohne Retry |
+| 6 h erschoepft / Pull nicht abgeholt | Cleanup, Job `failed`, Webhook, **Dead Letter** |
+
+Push-Requests tragen `Idempotency-Key: <report_id>`, `X-EKI-Job-Id`, `X-EKI-Attempt`
+und `X-Request-ID`, damit ePro Retries dedupliziert. Idempotenz auf der Eingangsseite ist
+je API-Key gescoped (`(user_id, idempotency_key)` unique) und race-sicher.
+
+### Dead-Letter-Queue und Ops-Endpoints (Admin-Key)
+
+| Methode | Endpunkt | Beschreibung |
+|---|---|---|
+| `GET` | `/v1/ops/summary` | Jobs nach Status/Zustellstatus, offene Dead Letters |
+| `GET` | `/v1/ops/jobs` | Job-Uebersicht ohne Inhalte (Filter `status`, `delivery_status`, `project_id`) |
+| `GET` | `/v1/ops/dead-letters` | Endgueltig gescheiterte Zustellungen (inhaltsarm) |
+| `GET` | `/v1/ops/dead-letters/{id}` | Einzelansicht |
+| `POST` | `/v1/ops/dead-letters/{id}:acknowledge` | Nach Analyse quittieren |
+
+Admin-Keys: `python scripts/create_api_key.py --insert --admin`. Ein Replay aus der DLQ ist
+bewusst nicht vorgesehen -- der Inhalt wird beim endgueltigen Scheitern geloescht
+(Delete-on-Delivery); ePro stoesst den Check neu an. Runbook: `docs/M10_FAILOVER_RUNBOOK.md`.
+
 ## Prompt-Management
 
 Alle LLM-Prompts werden zentral in `config/prompts/prompts.yaml` verwaltet:
@@ -469,6 +503,7 @@ eKI_API/
 │   └── routers/
 │       ├── health.py             # Health & Readiness
 │       ├── knowledge_base.py     # KB-Endpoints /v1/kb/* (M06)
+│       ├── ops.py                # Ops-Endpoints /v1/ops/* (M10, Admin-Key)
 │       └── security.py           # Security Endpoints (JSON + Multipart)
 ├── config/
 │   ├── kb_seed/                  # KB-Seed-Dokumente (M06)
@@ -613,7 +648,7 @@ MISTRAL_API_KEY=your-key
 | M07 | Grossdokument-Optimierung | Abgeschlossen | Opt-in Parallelisierung von PDF-Strukturierung und Risikoanalyse, prozessweiter Ollama-Concurrency-Cap, konfigurierbare Limits/Timeouts, 300-Seiten-Fixture + Benchmark-Runner mit `docker stats`-Snapshot, 16 zusaetzliche Tests |
 | M08 | Security/Privacy & Delete-on-Delivery | Abgeschlossen | 6h-Retry-Fenster (`schedule_to_close_timeout`), `cleanup_buffer_activity` im Failure-Branch, opt-in `security.delivery.failed`-Webhook (Anhang 1), `cleanup_buffer_activity`, zentrale Logging-Konfiguration mit `SensitiveContentFilter`, Request-ID-Middleware, OpenAPI-`webhooks`-Block, 34 zusaetzliche Tests |
 | M09 | Observability & SLOs | Abgeschlossen | `core/metrics.py` (20+ Metrikfamilien, API + Worker), HTTP-Metrik-Middleware, OpenTelemetry-Tracing opt-in (`core/tracing.py`), request_id/job_id-Korrelation via Temporal-Interceptor, Observability-Compose-Overlay (Prometheus, Alertmanager, Grafana, Jaeger), 11 Alert-Regeln, 3 provisionierte Dashboards, SLO-Dokument, KB-TTL-Schedule, 40 zusaetzliche Tests |
-| M10 | Outbound-Adapter Hardening | Ausstehend | |
+| M10 | Outbound-Adapter Hardening | Abgeschlossen | Zustell-Lebenszyklus mit `DELIVERING`, Attempt-Bookkeeping, Idempotency-Header an ePro, 408/425/429 retryable, nutzerbezogene race-sichere Idempotenz, Dead-Letter-Tabelle + `/v1/ops/*`, Pull-TTL-Watch, `X-One-Shot`-Header, Workflow-Timeout 10 h, Failover-Runbook, 30 zusaetzliche Tests (inkl. echter Workflow auf Temporal-Testserver) |
 | M11 | Lokaler LLM-Adapter & Paritaetstests | Ausstehend | |
 | M12 | UAT-Paket & Uebergabe | Ausstehend | |
 

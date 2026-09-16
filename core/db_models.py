@@ -14,6 +14,7 @@ from sqlalchemy import (
     LargeBinary,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -57,6 +58,10 @@ class ApiKeyModel(Base):
 
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # M10: grants access to /v1/ops/* (job overview, dead letters). Default False.
+    is_admin: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -110,12 +115,68 @@ class JobMetadata(Base):
     report_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     workflow_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    idempotency_key: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, unique=True, index=True
-    )
+    # M10: idempotency is scoped per user (see UniqueConstraint below), so two
+    # tenants can reuse the same key without leaking each other's job ids.
+    idempotency_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     delivery_mode: Mapped[str] = mapped_column(String(10), nullable=False, default="pull")
     script_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     extra_metadata: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    # M10: outbound delivery bookkeeping (metadata only, Pflichtenheft Anhang 2
+    # ``AuditMetadata.delivery``). ``delivery_status`` values:
+    # pending | delivering | delivered | failed | dead_lettered
+    delivery_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending", server_default="pending"
+    )
+    delivery_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    delivery_last_status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    delivery_last_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_job_metadata_user_idempotency"),
+    )
+
+
+class DeliveryDeadLetter(Base):
+    """Dead-letter record for a delivery that definitively failed (M10).
+
+    Content-free by design: the report itself is deleted on failure
+    (Delete-on-Delivery, Pflichtenheft §4.2). What remains is enough for
+    operations to investigate and for ePro to re-trigger the check.
+    """
+
+    __tablename__ = "delivery_dead_letters"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    job_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, index=True)
+    report_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    project_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    delivery_mode: Mapped[str] = mapped_column(String(10), nullable=False, default="push")
+    # retry_window_exhausted | hard_4xx | pull_ttl_expired | delivery_failed
+    reason: Mapped[str] = mapped_column(String(50), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    webhook_sent: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    acknowledged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    acknowledged_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    note: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<DeliveryDeadLetter(id={self.id}, job_id={self.job_id}, reason={self.reason})>"
 
 
 class ReportMetadata(Base):

@@ -20,10 +20,12 @@ from workflows.activities import (
     aggregate_report_activity,
     aggregate_script_activity,
     analyze_scene_risk_activity,
+    check_report_retrieved_activity,
     cleanup_buffer_activity,
     deliver_report_activity,
     extract_pdf_text_activity,
     parse_fdx_activity,
+    record_dead_letter_activity,
     send_delivery_failed_webhook_activity,
     split_scenes_activity,
     structure_scene_llm_activity,
@@ -92,6 +94,9 @@ async def main() -> None:
                 # M08 -- failure-branch helpers
                 cleanup_buffer_activity,
                 send_delivery_failed_webhook_activity,
+                # M10 -- outbound hardening
+                record_dead_letter_activity,
+                check_report_retrieved_activity,
                 # M09 -- maintenance
                 kb_cleanup_expired_activity,
             ],

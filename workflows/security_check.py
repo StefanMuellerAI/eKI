@@ -34,10 +34,12 @@ with workflow.unsafe.imports_passed_through():
         aggregate_report_activity,
         aggregate_script_activity,
         analyze_scene_risk_activity,
+        check_report_retrieved_activity,
         cleanup_buffer_activity,
         deliver_report_activity,
         extract_pdf_text_activity,
         parse_fdx_activity,
+        record_dead_letter_activity,
         send_delivery_failed_webhook_activity,
         split_scenes_activity,
         structure_scene_llm_activity,
@@ -71,6 +73,11 @@ _RETRY_DELIVERY = RetryPolicy(
 # zurueckgegeben (siehe ``deliver_report_activity``).
 _DELIVERY_SCHEDULE_TO_CLOSE = timedelta(hours=6)
 _DELIVERY_START_TO_CLOSE_PER_ATTEMPT = timedelta(minutes=5)
+# M10: Pull-Modus -- so lange darf der Report unabgeholt im Buffer liegen,
+# bevor Loeschung + Webhook + Dead Letter greifen (Pflichtenheft Abnahmetest 4
+# gilt fuer beide Lieferwege). Der Wert wird beim Workflow-Start in job_data
+# eingefroren (``buffer_ttl_seconds``); Fallback = 6h.
+_DEFAULT_PULL_TTL_SECONDS = 6 * 3600
 
 
 def _resolve_concurrency(job_data: dict[str, Any], key: str) -> int:
@@ -471,6 +478,7 @@ class SecurityCheckWorkflow:
         delivery_result: dict[str, Any] | None = None
         delivery_failure_reason: str | None = None
         delivery_attempts: int = 0
+        delivery_mode = str(delivery_config.get("delivery_mode") or "pull")
 
         try:
             delivery_result = await workflow.execute_activity(
@@ -481,16 +489,17 @@ class SecurityCheckWorkflow:
                 retry_policy=_RETRY_DELIVERY,
             )
             logger.info(
-                "Report delivered: %s (mode=%s)",
+                "Report delivered: %s (mode=%s, attempts=%s)",
                 delivery_result.get("delivered"),
                 delivery_result.get("delivery_mode"),
+                delivery_result.get("attempts_used"),
             )
         except Exception as exc:
             # Retry-Fenster (6h) erschoepft -- Pflichtenheft Abnahmetest 4.
             # Wir loggen nur den Exception-Typ, NICHT die Nachricht, damit
             # keine Reportinhalte ins Log gelangen koennen.
             delivery_failure_reason = "retry_window_exhausted"
-            delivery_attempts = -1  # unbekannt von hier aus
+            delivery_attempts = -1  # echte Zahl steht in job_metadata.delivery_attempts
             logger.error(
                 "Report delivery exhausted 6h retry window: job=%s report=%s exc_type=%s",
                 job_id,
@@ -519,7 +528,25 @@ class SecurityCheckWorkflow:
                 attempts=delivery_attempts,
                 workflow_id=workflow_id,
                 total_findings=report_result.get("total_findings", 0),
+                delivery_mode="push",
+                last_status_code=(delivery_result or {}).get("status_code"),
             )
+
+        # M10: Pull-TTL-Watch. Der Workflow bleibt (als durable Timer) offen,
+        # bis der Report abgeholt wurde oder die Buffer-TTL abgelaufen ist.
+        # Nicht abgeholt => Loeschung + Dead Letter + Webhook (Abnahmetest 4).
+        if delivery_mode == "pull" and delivery_result is not None:
+            ttl_seconds = int(job_data.get("buffer_ttl_seconds") or _DEFAULT_PULL_TTL_SECONDS)
+            pull_result = await self._watch_pull_retrieval(
+                job_id=job_id,
+                report_id=report_id,
+                report_ref_key=report_ref_key,
+                ttl_seconds=ttl_seconds,
+                workflow_id=workflow_id,
+                total_findings=report_result.get("total_findings", 0),
+            )
+            if pull_result is not None:
+                return pull_result
 
         return {
             "status": "completed",
@@ -527,8 +554,62 @@ class SecurityCheckWorkflow:
             "total_findings": report_result.get("total_findings"),
             "delivered": delivery_result.get("delivered") if delivery_result else False,
             "delivery_mode": delivery_result.get("delivery_mode") if delivery_result else None,
+            "delivery_attempts": (delivery_result or {}).get("attempts_used"),
             "workflow_id": workflow_id,
         }
+
+    async def _watch_pull_retrieval(
+        self,
+        *,
+        job_id: str,
+        report_id: str,
+        report_ref_key: str,
+        ttl_seconds: int,
+        workflow_id: str,
+        total_findings: int,
+    ) -> dict[str, Any] | None:
+        """Wait for the pull TTL, then verify the one-shot GET happened.
+
+        Returns ``None`` when the report was retrieved (happy path) or a
+        ``delivery_failed`` result after running the failure branch.
+        """
+        await workflow.sleep(timedelta(seconds=max(1, ttl_seconds)))
+
+        try:
+            check = await workflow.execute_activity(
+                check_report_retrieved_activity,
+                {"report_id": report_id},
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=_RETRY_STANDARD,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Pull retrieval check failed (assuming retrieved, TTL reaps buffer): "
+                "job=%s exc_type=%s",
+                job_id,
+                type(exc).__name__,
+            )
+            return None
+
+        if check.get("retrieved", False):
+            return None
+
+        logger.warning(
+            "Pull report not retrieved within TTL, running failure branch: job=%s report=%s",
+            job_id,
+            report_id,
+        )
+        return await self._handle_delivery_failure(
+            job_id=job_id,
+            report_id=report_id,
+            report_ref_key=report_ref_key,
+            reason="pull_ttl_expired",
+            attempts=0,
+            workflow_id=workflow_id,
+            total_findings=total_findings,
+            delivery_mode="pull",
+            last_status_code=None,
+        )
 
     async def _handle_delivery_failure(
         self,
@@ -540,13 +621,16 @@ class SecurityCheckWorkflow:
         attempts: int,
         workflow_id: str,
         total_findings: int,
+        delivery_mode: str = "push",
+        last_status_code: int | None = None,
     ) -> dict[str, Any]:
-        """Centralised handling of definitive delivery failures (M08).
+        """Centralised handling of definitive delivery failures (M08 + M10).
 
         Macht in dieser Reihenfolge:
         1. Buffer-Cleanup (Inhalt aus eKI loeschen).
         2. JobMetadata auf ``failed`` setzen, mit inhaltsarmer Fehlermeldung.
-        3. security.delivery.failed Webhook (opt-in via EPRO_WEBHOOK_URL).
+        3. Dead Letter persistieren (M10, inhaltsarm, fuer Ops/Alerting).
+        4. security.delivery.failed Webhook (opt-in via EPRO_WEBHOOK_URL).
 
         Alle drei Schritte sind best-effort. Schlaegt einer fehl, fahren
         die anderen trotzdem fort, weil die Information moeglichst auch
@@ -579,8 +663,9 @@ class SecurityCheckWorkflow:
         )
 
         # 3) Webhook (opt-in)
+        webhook_sent = False
         try:
-            await workflow.execute_activity(
+            webhook_result = await workflow.execute_activity(
                 send_delivery_failed_webhook_activity,
                 {
                     "job_id": job_id,
@@ -591,9 +676,33 @@ class SecurityCheckWorkflow:
                 start_to_close_timeout=timedelta(minutes=2),
                 retry_policy=_RETRY_STANDARD,
             )
+            webhook_sent = bool((webhook_result or {}).get("sent", False))
         except Exception as exc:
             logger.warning(
                 "Failure-branch webhook dispatch failed (non-fatal): job=%s exc_type=%s",
+                job_id,
+                type(exc).__name__,
+            )
+
+        # 4) Dead Letter (M10) -- nach dem Webhook, damit webhook_sent stimmt.
+        try:
+            await workflow.execute_activity(
+                record_dead_letter_activity,
+                {
+                    "job_id": job_id,
+                    "report_id": report_id,
+                    "reason": reason,
+                    "attempts": attempts if attempts >= 0 else None,
+                    "delivery_mode": delivery_mode,
+                    "last_status_code": last_status_code,
+                    "webhook_sent": webhook_sent,
+                },
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=_RETRY_STANDARD,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failure-branch dead-letter record failed (non-fatal): job=%s exc_type=%s",
                 job_id,
                 type(exc).__name__,
             )
@@ -603,7 +712,7 @@ class SecurityCheckWorkflow:
             "report_id": report_id,
             "total_findings": total_findings,
             "delivered": False,
-            "delivery_mode": "push",
+            "delivery_mode": delivery_mode,
             "failure_reason": reason,
             "workflow_id": workflow_id,
         }
