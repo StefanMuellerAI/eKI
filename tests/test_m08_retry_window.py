@@ -52,8 +52,13 @@ class TestWorkflowFailureBranchWiring:
         # nach self in der aktuellen Implementierung):
         params = sig.parameters
         expected = {
-            "job_id", "report_id", "report_ref_key", "reason",
-            "attempts", "workflow_id", "total_findings",
+            "job_id",
+            "report_id",
+            "report_ref_key",
+            "reason",
+            "attempts",
+            "workflow_id",
+            "total_findings",
         }
         assert expected.issubset(set(params.keys())), (
             f"Erwartete Parameter fehlen: {expected - set(params.keys())}"

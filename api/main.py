@@ -7,17 +7,16 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from pydantic import ValidationError
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
-
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from pydantic import ValidationError
 
 from api.config import get_settings
 from api.dependencies import verify_api_key
 from api.routers import health, knowledge_base, security
-from core.exceptions import EKIException
 from core.db_models import ApiKeyModel
+from core.exceptions import EKIException
 from core.logging_config import configure_logging, set_request_id
 from core.models import (
     AsyncSecurityCheckRequest,
@@ -25,6 +24,7 @@ from core.models import (
     ErrorResponse,
     SecurityCheckRequest,
 )
+from core.version import __version__
 
 # M08: zentrale Logging-Konfiguration. Setzt strukturierte JSON-Logs
 # (Default) oder Console-Renderer (LOG_FORMAT=console) und installiert
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan manager for startup and shutdown events."""
     settings = get_settings()
-    logger.info(f"Starting eKI API v0.6.0 in {settings.env} environment")
+    logger.info(f"Starting eKI API v{__version__} in {settings.env} environment")
 
     # Startup: Initialize connections, etc.
     logger.info("Application startup complete")
@@ -54,7 +54,7 @@ settings = get_settings()
 app = FastAPI(
     title="eKI API",
     description="KI-gestützte Sicherheitsprüfung für Drehbücher - Filmakademie Baden-Württemberg",
-    version="0.6.0",
+    version=__version__,
     docs_url="/docs" if settings.debug else None,  # Hide in production
     redoc_url="/redoc" if settings.debug else None,  # Hide in production
     openapi_url="/openapi.json" if settings.debug else None,  # Hide in production
@@ -261,7 +261,7 @@ if settings.metrics_enabled:
 async def root() -> dict[str, str]:
     """Root endpoint redirect to docs."""
     return {
-        "message": "eKI API v0.6.0",
+        "message": f"eKI API v{__version__}",
         "docs": "/docs",
         "redoc": "/redoc",
         "openapi": "/openapi.json",
@@ -338,9 +338,7 @@ def _custom_openapi() -> dict:
     schemas = openapi_schema.setdefault("components", {}).setdefault("schemas", {})
 
     for model_cls in (SecurityCheckRequest, AsyncSecurityCheckRequest):
-        model_schema = model_cls.model_json_schema(
-            ref_template="#/components/schemas/{model}"
-        )
+        model_schema = model_cls.model_json_schema(ref_template="#/components/schemas/{model}")
         for def_name, def_body in model_schema.pop("$defs", {}).items():
             schemas.setdefault(def_name, def_body)
         schemas[model_cls.__name__] = model_schema

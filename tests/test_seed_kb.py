@@ -48,9 +48,9 @@ def test_parse_frontmatter_extracts_title_and_tags(seed_module) -> None:
     text = (
         "---\n"
         'title: "Stunt-SOP (Platzhalter)"\n'
-        'source: PLACEHOLDER\n'
+        "source: PLACEHOLDER\n"
         'tags: ["placeholder", "stunt"]\n'
-        'ttl_hours: 8760\n'
+        "ttl_hours: 8760\n"
         "---\n"
         "\nBody text here.\n"
     )
@@ -92,7 +92,9 @@ def test_seed_placeholders_uploads_all_files_and_counts_skips(seed_module) -> No
 
 
 def test_wipe_placeholders_calls_tag_delete(seed_module) -> None:
-    delete_mock = MagicMock(return_value=_fake_response(200, {"deleted": True, "tag": "placeholder", "count": 6}))
+    delete_mock = MagicMock(
+        return_value=_fake_response(200, {"deleted": True, "tag": "placeholder", "count": 6})
+    )
     with patch.object(seed_module.requests, "delete", delete_mock):
         rc = seed_module.cmd_wipe_placeholders("http://test", "eki_test")
 
@@ -109,8 +111,18 @@ def test_status_groups_placeholders_and_real(seed_module, capsys) -> None:
             {
                 "total_returned": 3,
                 "documents": [
-                    {"doc_id": "a", "title": "Stunt-SOP", "tags": ["placeholder", "stunt"], "chunk_count": 4},
-                    {"doc_id": "b", "title": "Fire", "tags": ["placeholder", "fire"], "chunk_count": 3},
+                    {
+                        "doc_id": "a",
+                        "title": "Stunt-SOP",
+                        "tags": ["placeholder", "stunt"],
+                        "chunk_count": 4,
+                    },
+                    {
+                        "doc_id": "b",
+                        "title": "Fire",
+                        "tags": ["placeholder", "fire"],
+                        "chunk_count": 3,
+                    },
                     {"doc_id": "c", "title": "Real Doc", "tags": ["official"], "chunk_count": 7},
                 ],
             },
@@ -127,16 +139,20 @@ def test_status_groups_placeholders_and_real(seed_module, capsys) -> None:
 
 
 def test_reseed_wipes_then_ingests_real(seed_module, tmp_path) -> None:
-    delete_mock = MagicMock(return_value=_fake_response(200, {"deleted": True, "tag": "placeholder", "count": 6}))
+    delete_mock = MagicMock(
+        return_value=_fake_response(200, {"deleted": True, "tag": "placeholder", "count": 6})
+    )
     post_mock = MagicMock(return_value=_fake_response(201, {"doc_id": "abc"}))
 
     fake_real_dir = tmp_path / "real"
     fake_real_dir.mkdir()
     (fake_real_dir / "official.md").write_text("# real safety doc\n", encoding="utf-8")
 
-    with patch.object(seed_module, "REAL_DIR", fake_real_dir), patch.object(
-        seed_module.requests, "delete", delete_mock
-    ), patch.object(seed_module.requests, "post", post_mock):
+    with (
+        patch.object(seed_module, "REAL_DIR", fake_real_dir),
+        patch.object(seed_module.requests, "delete", delete_mock),
+        patch.object(seed_module.requests, "post", post_mock),
+    ):
         rc = seed_module.cmd_reseed("http://test", "eki_test")
 
     assert rc == 0

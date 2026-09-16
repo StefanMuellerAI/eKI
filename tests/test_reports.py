@@ -1,13 +1,8 @@
 """Tests for M05: Report generator, PDF generation, delivery modes, and idempotency."""
 
 import base64
-import json
-from datetime import datetime
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
-
-import pytest
 
 from services.report_generator import (
     build_report_dict,
@@ -16,7 +11,6 @@ from services.report_generator import (
     generate_pdf_base64,
     generate_pdf_report,
 )
-
 
 # ===================================================================
 # Report Builder
@@ -28,18 +22,47 @@ class TestBuildReportDict:
 
     def test_builds_complete_report(self):
         findings = [
-            {"risk_level": "critical", "category": "PHYSICAL", "description": "Fire risk",
-             "recommendation": "Fire dept", "risk_class": "FIRE", "rule_id": "SEC-P-008",
-             "likelihood": 4, "impact": 5, "confidence": 0.9, "scene_number": "1",
-             "measures": [{"code": "FIRE-DEPT", "title": "Feuerwehr", "responsible": "Prod", "due": "1d"}]},
-            {"risk_level": "high", "category": "PHYSICAL", "description": "Height risk",
-             "recommendation": "Safety harness", "risk_class": "HEIGHT", "rule_id": "SEC-P-006",
-             "likelihood": 3, "impact": 4, "confidence": 0.85, "scene_number": "2",
-             "measures": []},
-            {"risk_level": "low", "category": "ENVIRONMENTAL", "description": "Noise",
-             "recommendation": "Hearing protection", "risk_class": "NOISE", "rule_id": "SEC-E-004",
-             "likelihood": 2, "impact": 1, "confidence": 0.7, "scene_number": "3",
-             "measures": []},
+            {
+                "risk_level": "critical",
+                "category": "PHYSICAL",
+                "description": "Fire risk",
+                "recommendation": "Fire dept",
+                "risk_class": "FIRE",
+                "rule_id": "SEC-P-008",
+                "likelihood": 4,
+                "impact": 5,
+                "confidence": 0.9,
+                "scene_number": "1",
+                "measures": [
+                    {"code": "FIRE-DEPT", "title": "Feuerwehr", "responsible": "Prod", "due": "1d"}
+                ],
+            },
+            {
+                "risk_level": "high",
+                "category": "PHYSICAL",
+                "description": "Height risk",
+                "recommendation": "Safety harness",
+                "risk_class": "HEIGHT",
+                "rule_id": "SEC-P-006",
+                "likelihood": 3,
+                "impact": 4,
+                "confidence": 0.85,
+                "scene_number": "2",
+                "measures": [],
+            },
+            {
+                "risk_level": "low",
+                "category": "ENVIRONMENTAL",
+                "description": "Noise",
+                "recommendation": "Hearing protection",
+                "risk_class": "NOISE",
+                "rule_id": "SEC-E-004",
+                "likelihood": 2,
+                "impact": 1,
+                "confidence": 0.7,
+                "scene_number": "3",
+                "measures": [],
+            },
         ]
 
         report = build_report_dict(
@@ -71,18 +94,42 @@ class TestBuildReportDict:
         )
 
         assert report["total_findings"] == 0
-        assert report["risk_summary"] == {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+        assert report["risk_summary"] == {
+            "critical": 0,
+            "high": 0,
+            "medium": 0,
+            "low": 0,
+            "info": 0,
+        }
 
     def test_risk_summary_counts_correctly(self):
         findings = [
-            {"risk_level": "critical", "description": "a", "recommendation": "b", "category": "PHYSICAL"},
-            {"risk_level": "critical", "description": "c", "recommendation": "d", "category": "PHYSICAL"},
-            {"risk_level": "medium", "description": "e", "recommendation": "f", "category": "ENVIRONMENTAL"},
+            {
+                "risk_level": "critical",
+                "description": "a",
+                "recommendation": "b",
+                "category": "PHYSICAL",
+            },
+            {
+                "risk_level": "critical",
+                "description": "c",
+                "recommendation": "d",
+                "category": "PHYSICAL",
+            },
+            {
+                "risk_level": "medium",
+                "description": "e",
+                "recommendation": "f",
+                "category": "ENVIRONMENTAL",
+            },
         ]
 
         report = build_report_dict(
-            report_id="r", project_id="p", script_format="fdx",
-            findings=findings, processing_time_seconds=1.0,
+            report_id="r",
+            project_id="p",
+            script_format="fdx",
+            findings=findings,
+            processing_time_seconds=1.0,
         )
 
         assert report["risk_summary"]["critical"] == 2
@@ -121,8 +168,18 @@ class TestPDFGeneration:
                     "confidence": 0.95,
                     "scene_number": "3",
                     "measures": [
-                        {"code": "SFX-CLEARANCE", "title": "SFX-Freigabe", "responsible": "SFX Supervisor", "due": "shooting-5d"},
-                        {"code": "FIRE-DEPT", "title": "Feuerwehr-Standby", "responsible": "Production", "due": "shooting-1d"},
+                        {
+                            "code": "SFX-CLEARANCE",
+                            "title": "SFX-Freigabe",
+                            "responsible": "SFX Supervisor",
+                            "due": "shooting-5d",
+                        },
+                        {
+                            "code": "FIRE-DEPT",
+                            "title": "Feuerwehr-Standby",
+                            "responsible": "Production",
+                            "due": "shooting-1d",
+                        },
                     ],
                 },
                 {
@@ -142,7 +199,12 @@ class TestPDFGeneration:
                     "confidence": 0.8,
                     "scene_number": "5",
                     "measures": [
-                        {"code": "PSY-BRIEFING", "title": "Psychologisches Briefing", "responsible": "Production", "due": "shooting-0d"},
+                        {
+                            "code": "PSY-BRIEFING",
+                            "title": "Psychologisches Briefing",
+                            "responsible": "Production",
+                            "due": "shooting-0d",
+                        },
                     ],
                 },
             ],
@@ -242,10 +304,11 @@ class TestRequestExtensions:
     """Tests for delivery and idempotency_key fields."""
 
     def test_default_delivery_is_pull(self):
-        from core.models import SecurityCheckRequest
-
         # Minimal valid request
         import base64
+
+        from core.models import SecurityCheckRequest
+
         content = base64.b64encode(b"<FinalDraft><Content></Content></FinalDraft>").decode()
         req = SecurityCheckRequest(
             script_content=content,
@@ -256,9 +319,10 @@ class TestRequestExtensions:
         assert req.idempotency_key is None
 
     def test_delivery_push(self):
+        import base64
+
         from core.models import SecurityCheckRequest
 
-        import base64
         content = base64.b64encode(b"<FinalDraft><Content></Content></FinalDraft>").decode()
         req = SecurityCheckRequest(
             script_content=content,
@@ -281,6 +345,7 @@ class TestDBModelExtensions:
 
     def test_job_metadata_has_idempotency_key(self):
         from core.db_models import JobMetadata
+
         # Verify the column exists by creating an instance
         job = JobMetadata(
             job_id=uuid4(),
@@ -295,6 +360,7 @@ class TestDBModelExtensions:
 
     def test_report_metadata_has_ref_key(self):
         from core.db_models import ReportMetadata
+
         report = ReportMetadata(
             report_id=uuid4(),
             job_id=uuid4(),
@@ -311,6 +377,7 @@ class TestDBModelExtensions:
 
     def test_job_metadata_has_script_id(self):
         from core.db_models import JobMetadata
+
         job = JobMetadata(
             job_id=uuid4(),
             project_id="test",
@@ -323,6 +390,7 @@ class TestDBModelExtensions:
 
     def test_job_metadata_script_id_nullable(self):
         from core.db_models import JobMetadata
+
         job = JobMetadata(
             job_id=uuid4(),
             project_id="test",
@@ -342,22 +410,28 @@ class TestComputeEproStatus:
     """Tests for compute_epro_status (0/1 mapping for ePro API)."""
 
     def test_returns_1_for_critical_findings(self):
-        report = {"findings": [
-            {"risk_level": "critical", "description": "Fire"},
-        ]}
+        report = {
+            "findings": [
+                {"risk_level": "critical", "description": "Fire"},
+            ]
+        }
         assert compute_epro_status(report) == 1
 
     def test_returns_1_for_high_findings(self):
-        report = {"findings": [
-            {"risk_level": "high", "description": "Height"},
-        ]}
+        report = {
+            "findings": [
+                {"risk_level": "high", "description": "Height"},
+            ]
+        }
         assert compute_epro_status(report) == 1
 
     def test_returns_0_for_medium_only(self):
-        report = {"findings": [
-            {"risk_level": "medium", "description": "Noise"},
-            {"risk_level": "low", "description": "Minor"},
-        ]}
+        report = {
+            "findings": [
+                {"risk_level": "medium", "description": "Noise"},
+                {"risk_level": "low", "description": "Minor"},
+            ]
+        }
         assert compute_epro_status(report) == 0
 
     def test_returns_0_for_empty_findings(self):
@@ -367,11 +441,13 @@ class TestComputeEproStatus:
         assert compute_epro_status({}) == 0
 
     def test_returns_1_when_mixed_levels(self):
-        report = {"findings": [
-            {"risk_level": "low", "description": "a"},
-            {"risk_level": "info", "description": "b"},
-            {"risk_level": "high", "description": "c"},
-        ]}
+        report = {
+            "findings": [
+                {"risk_level": "low", "description": "a"},
+                {"risk_level": "info", "description": "b"},
+                {"risk_level": "high", "description": "c"},
+            ]
+        }
         assert compute_epro_status(report) == 1
 
 
@@ -382,23 +458,39 @@ class TestGenerateAssessmentText:
         if findings is None:
             findings = [
                 {
-                    "risk_level": "critical", "category": "PHYSICAL",
-                    "risk_class": "FIRE", "rule_id": "SEC-P-008",
-                    "description": "Building on fire.", "recommendation": "Fire dept.",
-                    "scene_number": "3", "measures": [
-                        {"code": "FIRE-DEPT", "title": "Feuerwehr", "responsible": "Prod", "due": "1d"},
+                    "risk_level": "critical",
+                    "category": "PHYSICAL",
+                    "risk_class": "FIRE",
+                    "rule_id": "SEC-P-008",
+                    "description": "Building on fire.",
+                    "recommendation": "Fire dept.",
+                    "scene_number": "3",
+                    "measures": [
+                        {
+                            "code": "FIRE-DEPT",
+                            "title": "Feuerwehr",
+                            "responsible": "Prod",
+                            "due": "1d",
+                        },
                     ],
                 },
                 {
-                    "risk_level": "low", "category": "ENVIRONMENTAL",
-                    "risk_class": "NOISE", "rule_id": "SEC-E-004",
-                    "description": "Loud noise.", "recommendation": "Ear protection.",
-                    "scene_number": "5", "measures": [],
+                    "risk_level": "low",
+                    "category": "ENVIRONMENTAL",
+                    "risk_class": "NOISE",
+                    "rule_id": "SEC-E-004",
+                    "description": "Loud noise.",
+                    "recommendation": "Ear protection.",
+                    "scene_number": "5",
+                    "measures": [],
                 },
             ]
         return build_report_dict(
-            report_id="r1", project_id="42", script_format="fdx",
-            findings=findings, processing_time_seconds=10.0,
+            report_id="r1",
+            project_id="42",
+            script_format="fdx",
+            findings=findings,
+            processing_time_seconds=10.0,
         )
 
     def test_contains_project_id(self):
@@ -448,6 +540,7 @@ class TestRequestScriptId:
 
     def test_script_id_default_none(self):
         from core.models import SecurityCheckRequest
+
         content = base64.b64encode(b"<FinalDraft><Content></Content></FinalDraft>").decode()
         req = SecurityCheckRequest(
             script_content=content,
@@ -458,6 +551,7 @@ class TestRequestScriptId:
 
     def test_script_id_set(self):
         from core.models import SecurityCheckRequest
+
         content = base64.b64encode(b"<FinalDraft><Content></Content></FinalDraft>").decode()
         req = SecurityCheckRequest(
             script_content=content,
@@ -469,6 +563,7 @@ class TestRequestScriptId:
 
     def test_script_id_negative_one(self):
         from core.models import SecurityCheckRequest
+
         content = base64.b64encode(b"<FinalDraft><Content></Content></FinalDraft>").decode()
         req = SecurityCheckRequest(
             script_content=content,

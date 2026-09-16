@@ -9,7 +9,8 @@ Revises: d4b7e9f23a01
 Create Date: 2026-05-21 17:45:00.000000
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
+from typing import Union
 
 import sqlalchemy as sa
 from alembic import op

@@ -75,7 +75,7 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, object], str]:
             meta[key] = int(value)
         else:
             meta[key] = value
-    body = text[match.end():]
+    body = text[match.end() :]
     return meta, body
 
 
@@ -127,7 +127,9 @@ def cmd_seed_placeholders(api_url: str, api_key: str) -> int:
     if not PLACEHOLDER_DIR.exists():
         print(f"Error: {PLACEHOLDER_DIR} not found")
         return 2
-    files = sorted(p for p in PLACEHOLDER_DIR.iterdir() if p.suffix.lower() in (".md", ".markdown", ".txt"))
+    files = sorted(
+        p for p in PLACEHOLDER_DIR.iterdir() if p.suffix.lower() in (".md", ".markdown", ".txt")
+    )
     if not files:
         print(f"No placeholder files found in {PLACEHOLDER_DIR}")
         return 1
@@ -145,7 +147,8 @@ def cmd_seed_placeholders(api_url: str, api_key: str) -> int:
             tags.append(PLACEHOLDER_TAG)
         ttl_hours = int(meta.get("ttl_hours") or 8760)
         ok, msg = _upload(
-            api_url, api_key,
+            api_url,
+            api_key,
             filename=path.name,
             file_bytes=raw.encode("utf-8"),
             title=title,
@@ -181,7 +184,8 @@ def cmd_add(
         return 2
     raw = path.read_bytes()
     ok, msg = _upload(
-        api_url, api_key,
+        api_url,
+        api_key,
         filename=path.name,
         file_bytes=raw,
         title=title,
@@ -222,8 +226,7 @@ def cmd_reseed(api_url: str, api_key: str) -> int:
         print(f"No {REAL_DIR}/ directory found; nothing to ingest")
         return 0
     files = sorted(
-        p for p in REAL_DIR.iterdir()
-        if p.suffix.lower() in (".pdf", ".md", ".markdown", ".txt")
+        p for p in REAL_DIR.iterdir() if p.suffix.lower() in (".pdf", ".md", ".markdown", ".txt")
     )
     if not files:
         print(f"No real documents found in {REAL_DIR}/")
@@ -234,7 +237,8 @@ def cmd_reseed(api_url: str, api_key: str) -> int:
         raw = path.read_bytes()
         title = path.stem.replace("_", " ").replace("-", " ")
         ok, msg = _upload(
-            api_url, api_key,
+            api_url,
+            api_key,
             filename=path.name,
             file_bytes=raw,
             title=title[:255],
@@ -367,7 +371,8 @@ def main() -> int:
             return 2
         tags = [t.strip() for t in args.tags.split(",") if t.strip()]
         return cmd_add(
-            args.url, args.key,
+            args.url,
+            args.key,
             path=Path(args.add),
             title=args.title,
             tags=tags,

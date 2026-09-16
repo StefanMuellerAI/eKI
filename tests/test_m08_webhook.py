@@ -50,12 +50,14 @@ class TestWebhookOptIn:
         """Default OFF -- Activity darf gar keine HTTP-Verbindung machen."""
         with patch("api.config.get_settings", return_value=_settings(epro_webhook_url="")):
             with patch("httpx.AsyncClient") as mock_client_class:
-                result = await send_delivery_failed_webhook_activity({
-                    "job_id": str(uuid4()),
-                    "report_id": str(uuid4()),
-                    "reason": "retry_window_exhausted",
-                    "attempts": 5,
-                })
+                result = await send_delivery_failed_webhook_activity(
+                    {
+                        "job_id": str(uuid4()),
+                        "report_id": str(uuid4()),
+                        "reason": "retry_window_exhausted",
+                        "attempts": 5,
+                    }
+                )
 
         assert result["sent"] is False
         assert result["reason"] == "no_webhook_url"
@@ -64,12 +66,14 @@ class TestWebhookOptIn:
     async def test_no_http_call_when_url_whitespace(self):
         with patch("api.config.get_settings", return_value=_settings(epro_webhook_url="   ")):
             with patch("httpx.AsyncClient") as mock_client_class:
-                result = await send_delivery_failed_webhook_activity({
-                    "job_id": str(uuid4()),
-                    "report_id": str(uuid4()),
-                    "reason": "hard_4xx",
-                    "attempts": 1,
-                })
+                result = await send_delivery_failed_webhook_activity(
+                    {
+                        "job_id": str(uuid4()),
+                        "report_id": str(uuid4()),
+                        "reason": "hard_4xx",
+                        "attempts": 1,
+                    }
+                )
 
         assert result["sent"] is False
         mock_client_class.assert_not_called()
@@ -79,15 +83,19 @@ class TestWebhookOptIn:
 class TestWebhookSuccess:
     async def test_success_2xx_returns_sent_true(self):
         client, _ = _http_client(status_code=201)
-        with patch("api.config.get_settings",
-                   return_value=_settings(epro_webhook_url="https://epro/x/delivery-failed")):
+        with patch(
+            "api.config.get_settings",
+            return_value=_settings(epro_webhook_url="https://epro/x/delivery-failed"),
+        ):
             with patch("httpx.AsyncClient", return_value=client):
-                result = await send_delivery_failed_webhook_activity({
-                    "job_id": "job-1",
-                    "report_id": "rep-1",
-                    "reason": "retry_window_exhausted",
-                    "attempts": 7,
-                })
+                result = await send_delivery_failed_webhook_activity(
+                    {
+                        "job_id": "job-1",
+                        "report_id": "rep-1",
+                        "reason": "retry_window_exhausted",
+                        "attempts": 7,
+                    }
+                )
 
         assert result["sent"] is True
         assert result["status_code"] == 201
@@ -95,16 +103,20 @@ class TestWebhookSuccess:
 
     async def test_payload_contains_exactly_four_keys(self):
         client, _ = _http_client(status_code=200)
-        with patch("api.config.get_settings",
-                   return_value=_settings(epro_webhook_url="https://epro/x/delivery-failed")):
+        with patch(
+            "api.config.get_settings",
+            return_value=_settings(epro_webhook_url="https://epro/x/delivery-failed"),
+        ):
             with patch("httpx.AsyncClient", return_value=client):
-                await send_delivery_failed_webhook_activity({
-                    "job_id": "job-2",
-                    "report_id": "rep-2",
-                    "reason": "hard_4xx",
-                    "attempts": 1,
-                    "extra_inside": "must_be_ignored",
-                })
+                await send_delivery_failed_webhook_activity(
+                    {
+                        "job_id": "job-2",
+                        "report_id": "rep-2",
+                        "reason": "hard_4xx",
+                        "attempts": 1,
+                        "extra_inside": "must_be_ignored",
+                    }
+                )
 
         call_kwargs = client.post.call_args.kwargs
         payload = call_kwargs.get("json")
@@ -117,15 +129,22 @@ class TestWebhookSuccess:
 
     async def test_auth_header_sent_when_token_set(self):
         client, _ = _http_client(status_code=200)
-        with patch("api.config.get_settings", return_value=_settings(
-            epro_webhook_url="https://epro/x/delivery-failed",
-            epro_auth_token="bearer-xyz",
-        )):
+        with patch(
+            "api.config.get_settings",
+            return_value=_settings(
+                epro_webhook_url="https://epro/x/delivery-failed",
+                epro_auth_token="bearer-xyz",
+            ),
+        ):
             with patch("httpx.AsyncClient", return_value=client):
-                await send_delivery_failed_webhook_activity({
-                    "job_id": "j", "report_id": "r",
-                    "reason": "hard_4xx", "attempts": 1,
-                })
+                await send_delivery_failed_webhook_activity(
+                    {
+                        "job_id": "j",
+                        "report_id": "r",
+                        "reason": "hard_4xx",
+                        "attempts": 1,
+                    }
+                )
 
         headers = client.post.call_args.kwargs.get("headers", {})
         assert headers["Authorization"] == "Bearer bearer-xyz"
@@ -136,14 +155,20 @@ class TestWebhookSuccess:
 class TestWebhookFailure:
     async def test_5xx_triggers_internal_retries_then_gives_up(self):
         client, _ = _http_client(status_code=503)
-        with patch("api.config.get_settings",
-                   return_value=_settings(epro_webhook_url="https://epro/x/delivery-failed")):
+        with patch(
+            "api.config.get_settings",
+            return_value=_settings(epro_webhook_url="https://epro/x/delivery-failed"),
+        ):
             with patch("httpx.AsyncClient", return_value=client):
                 with patch("asyncio.sleep", new=AsyncMock(return_value=None)):
-                    result = await send_delivery_failed_webhook_activity({
-                        "job_id": "j", "report_id": "r",
-                        "reason": "retry_window_exhausted", "attempts": 5,
-                    })
+                    result = await send_delivery_failed_webhook_activity(
+                        {
+                            "job_id": "j",
+                            "report_id": "r",
+                            "reason": "retry_window_exhausted",
+                            "attempts": 5,
+                        }
+                    )
 
         assert result["sent"] is False
         assert result["status_code"] == 503
@@ -154,14 +179,20 @@ class TestWebhookFailure:
         """Webhook-Activity darf NIE selbst raisen -- der Workflow-Failure-
         Branch darf nicht erneut faillen."""
         client, _ = _http_client(raise_on_post=ConnectionError("DNS down"))
-        with patch("api.config.get_settings",
-                   return_value=_settings(epro_webhook_url="https://epro/x/delivery-failed")):
+        with patch(
+            "api.config.get_settings",
+            return_value=_settings(epro_webhook_url="https://epro/x/delivery-failed"),
+        ):
             with patch("httpx.AsyncClient", return_value=client):
                 with patch("asyncio.sleep", new=AsyncMock(return_value=None)):
-                    result = await send_delivery_failed_webhook_activity({
-                        "job_id": "j", "report_id": "r",
-                        "reason": "retry_window_exhausted", "attempts": 5,
-                    })
+                    result = await send_delivery_failed_webhook_activity(
+                        {
+                            "job_id": "j",
+                            "report_id": "r",
+                            "reason": "retry_window_exhausted",
+                            "attempts": 5,
+                        }
+                    )
 
         assert result["sent"] is False
         assert result["attempts_used"] == 3

@@ -26,16 +26,23 @@ def _push_report_package() -> dict[str, Any]:
             "created_at": "2026-03-24T12:00:00",
             "risk_summary": {"critical": 0, "high": 0, "medium": 0, "low": 1, "info": 0},
             "total_findings": 1,
-            "findings": [{
-                "id": str(uuid4()), "scene_number": "1",
-                "risk_level": "low", "category": "ENVIRONMENTAL",
-                "risk_class": "NOISE", "rule_id": "SEC-E-004",
-                "likelihood": 1, "impact": 1,
-                "description": "Low-level finding",
-                "recommendation": "Ear protection",
-                "measures": [], "confidence": 0.7,
-                "evidence": "loud machinery",
-            }],
+            "findings": [
+                {
+                    "id": str(uuid4()),
+                    "scene_number": "1",
+                    "risk_level": "low",
+                    "category": "ENVIRONMENTAL",
+                    "risk_class": "NOISE",
+                    "rule_id": "SEC-E-004",
+                    "likelihood": 1,
+                    "impact": 1,
+                    "description": "Low-level finding",
+                    "recommendation": "Ear protection",
+                    "measures": [],
+                    "confidence": 0.7,
+                    "evidence": "loud machinery",
+                }
+            ],
             "processing_time_seconds": 1.0,
             "metadata": {},
         },
@@ -81,15 +88,21 @@ class TestPushDeletesBufferAfter2xx:
 
         report_ref_key = "eki:buf:report-xyz"
 
-        with patch("workflows.activities._get_buffer", return_value=buf), \
-             patch("httpx.AsyncClient", return_value=mock_client), \
-             patch("api.config.get_settings", return_value=_settings()):
+        with (
+            patch("workflows.activities._get_buffer", return_value=buf),
+            patch("httpx.AsyncClient", return_value=mock_client),
+            patch("api.config.get_settings", return_value=_settings()),
+        ):
             result = await deliver_report_activity(
-                {"report_ref_key": report_ref_key, "report_id": str(uuid4()),
-                 "total_findings": 1},
-                {"delivery_mode": "push", "job_id": str(uuid4()),
-                 "project_id": "75", "user_id": "u",
-                 "script_format": "fdx", "script_id": 7},
+                {"report_ref_key": report_ref_key, "report_id": str(uuid4()), "total_findings": 1},
+                {
+                    "delivery_mode": "push",
+                    "job_id": str(uuid4()),
+                    "project_id": "75",
+                    "user_id": "u",
+                    "script_format": "fdx",
+                    "script_id": 7,
+                },
             )
 
         assert result["delivered"] is True
@@ -117,15 +130,20 @@ class TestPushDeletesBufferAfter2xx:
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch("workflows.activities._get_buffer", return_value=buf), \
-             patch("httpx.AsyncClient", return_value=mock_client), \
-             patch("api.config.get_settings", return_value=_settings()):
+        with (
+            patch("workflows.activities._get_buffer", return_value=buf),
+            patch("httpx.AsyncClient", return_value=mock_client),
+            patch("api.config.get_settings", return_value=_settings()),
+        ):
             result = await deliver_report_activity(
-                {"report_ref_key": "eki:buf:abc", "report_id": str(uuid4()),
-                 "total_findings": 1},
-                {"delivery_mode": "push", "job_id": str(uuid4()),
-                 "project_id": "75", "user_id": "u",
-                 "script_format": "fdx"},
+                {"report_ref_key": "eki:buf:abc", "report_id": str(uuid4()), "total_findings": 1},
+                {
+                    "delivery_mode": "push",
+                    "job_id": str(uuid4()),
+                    "project_id": "75",
+                    "user_id": "u",
+                    "script_format": "fdx",
+                },
             )
 
         assert result["delivered"] is False
@@ -140,7 +158,10 @@ class TestPullEndpointDeletesBufferAfterRetrieval:
     sofort geloescht."""
 
     async def test_get_report_invokes_buffer_delete_after_2xx(
-        self, client, db_session, auth_headers,
+        self,
+        client,
+        db_session,
+        auth_headers,
     ):
         """End-to-end ueber den FastAPI-TestClient."""
         from datetime import datetime
@@ -174,7 +195,8 @@ class TestPullEndpointDeletesBufferAfterRetrieval:
 
         with patch("api.routers.security.SecureBuffer", return_value=fake_buffer):
             resp = client.get(
-                f"/v1/security/reports/{report_id}", headers=auth_headers,
+                f"/v1/security/reports/{report_id}",
+                headers=auth_headers,
             )
 
         assert resp.status_code == 200
@@ -183,6 +205,7 @@ class TestPullEndpointDeletesBufferAfterRetrieval:
         # Zweite Anfrage muss 410 liefern (One-Shot).
         with patch("api.routers.security.SecureBuffer", return_value=fake_buffer):
             resp2 = client.get(
-                f"/v1/security/reports/{report_id}", headers=auth_headers,
+                f"/v1/security/reports/{report_id}",
+                headers=auth_headers,
             )
         assert resp2.status_code == 410

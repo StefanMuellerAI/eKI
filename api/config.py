@@ -37,7 +37,8 @@ class Settings(BaseSettings):
     debug: bool = Field(default=False, description="Debug mode")
 
     # API Configuration
-    api_host: str = Field(default="0.0.0.0", description="API host")
+    # Container-internal bind; the host port mapping is the actual exposure boundary.
+    api_host: str = Field(default="0.0.0.0", description="API host")  # nosec B104
     api_port: int = Field(default=8000, description="API port")
     api_workers: int = Field(default=4, description="Number of worker processes")
     api_reload: bool = Field(default=False, description="Auto-reload on code changes")
@@ -229,7 +230,8 @@ class Settings(BaseSettings):
 
     # Delivery
     delivery_mode: str = Field(
-        default="pull", description="Default delivery mode: 'pull' (One-Shot GET) or 'push' (POST to ePro)"
+        default="pull",
+        description="Default delivery mode: 'pull' (One-Shot GET) or 'push' (POST to ePro)",
     )
 
     # Transient Buffer
@@ -312,8 +314,7 @@ class Settings(BaseSettings):
         default=500,
         ge=1,
         description=(
-            "Obergrenze für PDF-Seiten beim Parsing. Vor M07 Modul-Konstante "
-            "in parsers/pdf.py."
+            "Obergrenze für PDF-Seiten beim Parsing. Vor M07 Modul-Konstante in parsers/pdf.py."
         ),
     )
     max_pdf_size_bytes: int = Field(
@@ -336,8 +337,7 @@ class Settings(BaseSettings):
         default=20,
         ge=1,
         description=(
-            "Temporal Worker Cap für gleichzeitige Activities. Vor M07 "
-            "in worker/main.py hardcoded."
+            "Temporal Worker Cap für gleichzeitige Activities. Vor M07 in worker/main.py hardcoded."
         ),
     )
     worker_max_concurrent_workflow_tasks: int = Field(
@@ -410,10 +410,7 @@ class Settings(BaseSettings):
             )
         allowed = {"mistral_cloud", "local_mistral", "ollama"}
         if value not in allowed:
-            raise ValueError(
-                f"Invalid LLM_PROVIDER='{v}'. "
-                f"Valid options: {sorted(allowed)}."
-            )
+            raise ValueError(f"Invalid LLM_PROVIDER='{v}'. Valid options: {sorted(allowed)}.")
         return value
 
     @model_validator(mode="before")
@@ -424,7 +421,8 @@ class Settings(BaseSettings):
             return data
 
         settings = dict(data)
-        file_mapping = {
+        # Field *names*, not secret values (Bandit B105 false positive).
+        file_mapping = {  # nosec B105
             "database_url_file": "database_url",
             "api_secret_key_file": "api_secret_key",
             "epro_auth_token_file": "epro_auth_token",

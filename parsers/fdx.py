@@ -8,17 +8,17 @@ import logging
 import time
 from collections import defaultdict
 from uuid import uuid4
-from xml.etree.ElementTree import Element
+
+# Element is used for type annotations only; all parsing goes through defusedxml.
+from xml.etree.ElementTree import Element  # nosec B405
 
 from core.exceptions import ParsingException
 from core.models import (
     CharacterInfo,
     DialogueLine,
-    LocationType,
     ParsedScene,
     ParsedScript,
     ScriptFormat,
-    TimeOfDay,
 )
 from parsers.base import ParserBase
 from parsers.scene_heading import parse_scene_heading
@@ -151,9 +151,7 @@ class FDXParser(ParserBase):
         return scenes
 
     @classmethod
-    def _finalize_scene(
-        cls, heading_el: Element, body_paras: list[Element]
-    ) -> ParsedScene:
+    def _finalize_scene(cls, heading_el: Element, body_paras: list[Element]) -> ParsedScene:
         """Build a ``ParsedScene`` from its heading element and body paragraphs."""
         heading_text = _paragraph_text(heading_el)
         number = heading_el.get("Number")

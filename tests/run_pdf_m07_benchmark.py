@@ -39,7 +39,6 @@ from pathlib import Path
 
 import requests
 
-
 CONTAINERS = ["eki-api", "eki-worker", "eki-ollama"]
 POLL_INTERVAL_SEC = 15
 STATS_INTERVAL_SEC = 10
@@ -89,11 +88,16 @@ class DockerStatsCollector(threading.Thread):
                 try:
                     proc = subprocess.run(
                         [
-                            "docker", "stats", "--no-stream", "--format",
+                            "docker",
+                            "stats",
+                            "--no-stream",
+                            "--format",
                             "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}",
                             *CONTAINERS,
                         ],
-                        capture_output=True, text=True, timeout=15,
+                        capture_output=True,
+                        text=True,
+                        timeout=15,
                     )
                     ts = datetime.utcnow().isoformat()
                     if proc.returncode == 0:
@@ -102,13 +106,15 @@ class DockerStatsCollector(threading.Thread):
                             if len(parts) == 4:
                                 writer.writerow([ts, *parts])
                                 fh.flush()
-                                self.rows.append({
-                                    "timestamp": ts,
-                                    "container": parts[0],
-                                    "cpu_pct": parts[1],
-                                    "mem_usage": parts[2],
-                                    "mem_pct": parts[3],
-                                })
+                                self.rows.append(
+                                    {
+                                        "timestamp": ts,
+                                        "container": parts[0],
+                                        "cpu_pct": parts[1],
+                                        "mem_usage": parts[2],
+                                        "mem_pct": parts[3],
+                                    }
+                                )
                 except Exception as exc:
                     print(f"  [warn] docker stats failed: {exc}", file=sys.stderr)
                 self._stop.wait(self.interval)
@@ -158,15 +164,11 @@ def submit_pdf(pdf_path: Path, api_base: str, api_key: str) -> str:
             timeout=60,
         )
     if resp.status_code != 202:
-        raise RuntimeError(
-            f"Submit failed: HTTP {resp.status_code} -- {resp.text[:300]}"
-        )
+        raise RuntimeError(f"Submit failed: HTTP {resp.status_code} -- {resp.text[:300]}")
     return resp.json()["job_id"]
 
 
-def poll_until_done(
-    job_id: str, api_base: str, api_key: str, timeout_sec: int
-) -> dict:
+def poll_until_done(job_id: str, api_base: str, api_key: str, timeout_sec: int) -> dict:
     """Poll the job until completion or timeout. Return final status payload."""
     headers = {"Authorization": f"Bearer {api_key}"}
     t0 = time.monotonic()
@@ -191,9 +193,7 @@ def poll_until_done(
         status = data.get("status", "unknown")
         progress = data.get("progress_percentage", 0) or 0
         if progress != last_progress:
-            print(
-                f"  [{_fmt_time(elapsed)}] status={status} progress={progress}%"
-            )
+            print(f"  [{_fmt_time(elapsed)}] status={status} progress={progress}%")
             last_progress = progress
         if status in ("completed", "failed"):
             data["elapsed"] = elapsed
@@ -201,9 +201,7 @@ def poll_until_done(
         time.sleep(POLL_INTERVAL_SEC)
 
 
-def fetch_report(
-    report_id: str, api_base: str, api_key: str
-) -> dict | None:
+def fetch_report(report_id: str, api_base: str, api_key: str) -> dict | None:
     """One-shot fetch of the report for findings count."""
     try:
         r = requests.get(
@@ -238,10 +236,7 @@ def main() -> int:
         "--concurrency",
         type=int,
         default=int(os.environ.get("OLLAMA_MAX_CONCURRENT_REQUESTS", "1")),
-        help=(
-            "Expected Ollama concurrency cap (informational, for "
-            "acceptance check)."
-        ),
+        help=("Expected Ollama concurrency cap (informational, for acceptance check)."),
     )
     parser.add_argument(
         "--timeout-sec",
@@ -304,22 +299,18 @@ def main() -> int:
         result.job_id = job_id
         print(f"  job_id = {job_id}")
 
-        final = poll_until_done(
-            job_id, args.api_base, args.key, args.timeout_sec
-        )
+        final = poll_until_done(job_id, args.api_base, args.key, args.timeout_sec)
         result.elapsed_sec = round(final.get("elapsed", time.monotonic() - t0), 1)
         result.status = final.get("status", "unknown")
         result.report_id = final.get("report_id")
 
         if result.status == "completed" and result.report_id:
-            print(f"Job completed in {_fmt_time(result.elapsed_sec)}. "
-                  "Fetching report...")
+            print(f"Job completed in {_fmt_time(result.elapsed_sec)}. Fetching report...")
             report = fetch_report(result.report_id, args.api_base, args.key)
             if report:
                 report_inner = report.get("report") or report
-                result.total_findings = (
-                    report_inner.get("total_findings", 0)
-                    or len(report_inner.get("findings", []))
+                result.total_findings = report_inner.get("total_findings", 0) or len(
+                    report_inner.get("findings", [])
                 )
         elif result.status == "failed":
             result.error = final.get("error_message") or "unknown failure"
@@ -336,38 +327,41 @@ def main() -> int:
     # Akzeptanz-Check
     passed_time = result.elapsed_sec > 0 and result.elapsed_sec < ACCEPTANCE_LIMIT_SEC
     passed_findings = result.total_findings > 0
-    result.acceptance_passed = (
-        result.status == "completed"
-        and passed_time
-        and passed_findings
-    )
+    result.acceptance_passed = result.status == "completed" and passed_time and passed_findings
 
     with json_path.open("w") as fh:
-        json.dump({
-            "pdf_path": result.pdf_path,
-            "pdf_size_mb": result.pdf_size_mb,
-            "expected_concurrency": result.expected_concurrency,
-            "job_id": result.job_id,
-            "report_id": result.report_id,
-            "status": result.status,
-            "elapsed_sec": result.elapsed_sec,
-            "total_findings": result.total_findings,
-            "error": result.error,
-            "stats_csv": result.stats_csv,
-            "stats_summary": result.stats_summary,
-            "acceptance": {
-                "limit_sec": ACCEPTANCE_LIMIT_SEC,
-                "passed_time": passed_time,
-                "passed_findings": passed_findings,
-                "passed_overall": result.acceptance_passed,
+        json.dump(
+            {
+                "pdf_path": result.pdf_path,
+                "pdf_size_mb": result.pdf_size_mb,
+                "expected_concurrency": result.expected_concurrency,
+                "job_id": result.job_id,
+                "report_id": result.report_id,
+                "status": result.status,
+                "elapsed_sec": result.elapsed_sec,
+                "total_findings": result.total_findings,
+                "error": result.error,
+                "stats_csv": result.stats_csv,
+                "stats_summary": result.stats_summary,
+                "acceptance": {
+                    "limit_sec": ACCEPTANCE_LIMIT_SEC,
+                    "passed_time": passed_time,
+                    "passed_findings": passed_findings,
+                    "passed_overall": result.acceptance_passed,
+                },
             },
-        }, fh, indent=2, ensure_ascii=False)
+            fh,
+            indent=2,
+            ensure_ascii=False,
+        )
 
     print()
     print("=" * 70)
     print(f" Status:        {result.status}")
-    print(f" Elapsed:       {_fmt_time(result.elapsed_sec)}  "
-          f"(limit: {_fmt_time(ACCEPTANCE_LIMIT_SEC)})")
+    print(
+        f" Elapsed:       {_fmt_time(result.elapsed_sec)}  "
+        f"(limit: {_fmt_time(ACCEPTANCE_LIMIT_SEC)})"
+    )
     print(f" Findings:      {result.total_findings}")
     if result.error:
         print(f" Error:         {result.error}")
@@ -381,9 +375,7 @@ def main() -> int:
                 f"avg {s['mem_avg_pct']:>5.1f}%"
             )
     print("=" * 70)
-    print(
-        f" ACCEPTANCE: {'PASSED' if result.acceptance_passed else 'FAILED'}"
-    )
+    print(f" ACCEPTANCE: {'PASSED' if result.acceptance_passed else 'FAILED'}")
     print("=" * 70)
 
     return 0 if result.acceptance_passed else 1

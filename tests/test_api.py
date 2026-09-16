@@ -5,6 +5,9 @@ import base64
 import pytest
 from fastapi import status
 
+from core.version import __version__
+from tests.conftest import MINIMAL_PDF_BYTES
+
 
 class TestHealthEndpoints:
     """Tests for health check endpoints."""
@@ -16,7 +19,7 @@ class TestHealthEndpoints:
         data = response.json()
         assert data["status"] == "healthy"
         assert "timestamp" in data
-        assert data["version"] == "0.1.0"
+        assert data["version"] == __version__
 
     @pytest.mark.asyncio
     async def test_readiness_check(self, client, auth_headers):
@@ -79,9 +82,9 @@ class TestSecurityEndpoints:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
     @pytest.mark.asyncio
-    async def test_async_check_success(self, client, auth_headers):
+    async def test_async_check_success(self, client, auth_headers, mock_temporal):
         """Test asynchronous security check with valid data."""
-        script_content = base64.b64encode(b"Large test script content").decode()
+        script_content = base64.b64encode(MINIMAL_PDF_BYTES).decode()
 
         payload = {
             "script_content": script_content,
@@ -96,6 +99,10 @@ class TestSecurityEndpoints:
         assert "job_id" in data
         assert data["status"] == "pending"
         assert "status_url" in data
+        assert len(mock_temporal.started) == 1
+        job_data = mock_temporal.started[0]["args"][1]
+        assert job_data["priority"] == 3
+        assert "script_content" not in job_data
 
     @pytest.mark.asyncio
     async def test_get_job_status(self, client, auth_headers):
@@ -180,3 +187,16 @@ class TestValidation:
 
         response = client.post("/v1/security/check:async", json=payload, headers=auth_headers)
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert "priority" in response.json()["message"].lower()
+
+    @pytest.mark.asyncio
+    async def test_invalid_priority_multipart(self, client, auth_headers):
+        """Priority bounds are enforced on the multipart path as well."""
+        response = client.post(
+            "/v1/security/check:async",
+            files={"file": ("script.pdf", MINIMAL_PDF_BYTES, "application/pdf")},
+            data={"project_id": "test-project-123", "priority": "0"},
+            headers=auth_headers,
+        )
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert "priority" in response.json()["message"].lower()

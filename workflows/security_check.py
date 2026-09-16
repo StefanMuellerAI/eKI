@@ -22,8 +22,9 @@ damit auch parallele Workflows die LLM-Last nie über
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -156,7 +157,11 @@ class SecurityCheckWorkflow:
         return results
 
     async def _update_job(
-        self, job_id: str, status: str, progress: int | None = None, error: str | None = None,
+        self,
+        job_id: str,
+        status: str,
+        progress: int | None = None,
+        error: str | None = None,
     ) -> None:
         """Best-effort job status update -- never fails the workflow."""
         if not job_id:
@@ -271,9 +276,7 @@ class SecurityCheckWorkflow:
         # Step 3: LLM structuring per block -- progress 8% -> 50%.
         # Optionaler Parallel-Pfad (M07): per pdf_structure_concurrency und
         # gating durch llm_parallel_enabled. Default = strikt sequenziell.
-        structure_concurrency = _resolve_concurrency(
-            job_data, "pdf_structure_concurrency"
-        )
+        structure_concurrency = _resolve_concurrency(job_data, "pdf_structure_concurrency")
         activity_timeout = _resolve_activity_timeout(job_data)
         blocks_ref_key = split_result["blocks_ref_key"]
         last_reported_pct = 8
@@ -317,15 +320,15 @@ class SecurityCheckWorkflow:
 
         logger.info(
             "LLM structured %d scenes (concurrency=%d)",
-            len(scene_ref_keys), structure_concurrency,
+            len(scene_ref_keys),
+            structure_concurrency,
         )
 
         # Collect extraction warnings
         extraction_warnings = text_result.get("extraction_warnings", [])
         if used_page_fallback:
             extraction_warnings.append(
-                "No scene markers (INT/EXT) found. "
-                "Falling back to page-by-page splitting."
+                "No scene markers (INT/EXT) found. Falling back to page-by-page splitting."
             )
 
         # Step 4: Aggregate into ParsedScript (programmatic, no LLM)
@@ -489,9 +492,10 @@ class SecurityCheckWorkflow:
             delivery_failure_reason = "retry_window_exhausted"
             delivery_attempts = -1  # unbekannt von hier aus
             logger.error(
-                "Report delivery exhausted 6h retry window: job=%s "
-                "report=%s exc_type=%s",
-                job_id, report_id, type(exc).__name__,
+                "Report delivery exhausted 6h retry window: job=%s report=%s exc_type=%s",
+                job_id,
+                report_id,
+                type(exc).__name__,
             )
 
         # 4xx-Hard-Fail: Activity hat ohne Retry zurueckgegeben.
@@ -562,9 +566,9 @@ class SecurityCheckWorkflow:
                 )
             except Exception as exc:
                 logger.warning(
-                    "Failure-branch buffer cleanup failed (non-fatal): "
-                    "job=%s exc_type=%s",
-                    job_id, type(exc).__name__,
+                    "Failure-branch buffer cleanup failed (non-fatal): job=%s exc_type=%s",
+                    job_id,
+                    type(exc).__name__,
                 )
 
         # 2) Job-Status auf failed
@@ -589,9 +593,9 @@ class SecurityCheckWorkflow:
             )
         except Exception as exc:
             logger.warning(
-                "Failure-branch webhook dispatch failed (non-fatal): "
-                "job=%s exc_type=%s",
-                job_id, type(exc).__name__,
+                "Failure-branch webhook dispatch failed (non-fatal): job=%s exc_type=%s",
+                job_id,
+                type(exc).__name__,
             )
 
         return {

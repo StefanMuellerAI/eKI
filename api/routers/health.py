@@ -13,6 +13,7 @@ from api.config import get_settings
 from api.dependencies import get_db, get_redis, verify_api_key
 from core.db_models import ApiKeyModel
 from core.models import HealthResponse, ReadinessResponse
+from core.version import __version__
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ async def health_check() -> HealthResponse:
     return HealthResponse(
         status="healthy",
         timestamp=datetime.utcnow(),
-        version="0.6.0",
+        version=__version__,
     )
 
 

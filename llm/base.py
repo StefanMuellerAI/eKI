@@ -84,9 +84,7 @@ class BaseLLMProvider(ABC):
 
         Subclasses override this when they expose an embedding endpoint.
         """
-        raise NotImplementedError(
-            f"{self.provider_name} does not implement embeddings"
-        )
+        raise NotImplementedError(f"{self.provider_name} does not implement embeddings")
 
     @property
     @abstractmethod

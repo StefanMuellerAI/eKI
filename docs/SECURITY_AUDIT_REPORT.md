@@ -50,9 +50,9 @@ import hashlib
 from datetime import datetime, timedelta
 import jwt
 
+
 async def verify_api_key(
-    authorization: str | None = Header(None),
-    settings: Settings = Depends(get_settings_dependency)
+    authorization: str | None = Header(None), settings: Settings = Depends(get_settings_dependency)
 ) -> dict[str, Any]:
     """Verify API key with JWT or HMAC validation."""
     if not authorization:
@@ -73,33 +73,22 @@ async def verify_api_key(
 
     try:
         # Option 1: JWT Validation
-        payload = jwt.decode(
-            token,
-            settings.api_secret_key,
-            algorithms=["HS256"]
-        )
+        payload = jwt.decode(token, settings.api_secret_key, algorithms=["HS256"])
 
         # Check expiration
         if datetime.fromtimestamp(payload.get("exp", 0)) < datetime.utcnow():
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token expired"
-            )
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
 
         return payload
 
     except jwt.InvalidTokenError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token"
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 ```
 
 **Alternative: API Key Database:**
 ```python
 async def verify_api_key(
-    authorization: str | None = Header(None),
-    db: AsyncSession = Depends(get_db)
+    authorization: str | None = Header(None), db: AsyncSession = Depends(get_db)
 ) -> ApiKey:
     """Verify API key against database."""
     # ... extract token ...
@@ -111,14 +100,13 @@ async def verify_api_key(
     stmt = select(ApiKeyModel).where(
         ApiKeyModel.key_hash == token_hash,
         ApiKeyModel.is_active == True,
-        ApiKeyModel.expires_at > datetime.utcnow()
+        ApiKeyModel.expires_at > datetime.utcnow(),
     )
     api_key = await db.scalar(stmt)
 
     if not api_key:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired API key"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired API key"
         )
 
     # Update last_used_at
@@ -152,24 +140,22 @@ User A kann mit `GET /v1/security/jobs/{user_b_job_id}` auf Jobs von User B zugr
 from fastapi import Depends
 from sqlalchemy import select
 
+
 async def get_job_status(
-    job_id: uuid.UUID,
-    api_key: ApiKey = Depends(verify_api_key),
-    db: AsyncSession = Depends(get_db)
+    job_id: uuid.UUID, api_key: ApiKey = Depends(verify_api_key), db: AsyncSession = Depends(get_db)
 ) -> JobStatusResponse:
     """Get job status with authorization check."""
 
     # Query job with ownership check
     stmt = select(JobMetadata).where(
         JobMetadata.job_id == job_id,
-        JobMetadata.api_key_id == api_key.id  # Ownership check!
+        JobMetadata.api_key_id == api_key.id,  # Ownership check!
     )
     job = await db.scalar(stmt)
 
     if not job:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Job not found or access denied"
+            status_code=status.HTTP_404_NOT_FOUND, detail="Job not found or access denied"
         )
 
     return JobStatusResponse(
@@ -250,9 +236,7 @@ MISTRAL_API_KEY=<actual-key>
 
 **Problem:**
 ```python
-callback_url: str | None = Field(
-    None, description="Optional callback URL for async results"
-)
+callback_url: str | None = Field(None, description="Optional callback URL for async results")
 # Keine Validierung der URL!
 ```
 
@@ -269,6 +253,7 @@ curl -X POST /v1/security/check:async \
 from pydantic import HttpUrl, field_validator
 import ipaddress
 from urllib.parse import urlparse
+
 
 class SecurityCheckRequest(BaseModel):
     # ... other fields ...
@@ -296,22 +281,15 @@ class SecurityCheckRequest(BaseModel):
             if host:
                 ip = ipaddress.ip_address(host)
                 if ip.is_private or ip.is_loopback or ip.is_link_local:
-                    raise ValueError(
-                        "Callback URL cannot point to private IP addresses"
-                    )
+                    raise ValueError("Callback URL cannot point to private IP addresses")
         except ValueError:
             # Not an IP, it's a hostname - allow it
             pass
 
         # Whitelist of allowed domains (optional)
-        allowed_domains = [
-            "epro.filmakademie.de",
-            "epro-stage.filmakademie.de"
-        ]
+        allowed_domains = ["epro.filmakademie.de", "epro-stage.filmakademie.de"]
         if parsed.hostname not in allowed_domains:
-            raise ValueError(
-                f"Callback URL must be from allowed domains: {allowed_domains}"
-            )
+            raise ValueError(f"Callback URL must be from allowed domains: {allowed_domains}")
 
         return v
 ```
@@ -367,15 +345,14 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
         # Development: Show details
         logger.error(f"Unexpected error: {exc}", exc_info=True)
         return JSONResponse(
-            status_code=500,
-            content={"error": str(exc), "traceback": traceback.format_exc()}
+            status_code=500, content={"error": str(exc), "traceback": traceback.format_exc()}
         )
     else:
         # Production: Hide details
         logger.error(f"Unexpected error: {exc}", exc_info=True)
         return JSONResponse(
             status_code=500,
-            content={"error": "Internal server error", "request_id": str(uuid.uuid4())}
+            content={"error": "Internal server error", "request_id": str(uuid.uuid4())},
         )
 ```
 
@@ -404,6 +381,7 @@ Keine echte Base64-Validierung. Könnte Binary Data, Code Injection enthalten.
 ```python
 import base64
 
+
 @field_validator("script_content")
 @classmethod
 def validate_script_content(cls, v: str) -> str:
@@ -420,7 +398,7 @@ def validate_script_content(cls, v: str) -> str:
             raise ValueError("Decoded script exceeds 10MB limit")
 
         # Optional: Check for null bytes (potential binary exploit)
-        if b'\x00' in decoded[:100]:  # Check first 100 bytes
+        if b"\x00" in decoded[:100]:  # Check first 100 bytes
             raise ValueError("Script contains invalid characters")
 
         return v
@@ -441,7 +419,7 @@ async def generate(self, prompt: str, system_prompt: str | None = None):
     payload = {
         "model": self.model,
         "prompt": prompt,  # ❌ Unvalidated user input!
-        "system": system_prompt  # ❌ Could be overridden
+        "system": system_prompt,  # ❌ Could be overridden
     }
 ```
 
@@ -455,6 +433,7 @@ Angreifer kann mit speziellen Prompts:
 **Fix:**
 ```python
 import re
+
 
 class PromptSanitizer:
     """Sanitize prompts to prevent injection attacks."""
@@ -479,12 +458,8 @@ class PromptSanitizer:
 
         return text.strip()
 
-async def generate(
-    self,
-    prompt: str,
-    system_prompt: str | None = None,
-    **kwargs
-) -> str:
+
+async def generate(self, prompt: str, system_prompt: str | None = None, **kwargs) -> str:
     """Generate with prompt sanitization."""
 
     # Sanitize inputs
@@ -494,11 +469,7 @@ async def generate(
     if system_prompt is None:
         system_prompt = "You are a helpful assistant for film safety analysis."
 
-    payload = {
-        "model": self.model,
-        "prompt": clean_prompt,
-        "system": system_prompt
-    }
+    payload = {"model": self.model, "prompt": clean_prompt, "system": system_prompt}
     # ...
 ```
 
@@ -523,9 +494,9 @@ from typing import Union
 MetadataValue = Union[str, int, float, bool, None]
 
 metadata: dict[str, MetadataValue] = Field(
-    default_factory=dict,
-    description="Additional metadata (strings, numbers, booleans only)"
+    default_factory=dict, description="Additional metadata (strings, numbers, booleans only)"
 )
+
 
 @field_validator("metadata")
 @classmethod
@@ -536,7 +507,7 @@ def validate_metadata(cls, v: dict) -> dict:
 
     for key, value in v.items():
         # Key validation
-        if not re.match(r'^[a-zA-Z0-9_-]{1,50}$', key):
+        if not re.match(r"^[a-zA-Z0-9_-]{1,50}$", key):
             raise ValueError(f"Invalid metadata key: {key}")
 
         # Value validation
@@ -561,8 +532,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,  # ❌ Dangerous with wildcard!
-    allow_methods=["*"],     # ❌ Too permissive!
-    allow_headers=["*"],     # ❌ Too permissive!
+    allow_methods=["*"],  # ❌ Too permissive!
+    allow_headers=["*"],  # ❌ Too permissive!
 )
 ```
 
@@ -584,6 +555,7 @@ app.add_middleware(
     ],
     max_age=600,
 )
+
 
 # In config.py - validate CORS origins
 @field_validator("cors_origins", mode="before")
@@ -686,17 +658,17 @@ project_id: str = Field(
     description="eProjekt project ID",
     min_length=1,
     max_length=100,
-    pattern=r'^[a-zA-Z0-9_-]+$'  # Alphanumeric + underscore/hyphen only
+    pattern=r"^[a-zA-Z0-9_-]+$",  # Alphanumeric + underscore/hyphen only
 )
+
 
 @field_validator("project_id")
 @classmethod
 def validate_project_id(cls, v: str) -> str:
     """Validate project ID format."""
-    if not re.match(r'^[a-zA-Z0-9_-]{1,100}$', v):
+    if not re.match(r"^[a-zA-Z0-9_-]{1,100}$", v):
         raise ValueError(
-            "project_id must contain only alphanumeric characters, "
-            "hyphens, and underscores"
+            "project_id must contain only alphanumeric characters, hyphens, and underscores"
         )
     return v
 ```
@@ -711,7 +683,7 @@ def validate_project_id(cls, v: str) -> str:
 
 **Problem:**
 ```python
-details=[ErrorDetail(message=str(v)) for v in exc.details.values()],
+details = ([ErrorDetail(message=str(v)) for v in exc.details.values()],)
 ```
 
 Exception details können sensitive Informationen leaken.
@@ -725,10 +697,7 @@ async def eki_exception_handler(request: Request, exc: EKIException) -> JSONResp
     # Log full error internally
     logger.error(
         f"EKI Exception: {exc.message}",
-        extra={
-            "details": exc.details,
-            "request_id": request.headers.get("X-Request-ID")
-        }
+        extra={"details": exc.details, "request_id": request.headers.get("X-Request-ID")},
     )
 
     # Return sanitized error to client
@@ -736,10 +705,12 @@ async def eki_exception_handler(request: Request, exc: EKIException) -> JSONResp
     for key, value in exc.details.items():
         # Don't expose internal paths, keys, etc.
         if not key.startswith("_internal"):
-            sanitized_details.append(ErrorDetail(
-                field=key,
-                message=str(value)[:200]  # Truncate long messages
-            ))
+            sanitized_details.append(
+                ErrorDetail(
+                    field=key,
+                    message=str(value)[:200],  # Truncate long messages
+                )
+            )
 
     return JSONResponse(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -809,14 +780,15 @@ logger.info(f"Processing project: {request.project_id}")
 def sanitize_for_logging(value: str) -> str:
     """Sanitize string for safe logging."""
     # Remove newlines and control characters
-    return re.sub(r'[\x00-\x1f\x7f-\x9f]', '', str(value))
+    return re.sub(r"[\x00-\x1f\x7f-\x9f]", "", str(value))
+
 
 logger.info(
     "Processing project",
     extra={
         "project_id": sanitize_for_logging(request.project_id),
-        "user_id": sanitize_for_logging(actor_info.get("user_id"))
-    }
+        "user_id": sanitize_for_logging(actor_info.get("user_id")),
+    },
 )
 ```
 

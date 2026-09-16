@@ -3,7 +3,7 @@
 import io
 import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -12,11 +12,10 @@ from core.models import LocationType, ScriptFormat, TimeOfDay
 from llm.prompt_manager import PromptManager
 from parsers.pdf import PDFParser, extract_pdf_text
 from parsers.pdf_llm_structurer import (
-    SCENE_SCHEMA,
     llm_result_to_parsed_scene_fields,
     structure_scene_with_llm,
 )
-from parsers.pdf_scene_splitter import RawSceneBlock, split_by_pages, split_into_scenes
+from parsers.pdf_scene_splitter import split_by_pages, split_into_scenes
 
 PDF_FIXTURES = Path(__file__).parent / "fixtures" / "pdf"
 
@@ -131,9 +130,7 @@ class TestPDFTextExtraction:
     """Tests for parsers.pdf.extract_pdf_text."""
 
     def test_simple_extraction(self):
-        text, pages, ocr_pages, warnings = extract_pdf_text(
-            _read_pdf("simple_screenplay.pdf")
-        )
+        text, pages, ocr_pages, warnings = extract_pdf_text(_read_pdf("simple_screenplay.pdf"))
         assert len(text) > 50
         assert "LIVING ROOM" in text or "GARDEN" in text
         assert ocr_pages == []
@@ -141,18 +138,14 @@ class TestPDFTextExtraction:
         assert len(pages) >= 1
 
     def test_multi_page(self):
-        text, pages, ocr_pages, warnings = extract_pdf_text(
-            _read_pdf("multi_scene.pdf")
-        )
+        text, pages, ocr_pages, warnings = extract_pdf_text(_read_pdf("multi_scene.pdf"))
         assert "POLICE STATION" in text
         assert "BEACH" in text
         assert len(pages) >= 1
 
     def test_returns_page_texts(self):
         """Page texts list preserves per-page boundaries."""
-        text, pages, _ocr, _w = extract_pdf_text(
-            _read_pdf("no_structure_multi_page.pdf")
-        )
+        text, pages, _ocr, _w = extract_pdf_text(_read_pdf("no_structure_multi_page.pdf"))
         assert len(pages) == 4
         assert "MYSTERIOUS TALE" in pages[0]
 
@@ -261,14 +254,16 @@ class TestLLMStructurer:
     @pytest.mark.asyncio
     async def test_structure_scene_with_llm_success(self):
         mock_llm = AsyncMock()
-        mock_llm.generate_structured = AsyncMock(return_value={
-            "location": "PARK",
-            "location_type": "EXT",
-            "time_of_day": "DAY",
-            "characters": ["SARAH"],
-            "action_text": "Walking in the park.",
-            "dialogue": [{"character": "SARAH", "text": "Nice day."}],
-        })
+        mock_llm.generate_structured = AsyncMock(
+            return_value={
+                "location": "PARK",
+                "location_type": "EXT",
+                "time_of_day": "DAY",
+                "characters": ["SARAH"],
+                "action_text": "Walking in the park.",
+                "dialogue": [{"character": "SARAH", "text": "Nice day."}],
+            }
+        )
 
         result = await structure_scene_with_llm("EXT. PARK - DAY\nSarah walks.", mock_llm)
         assert result["location"] == "PARK"
@@ -306,7 +301,8 @@ class TestPromptManager:
     def test_get_risk_prompt(self):
         pm = PromptManager()
         system, user = pm.get(
-            "risk_analysis", "scene",
+            "risk_analysis",
+            "scene",
             scene_number="1",
             location="HIGHWAY",
             location_type="EXT",
@@ -346,6 +342,7 @@ class TestParserFactory:
 
     def test_pdf_parser(self):
         from parsers.base import get_parser
+
         parser = get_parser("pdf")
         assert isinstance(parser, PDFParser)
         assert parser.supported_format == ScriptFormat.PDF
@@ -353,6 +350,7 @@ class TestParserFactory:
     def test_fdx_parser_still_works(self):
         from parsers.base import get_parser
         from parsers.fdx import FDXParser
+
         parser = get_parser("fdx")
         assert isinstance(parser, FDXParser)
 
@@ -379,7 +377,7 @@ class TestSceneSplitterIntegration:
         text, _pages, _ocr, _w = extract_pdf_text(content)
 
         t0 = time.monotonic()
-        blocks = split_into_scenes(text)
+        split_into_scenes(text)
         elapsed = time.monotonic() - t0
 
         assert elapsed < 1.0, f"Splitting took {elapsed:.2f}s, should be < 1s"

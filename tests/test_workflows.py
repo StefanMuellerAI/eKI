@@ -17,7 +17,6 @@ from workflows.activities import (
     update_job_status_activity,
 )
 
-
 # ===================================================================
 # Helpers
 # ===================================================================
@@ -33,36 +32,61 @@ def _make_report_package(
     """Build a realistic report_package (as stored in Redis by aggregate_report)."""
     findings: list[dict[str, Any]] = []
     for i in range(n_critical):
-        findings.append({
-            "id": str(uuid4()), "scene_number": str(i + 1),
-            "risk_level": "critical", "category": "PHYSICAL",
-            "risk_class": "FIRE", "rule_id": "SEC-P-008",
-            "likelihood": 5, "impact": 5,
-            "description": f"Critical finding {i}",
-            "recommendation": "Immediate action required",
-            "measures": [{"code": "FIRE-DEPT", "title": "Feuerwehr", "responsible": "Prod", "due": "1d"}],
-            "confidence": 0.95, "evidence": "flames visible",
-        })
+        findings.append(
+            {
+                "id": str(uuid4()),
+                "scene_number": str(i + 1),
+                "risk_level": "critical",
+                "category": "PHYSICAL",
+                "risk_class": "FIRE",
+                "rule_id": "SEC-P-008",
+                "likelihood": 5,
+                "impact": 5,
+                "description": f"Critical finding {i}",
+                "recommendation": "Immediate action required",
+                "measures": [
+                    {"code": "FIRE-DEPT", "title": "Feuerwehr", "responsible": "Prod", "due": "1d"}
+                ],
+                "confidence": 0.95,
+                "evidence": "flames visible",
+            }
+        )
     for i in range(n_high):
-        findings.append({
-            "id": str(uuid4()), "scene_number": str(n_critical + i + 1),
-            "risk_level": "high", "category": "PHYSICAL",
-            "risk_class": "HEIGHT", "rule_id": "SEC-P-006",
-            "likelihood": 4, "impact": 4,
-            "description": f"High finding {i}",
-            "recommendation": "Safety harness", "measures": [],
-            "confidence": 0.85, "evidence": "cliff scene",
-        })
+        findings.append(
+            {
+                "id": str(uuid4()),
+                "scene_number": str(n_critical + i + 1),
+                "risk_level": "high",
+                "category": "PHYSICAL",
+                "risk_class": "HEIGHT",
+                "rule_id": "SEC-P-006",
+                "likelihood": 4,
+                "impact": 4,
+                "description": f"High finding {i}",
+                "recommendation": "Safety harness",
+                "measures": [],
+                "confidence": 0.85,
+                "evidence": "cliff scene",
+            }
+        )
     for i in range(n_low):
-        findings.append({
-            "id": str(uuid4()), "scene_number": str(n_critical + n_high + i + 1),
-            "risk_level": "low", "category": "ENVIRONMENTAL",
-            "risk_class": "NOISE", "rule_id": "SEC-E-004",
-            "likelihood": 1, "impact": 1,
-            "description": f"Low finding {i}",
-            "recommendation": "Ear protection", "measures": [],
-            "confidence": 0.7, "evidence": "loud machinery",
-        })
+        findings.append(
+            {
+                "id": str(uuid4()),
+                "scene_number": str(n_critical + n_high + i + 1),
+                "risk_level": "low",
+                "category": "ENVIRONMENTAL",
+                "risk_class": "NOISE",
+                "rule_id": "SEC-E-004",
+                "likelihood": 1,
+                "impact": 1,
+                "description": f"Low finding {i}",
+                "recommendation": "Ear protection",
+                "measures": [],
+                "confidence": 0.7,
+                "evidence": "loud machinery",
+            }
+        )
 
     risk_summary = {"critical": n_critical, "high": n_high, "medium": 0, "low": n_low, "info": 0}
     report = {
@@ -167,7 +191,9 @@ class TestDeliverReportPullMode:
 # ===================================================================
 
 
-def _setup_push_mocks(report_package, *, response_json=None, post_side_effect=None, settings_overrides=None):
+def _setup_push_mocks(
+    report_package, *, response_json=None, post_side_effect=None, settings_overrides=None
+):
     """Create all mocks needed for push-mode tests. Returns (patches_dict, mock_http_client)."""
     buf = _mock_buffer(report_package)
 
@@ -209,8 +235,14 @@ class TestDeliverReportPushMode:
         with patches["buf"], patches["httpx"], patches["settings"]:
             result = await deliver_report_activity(
                 {"report_ref_key": "eki:buf:test", "report_id": str(uuid4()), "total_findings": 2},
-                {"delivery_mode": "push", "job_id": str(uuid4()), "project_id": "75",
-                 "user_id": "testuser", "script_format": "fdx", "script_id": 123},
+                {
+                    "delivery_mode": "push",
+                    "job_id": str(uuid4()),
+                    "project_id": "75",
+                    "user_id": "testuser",
+                    "script_format": "fdx",
+                    "script_id": 123,
+                },
             )
 
         assert result["delivered"] is True
@@ -243,8 +275,13 @@ class TestDeliverReportPushMode:
         with patches["buf"], patches["httpx"], patches["settings"]:
             result = await deliver_report_activity(
                 {"report_ref_key": "eki:buf:x", "report_id": str(uuid4()), "total_findings": 1},
-                {"delivery_mode": "push", "job_id": str(uuid4()), "project_id": "99",
-                 "user_id": "u", "script_format": "fdx"},
+                {
+                    "delivery_mode": "push",
+                    "job_id": str(uuid4()),
+                    "project_id": "99",
+                    "user_id": "u",
+                    "script_format": "fdx",
+                },
             )
 
         assert result["delivered"] is True
@@ -262,15 +299,22 @@ class TestDeliverReportPushMode:
         Workflow-Failure-Branch."""
         report_package = _make_report_package()
         patches, _, buf = _setup_push_mocks(
-            report_package, post_side_effect=ConnectionError("ePro unreachable"),
+            report_package,
+            post_side_effect=ConnectionError("ePro unreachable"),
         )
 
         with patches["buf"], patches["httpx"], patches["settings"]:
             with pytest.raises(ConnectionError):
                 await deliver_report_activity(
                     {"report_ref_key": "eki:buf:x", "report_id": str(uuid4()), "total_findings": 1},
-                    {"delivery_mode": "push", "job_id": str(uuid4()), "project_id": "75",
-                     "user_id": "u", "script_format": "fdx", "script_id": 10},
+                    {
+                        "delivery_mode": "push",
+                        "job_id": str(uuid4()),
+                        "project_id": "75",
+                        "user_id": "u",
+                        "script_format": "fdx",
+                        "script_id": 10,
+                    },
                 )
 
         # Buffer bleibt erhalten -- Retry kann erneut zustellen.
@@ -301,14 +345,22 @@ class TestDeliverReportPushMode:
         mock_http_client.post = AsyncMock(return_value=mock_response)
 
         settings = _mock_settings()
-        with patch("workflows.activities._get_buffer", return_value=buf), \
-             patch("httpx.AsyncClient", return_value=mock_http_client), \
-             patch("api.config.get_settings", return_value=settings):
+        with (
+            patch("workflows.activities._get_buffer", return_value=buf),
+            patch("httpx.AsyncClient", return_value=mock_http_client),
+            patch("api.config.get_settings", return_value=settings),
+        ):
             with pytest.raises(httpx.HTTPStatusError):
                 await deliver_report_activity(
                     {"report_ref_key": "eki:buf:x", "report_id": str(uuid4()), "total_findings": 1},
-                    {"delivery_mode": "push", "job_id": str(uuid4()), "project_id": "75",
-                     "user_id": "u", "script_format": "fdx", "script_id": 10},
+                    {
+                        "delivery_mode": "push",
+                        "job_id": str(uuid4()),
+                        "project_id": "75",
+                        "user_id": "u",
+                        "script_format": "fdx",
+                        "script_id": 10,
+                    },
                 )
 
         buf.delete.assert_not_awaited()
@@ -332,13 +384,21 @@ class TestDeliverReportPushMode:
         mock_http_client.post = AsyncMock(return_value=mock_response)
 
         settings = _mock_settings()
-        with patch("workflows.activities._get_buffer", return_value=buf), \
-             patch("httpx.AsyncClient", return_value=mock_http_client), \
-             patch("api.config.get_settings", return_value=settings):
+        with (
+            patch("workflows.activities._get_buffer", return_value=buf),
+            patch("httpx.AsyncClient", return_value=mock_http_client),
+            patch("api.config.get_settings", return_value=settings),
+        ):
             result = await deliver_report_activity(
                 {"report_ref_key": "eki:buf:x", "report_id": str(uuid4()), "total_findings": 1},
-                {"delivery_mode": "push", "job_id": str(uuid4()), "project_id": "75",
-                 "user_id": "u", "script_format": "fdx", "script_id": 10},
+                {
+                    "delivery_mode": "push",
+                    "job_id": str(uuid4()),
+                    "project_id": "75",
+                    "user_id": "u",
+                    "script_format": "fdx",
+                    "script_id": 10,
+                },
             )
 
         assert result["delivered"] is False
@@ -353,14 +413,20 @@ class TestDeliverReportPushMode:
         """With empty epro_auth_token, no Authorization header should be sent."""
         report_package = _make_report_package()
         patches, mock_http, _ = _setup_push_mocks(
-            report_package, settings_overrides={"epro_auth_token": ""},
+            report_package,
+            settings_overrides={"epro_auth_token": ""},
         )
 
         with patches["buf"], patches["httpx"], patches["settings"]:
             await deliver_report_activity(
                 {"report_ref_key": "eki:buf:x", "report_id": str(uuid4()), "total_findings": 1},
-                {"delivery_mode": "push", "job_id": str(uuid4()), "project_id": "75",
-                 "user_id": "u", "script_format": "fdx"},
+                {
+                    "delivery_mode": "push",
+                    "job_id": str(uuid4()),
+                    "project_id": "75",
+                    "user_id": "u",
+                    "script_format": "fdx",
+                },
             )
 
         headers = mock_http.post.call_args.kwargs.get("headers")
@@ -370,14 +436,20 @@ class TestDeliverReportPushMode:
         """When epro_auth_token is configured, Authorization header should be present."""
         report_package = _make_report_package()
         patches, mock_http, _ = _setup_push_mocks(
-            report_package, settings_overrides={"epro_auth_token": "secret-token-123"},
+            report_package,
+            settings_overrides={"epro_auth_token": "secret-token-123"},
         )
 
         with patches["buf"], patches["httpx"], patches["settings"]:
             await deliver_report_activity(
                 {"report_ref_key": "eki:buf:x", "report_id": str(uuid4()), "total_findings": 1},
-                {"delivery_mode": "push", "job_id": str(uuid4()), "project_id": "75",
-                 "user_id": "u", "script_format": "fdx"},
+                {
+                    "delivery_mode": "push",
+                    "job_id": str(uuid4()),
+                    "project_id": "75",
+                    "user_id": "u",
+                    "script_format": "fdx",
+                },
             )
 
         headers = mock_http.post.call_args.kwargs.get("headers")

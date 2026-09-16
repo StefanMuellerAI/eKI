@@ -8,7 +8,9 @@ All XML parsing in this project MUST go through this module to prevent:
 """
 
 import logging
-from xml.etree.ElementTree import Element
+
+# Element is used for type annotations only; all parsing goes through defusedxml.
+from xml.etree.ElementTree import Element  # nosec B405
 
 from defusedxml import ElementTree as SafeET
 from defusedxml.common import DTDForbidden, EntitiesForbidden, ExternalReferenceForbidden

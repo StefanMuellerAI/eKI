@@ -60,14 +60,7 @@ def test_chunker_preserves_overlap_between_consecutive_chunks() -> None:
 
 
 def test_strip_frontmatter_removes_yaml_block() -> None:
-    text = (
-        "---\n"
-        "title: \"Stunt-SOP\"\n"
-        "tags: [\"placeholder\"]\n"
-        "---\n"
-        "\n"
-        "Body content starts here.\n"
-    )
+    text = '---\ntitle: "Stunt-SOP"\ntags: ["placeholder"]\n---\n\nBody content starts here.\n'
     stripped = KnowledgeBaseService._strip_frontmatter(text)
     assert "title" not in stripped
     assert "Body content starts here" in stripped

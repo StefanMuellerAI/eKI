@@ -8,7 +8,6 @@ plus metadata.  No screenplay content flows through Temporal history.
 import base64
 import logging
 import time
-from datetime import timedelta
 from typing import Any
 
 import redis.asyncio as aioredis
@@ -96,10 +95,12 @@ async def extract_pdf_text_activity(job_data: dict[str, Any]) -> dict[str, Any]:
 
     full_text, page_texts, ocr_pages, warnings = extract_pdf_text(content_bytes)
 
-    text_ref = await buffer.store({
-        "full_text": full_text,
-        "page_texts": page_texts,
-    })
+    text_ref = await buffer.store(
+        {
+            "full_text": full_text,
+            "page_texts": page_texts,
+        }
+    )
     await buffer.delete(ref_key)
 
     return {
@@ -127,8 +128,7 @@ async def split_scenes_activity(job_data: dict[str, Any]) -> dict[str, Any]:
     blocks = split_into_scenes(full_text, page_texts=page_texts)
 
     used_page_fallback = any(
-        not b.is_preamble and b.heading_line.startswith("PAGE ")
-        for b in blocks
+        not b.is_preamble and b.heading_line.startswith("PAGE ") for b in blocks
     )
 
     # Store all blocks as a list in Redis
@@ -207,8 +207,12 @@ async def structure_scene_llm_activity(job_data: dict[str, Any]) -> dict[str, An
         "text": block["text"],
         "fields": {
             "location": fields["location"],
-            "location_type": fields["location_type"].value if hasattr(fields["location_type"], "value") else str(fields["location_type"]),
-            "time_of_day": fields["time_of_day"].value if hasattr(fields["time_of_day"], "value") else str(fields["time_of_day"]),
+            "location_type": fields["location_type"].value
+            if hasattr(fields["location_type"], "value")
+            else str(fields["location_type"]),
+            "time_of_day": fields["time_of_day"].value
+            if hasattr(fields["time_of_day"], "value")
+            else str(fields["time_of_day"]),
             "characters": fields["characters"],
             "action_text": fields["action_text"],
             "dialogue": [
@@ -293,7 +297,9 @@ async def aggregate_script_activity(job_data: dict[str, Any]) -> dict[str, Any]:
             tod = TimeOfDay.UNKNOWN
 
         dialogue_lines = [
-            DialogueLine(character=d["character"], parenthetical=d.get("parenthetical"), text=d["text"])
+            DialogueLine(
+                character=d["character"], parenthetical=d.get("parenthetical"), text=d["text"]
+            )
             for d in f.get("dialogue", [])
         ]
 
@@ -320,8 +326,7 @@ async def aggregate_script_activity(job_data: dict[str, Any]) -> dict[str, Any]:
         for name in scene.characters:
             appearances[name].append(str(scene.scene_id))
     characters = [
-        CharacterInfo(name=name, scene_appearances=sids)
-        for name, sids in appearances.items()
+        CharacterInfo(name=name, scene_appearances=sids) for name, sids in appearances.items()
     ]
 
     avg_confidence = sum(s.parse_confidence for s in scenes) / len(scenes) if scenes else 0.0
@@ -402,9 +407,7 @@ async def update_job_status_activity(job_data: dict[str, Any]) -> dict[str, Any]
             from sqlalchemy import update
 
             await session.execute(
-                update(JobMetadata)
-                .where(JobMetadata.job_id == UUIDType(job_id))
-                .values(**values)
+                update(JobMetadata).where(JobMetadata.job_id == UUIDType(job_id)).values(**values)
             )
             await session.commit()
 
@@ -545,8 +548,13 @@ _RISK_SCHEMA: dict[str, Any] = {
                     },
                 },
                 "required": [
-                    "risk_class", "category", "likelihood", "impact",
-                    "description", "recommendation", "evidence",
+                    "risk_class",
+                    "category",
+                    "likelihood",
+                    "impact",
+                    "description",
+                    "recommendation",
+                    "evidence",
                 ],
             },
         },
@@ -601,7 +609,8 @@ async def analyze_scene_risk_activity(job_data: dict[str, Any]) -> dict[str, Any
 
         # Build prompt with taxonomy + (optional) KB context
         system_prompt, user_prompt = pm.get(
-            "risk_analysis", "scene",
+            "risk_analysis",
+            "scene",
             scene_number=scene_number,
             location=scene.get("location", "UNKNOWN"),
             location_type=scene.get("location_type", "UNKNOWN"),
@@ -654,7 +663,9 @@ async def analyze_scene_risk_activity(job_data: dict[str, Any]) -> dict[str, Any
             ]
             enriched_findings.append(f)
 
-        logger.info("Scene %s: %d findings (taxonomy-enriched)", scene_number, len(enriched_findings))
+        logger.info(
+            "Scene %s: %d findings (taxonomy-enriched)", scene_number, len(enriched_findings)
+        )
         return {
             "scene_index": scene_index,
             "scene_number": scene_number,
@@ -755,7 +766,6 @@ async def deliver_report_activity(
     try:
         from uuid import UUID as UUIDType
 
-        import asyncpg
         from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
         from api.config import get_settings
@@ -834,10 +844,7 @@ async def deliver_report_activity(
         if script_id is None:
             script_id = -1
 
-        push_url = (
-            f"{settings.epro_base_url}/eki/scl/"
-            f"set-risk-assessment/{project_id}"
-        )
+        push_url = f"{settings.epro_base_url}/eki/scl/set-risk-assessment/{project_id}"
 
         form_data = {
             "script_id": str(int(script_id)),
@@ -857,12 +864,17 @@ async def deliver_report_activity(
             # oder pdf_bytes wird geloggt -- nur Laengen/Counts.
             logger.info(
                 "Push payload: script_id=%s, status=%s, assessment=%d chars, PDF=%d bytes",
-                script_id, epro_status, len(assessment), len(pdf_bytes),
+                script_id,
+                epro_status,
+                len(assessment),
+                len(pdf_bytes),
             )
         else:
             logger.warning(
                 "Push payload: script_id=%s, status=%s, assessment=%d chars, PDF=MISSING",
-                script_id, epro_status, len(assessment),
+                script_id,
+                epro_status,
+                len(assessment),
             )
 
         headers: dict[str, str] = {}
@@ -907,7 +919,8 @@ async def deliver_report_activity(
                 # uebernimmt Buffer-Cleanup, Job-Status und Webhook.
                 logger.error(
                     "Push delivery hard-fail (HTTP %d, no retry): job=%s",
-                    status_code, delivery_config.get("job_id", ""),
+                    status_code,
+                    delivery_config.get("job_id", ""),
                 )
                 return {
                     "delivered": False,
@@ -921,7 +934,8 @@ async def deliver_report_activity(
             # 5xx -> transient, raise damit RetryPolicy greift.
             logger.warning(
                 "Push delivery 5xx, will retry (HTTP %d): job=%s",
-                status_code, delivery_config.get("job_id", ""),
+                status_code,
+                delivery_config.get("job_id", ""),
             )
             response.raise_for_status()
             # Defensiv: falls raise_for_status nichts wirft (3xx z.B.),
@@ -942,7 +956,8 @@ async def deliver_report_activity(
             # einen Auszug aus Payload-Bytes enthalten koennte. Nur Typ.
             logger.warning(
                 "Push delivery transport error, will retry: job=%s exc_type=%s",
-                delivery_config.get("job_id", ""), type(exc).__name__,
+                delivery_config.get("job_id", ""),
+                type(exc).__name__,
             )
             raise
 
@@ -989,12 +1004,15 @@ async def cleanup_buffer_activity(payload: dict[str, Any]) -> dict[str, Any]:
         logger.warning(
             "cleanup_buffer_activity: delete failed (non-fatal, "
             "TTL will reap eventually): keys=%d exc_type=%s",
-            len(ref_keys), type(exc).__name__,
+            len(ref_keys),
+            type(exc).__name__,
         )
         return {"deleted": 0, "reason": "delete_error"}
 
     logger.info(
-        "cleanup_buffer_activity: removed %d/%d keys", count, len(ref_keys),
+        "cleanup_buffer_activity: removed %d/%d keys",
+        count,
+        len(ref_keys),
     )
     return {"deleted": int(count)}
 
@@ -1050,7 +1068,10 @@ async def send_delivery_failed_webhook_activity(
         logger.info(
             "delivery.failed webhook skipped (EPRO_WEBHOOK_URL unset): "
             "job_id=%s report_id=%s reason=%s attempts=%d",
-            job_id, report_id, reason, attempts,
+            job_id,
+            report_id,
+            reason,
+            attempts,
         )
         return {"sent": False, "reason": "no_webhook_url"}
 
@@ -1077,7 +1098,10 @@ async def send_delivery_failed_webhook_activity(
                 logger.info(
                     "delivery.failed webhook delivered: job_id=%s "
                     "report_id=%s status=%d attempt=%d",
-                    job_id, report_id, response.status_code, attempt,
+                    job_id,
+                    report_id,
+                    response.status_code,
+                    attempt,
                 )
                 return {
                     "sent": True,
@@ -1087,16 +1111,18 @@ async def send_delivery_failed_webhook_activity(
             # Non-2xx -> retry
             last_error = f"HTTP {response.status_code}"
             logger.warning(
-                "delivery.failed webhook non-2xx response: job_id=%s "
-                "status=%d attempt=%d",
-                job_id, response.status_code, attempt,
+                "delivery.failed webhook non-2xx response: job_id=%s status=%d attempt=%d",
+                job_id,
+                response.status_code,
+                attempt,
             )
         except Exception as exc:
             last_error = type(exc).__name__
             logger.warning(
-                "delivery.failed webhook transport error: job_id=%s "
-                "error=%s attempt=%d",
-                job_id, last_error, attempt,
+                "delivery.failed webhook transport error: job_id=%s error=%s attempt=%d",
+                job_id,
+                last_error,
+                attempt,
             )
         if attempt < 3:
             await asyncio.sleep(2 ** (attempt - 1))
@@ -1104,7 +1130,10 @@ async def send_delivery_failed_webhook_activity(
     logger.error(
         "delivery.failed webhook gave up after 3 attempts: job_id=%s "
         "report_id=%s last_error=%s last_status=%s",
-        job_id, report_id, last_error, last_status,
+        job_id,
+        report_id,
+        last_error,
+        last_status,
     )
     return {
         "sent": False,

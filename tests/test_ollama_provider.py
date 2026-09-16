@@ -201,7 +201,7 @@ class TestStripThinkingTags:
     """Direct tests for the thinking-tag stripping helper."""
 
     def test_strips_single_tag(self) -> None:
-        text = "<think>reasoning here</think>\n{\"x\": 1}"
+        text = '<think>reasoning here</think>\n{"x": 1}'
         assert OllamaProvider._strip_thinking_tags(text) == '{"x": 1}'
 
     def test_strips_multiple_tags(self) -> None:
@@ -213,11 +213,11 @@ class TestStripThinkingTags:
         assert OllamaProvider._strip_thinking_tags(text) == '{"clean": true}'
 
     def test_is_case_insensitive(self) -> None:
-        text = "<THINK>upper</THINK>{\"x\": 1}"
+        text = '<THINK>upper</THINK>{"x": 1}'
         assert OllamaProvider._strip_thinking_tags(text) == '{"x": 1}'
 
     def test_handles_multiline_tag_content(self) -> None:
-        text = "<think>line one\nline two\nline three</think>{\"x\": 1}"
+        text = '<think>line one\nline two\nline three</think>{"x": 1}'
         assert OllamaProvider._strip_thinking_tags(text) == '{"x": 1}'
 
     def test_returns_empty_string_for_only_thinking(self) -> None:

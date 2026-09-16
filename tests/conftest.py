@@ -1,15 +1,14 @@
 """Pytest configuration and fixtures."""
 
-import asyncio
 import hashlib
 import secrets
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator
 from datetime import datetime, timedelta
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -17,13 +16,70 @@ from api.dependencies import get_db, get_redis, get_temporal_client
 from api.main import app
 from core.db_models import ApiKeyModel, Base
 
+# Minimal PDF that passes the ``%PDF`` magic-byte validator and is parseable
+# by pdfplumber. Used by API tests that need a syntactically valid PDF body.
+MINIMAL_PDF_BYTES = (
+    b"%PDF-1.4\n"
+    b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+    b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+    b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>>endobj\n"
+    b"trailer<</Root 1 0 R>>\n%%EOF\n"
+)
 
-@pytest.fixture(scope="session")
-def event_loop() -> Generator:
-    """Create event loop for async tests."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
+
+class MockRedis:
+    """In-memory stand-in for ``redis.asyncio.Redis``.
+
+    Implements the subset used by rate limiting (``incr``/``expire``/``ttl``)
+    and by ``SecureBuffer`` (``setex``/``get``/``delete``/``exists``).
+    """
+
+    def __init__(self) -> None:
+        self._store: dict[str, object] = {}
+
+    async def ping(self) -> bool:
+        return True
+
+    async def incr(self, key: str) -> int:
+        current = self._store.get(key, 0)
+        value = (current if isinstance(current, int) else 0) + 1
+        self._store[key] = value
+        return value
+
+    async def expire(self, key: str, seconds: int) -> bool:
+        return True
+
+    async def ttl(self, key: str) -> int:
+        return 60
+
+    async def setex(self, key: str, seconds: int, value: bytes | str) -> bool:
+        self._store[key] = value
+        return True
+
+    async def set(self, key: str, value: bytes | str, ex: int | None = None) -> bool:
+        self._store[key] = value
+        return True
+
+    async def get(self, key: str) -> object | None:
+        return self._store.get(key)
+
+    async def delete(self, *keys: str) -> int:
+        removed = 0
+        for key in keys:
+            if key in self._store:
+                del self._store[key]
+                removed += 1
+        return removed
+
+    async def exists(self, *keys: str) -> int:
+        return sum(1 for key in keys if key in self._store)
+
+    async def keys(self, pattern: str = "*") -> list[str]:
+        prefix = pattern.rstrip("*")
+        return [k for k in self._store if k.startswith(prefix)]
+
+    async def aclose(self) -> None:
+        pass
 
 
 @pytest.fixture(scope="session")
@@ -42,15 +98,12 @@ async def test_engine():
     )
 
     sqlite_tables = [
-        t for t in Base.metadata.sorted_tables
-        if t.name not in {"kb_documents", "kb_embeddings"}
+        t for t in Base.metadata.sorted_tables if t.name not in {"kb_documents", "kb_embeddings"}
     ]
 
     async with engine.begin() as conn:
         await conn.run_sync(
-            lambda sync_conn: Base.metadata.create_all(
-                sync_conn, tables=sqlite_tables
-            )
+            lambda sync_conn: Base.metadata.create_all(sync_conn, tables=sqlite_tables)
         )
 
     yield engine
@@ -84,50 +137,48 @@ def override_get_db(db_session):
 
 
 @pytest.fixture
-def override_get_redis():
-    """Override get_redis dependency with mock."""
+def mock_redis() -> MockRedis:
+    """Shared MockRedis instance for a single test."""
+    return MockRedis()
 
-    class MockRedis:
-        def __init__(self):
-            self._store = {}
 
-        async def ping(self):
-            return True
-
-        async def incr(self, key: str) -> int:
-            """Increment counter."""
-            self._store[key] = self._store.get(key, 0) + 1
-            return self._store[key]
-
-        async def expire(self, key: str, seconds: int) -> bool:
-            """Set expiration (no-op in mock)."""
-            return True
-
-        async def ttl(self, key: str) -> int:
-            """Get TTL (return 60 in mock)."""
-            return 60
-
-        async def aclose(self):
-            pass
+@pytest.fixture
+def override_get_redis(mock_redis: MockRedis):
+    """Override get_redis dependency with the shared in-memory mock."""
 
     async def _override():
-        yield MockRedis()
+        yield mock_redis
 
     app.dependency_overrides[get_redis] = _override
     yield
     app.dependency_overrides.clear()
 
 
+class MockTemporalClient:
+    """Temporal client stand-in that records ``start_workflow`` calls."""
+
+    def __init__(self) -> None:
+        self.started: list[dict[str, object]] = []
+
+    async def start_workflow(self, *args: object, **kwargs: object) -> object:
+        self.started.append({"args": args, "kwargs": kwargs})
+        return object()
+
+    async def close(self) -> None:
+        pass
+
+
 @pytest.fixture
-def override_get_temporal():
+def mock_temporal() -> MockTemporalClient:
+    return MockTemporalClient()
+
+
+@pytest.fixture
+def override_get_temporal(mock_temporal: MockTemporalClient):
     """Override get_temporal_client dependency with mock."""
 
-    class MockTemporalClient:
-        async def close(self):
-            pass
-
     async def _override():
-        yield MockTemporalClient()
+        yield mock_temporal
 
     app.dependency_overrides[get_temporal_client] = _override
     yield
@@ -145,7 +196,7 @@ async def async_client(
     override_get_db, override_get_redis, override_get_temporal
 ) -> AsyncGenerator[AsyncClient, None]:
     """Create async test client."""
-    async with AsyncClient(app=app, base_url="http://test") as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
 
 

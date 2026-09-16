@@ -5,7 +5,7 @@ reliable structural signal in any screenplay, regardless of formatting.
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # Matches lines that begin a new scene (DE + EN).
 # Anchored to start-of-line via MULTILINE.

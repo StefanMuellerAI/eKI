@@ -13,12 +13,9 @@ Root-Handler nach STDOUT schreibt. Klassisches ``caplog`` wuerde den
 Formatter umgehen und die Filter-Wirkung verschleiern.
 """
 
-import io
-import json
 import logging
 from types import SimpleNamespace
 
-import pytest
 import structlog
 
 from core.logging_config import (
@@ -76,8 +73,13 @@ class TestRedactionHelpers:
     def test_sensitive_filter_masks_record_extras(self):
         f = SensitiveContentFilter()
         record = logging.LogRecord(
-            name="x", level=logging.INFO, pathname="", lineno=0,
-            msg="ok", args=None, exc_info=None,
+            name="x",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="ok",
+            args=None,
+            exc_info=None,
         )
         record.text = "Klaus zueckt ein Messer."
         record.findings = [{"id": "1", "description": "Waffe"}]

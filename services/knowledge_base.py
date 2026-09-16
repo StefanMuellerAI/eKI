@@ -21,8 +21,7 @@ import io
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Any
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -49,10 +48,10 @@ _ALLOWED_EXTENSIONS = {".pdf", ".md", ".markdown", ".txt"}
 
 # Chunking parameters (Pflichtenheft §4.3: 800-1500 tokens).  We approximate
 # tokens via characters (1 token ~ 4 chars for German/English text).
-_CHUNK_CHARS_TARGET = 4800   # ~1200 tokens
-_CHUNK_CHARS_MAX = 6000      # ~1500 tokens
-_CHUNK_CHARS_MIN = 3200      # ~800 tokens
-_CHUNK_CHAR_OVERLAP = 400    # ~100 tokens of overlap between chunks
+_CHUNK_CHARS_TARGET = 4800  # ~1200 tokens
+_CHUNK_CHARS_MAX = 6000  # ~1500 tokens
+_CHUNK_CHARS_MIN = 3200  # ~800 tokens
+_CHUNK_CHAR_OVERLAP = 400  # ~100 tokens of overlap between chunks
 
 _MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB, mirrors security check upload
 
@@ -151,8 +150,7 @@ class KnowledgeBaseService:
         content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
 
         existing = await self._db.execute(
-            select(KnowledgeDocument.doc_id)
-            .where(
+            select(KnowledgeDocument.doc_id).where(
                 KnowledgeDocument.content_hash == content_hash,
                 KnowledgeDocument.tenant_id == tenant_id,
             )
@@ -167,7 +165,7 @@ class KnowledgeBaseService:
         if not chunks:
             raise ValidationException("Document produced no chunks after splitting")
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         doc = KnowledgeDocument(
             doc_id=uuid4(),
             title=title.strip()[:255],
@@ -202,7 +200,10 @@ class KnowledgeBaseService:
         await self._db.commit()
         logger.info(
             "KB ingest: doc_id=%s title=%r chunks=%d source=%s",
-            doc.doc_id, doc.title, len(chunks), doc.source,
+            doc.doc_id,
+            doc.title,
+            len(chunks),
+            doc.source,
         )
         return doc.doc_id
 
@@ -229,10 +230,8 @@ class KnowledgeBaseService:
 
         query_vec = await self._llm.embed(query_text)
 
-        now = datetime.now(timezone.utc)
-        distance_col = KnowledgeEmbedding.vector.cosine_distance(query_vec).label(
-            "distance"
-        )
+        now = datetime.now(UTC)
+        distance_col = KnowledgeEmbedding.vector.cosine_distance(query_vec).label("distance")
         stmt = (
             select(
                 KnowledgeDocument.doc_id,
@@ -322,9 +321,7 @@ class KnowledgeBaseService:
             for doc, chunk_count in rows
         ]
 
-    async def get_document(
-        self, *, doc_id: UUID, tenant_id: UUID
-    ) -> KBDocumentSummary:
+    async def get_document(self, *, doc_id: UUID, tenant_id: UUID) -> KBDocumentSummary:
         """Return metadata for a single document, raising 404 if absent."""
         stmt = select(KnowledgeDocument).where(
             KnowledgeDocument.doc_id == doc_id,
@@ -332,9 +329,7 @@ class KnowledgeBaseService:
         )
         doc = (await self._db.execute(stmt)).scalar_one_or_none()
         if doc is None:
-            raise NotFoundException(
-                "Document not found", details={"doc_id": str(doc_id)}
-            )
+            raise NotFoundException("Document not found", details={"doc_id": str(doc_id)})
         chunk_count = (
             await self._db.execute(
                 select(func.count(KnowledgeEmbedding.embedding_id)).where(
@@ -367,9 +362,7 @@ class KnowledgeBaseService:
         deleted = result.first()
         await self._db.commit()
         if deleted is None:
-            raise NotFoundException(
-                "Document not found", details={"doc_id": str(doc_id)}
-            )
+            raise NotFoundException("Document not found", details={"doc_id": str(doc_id)})
         logger.info("KB delete: doc_id=%s tenant=%s", doc_id, tenant_id)
 
     async def delete_by_tag(self, *, tenant_id: UUID, tag: str) -> int:
@@ -388,14 +381,12 @@ class KnowledgeBaseService:
         result = await self._db.execute(stmt)
         rows = result.all()
         await self._db.commit()
-        logger.info(
-            "KB delete_by_tag: tenant=%s tag=%s count=%d", tenant_id, tag, len(rows)
-        )
+        logger.info("KB delete_by_tag: tenant=%s tag=%s count=%d", tenant_id, tag, len(rows))
         return len(rows)
 
     async def cleanup_expired(self) -> int:
         """Delete documents whose ``expires_at`` is in the past.  Returns count."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         stmt = (
             delete(KnowledgeDocument)
             .where(KnowledgeDocument.expires_at <= now)
@@ -432,6 +423,7 @@ class KnowledgeBaseService:
         if ext == ".pdf":
             # Local import keeps non-PDF paths free of the heavy dependency.
             import pdfplumber
+
             try:
                 with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
                     parts = [page.extract_text() or "" for page in pdf.pages]
@@ -445,9 +437,7 @@ class KnowledgeBaseService:
         try:
             return file_bytes.decode("utf-8")
         except UnicodeDecodeError:
-            raise ValidationException(
-                "Text file is not valid UTF-8. Convert and try again."
-            )
+            raise ValidationException("Text file is not valid UTF-8. Convert and try again.")
 
     @staticmethod
     def _strip_frontmatter(text: str) -> str:
@@ -462,7 +452,7 @@ class KnowledgeBaseService:
         remainder_start = stripped.find("\n", end + 4)
         if remainder_start == -1:
             return ""
-        return stripped[remainder_start + 1:]
+        return stripped[remainder_start + 1 :]
 
     @staticmethod
     def _chunk_text(text: str) -> list[tuple[int, str]]:

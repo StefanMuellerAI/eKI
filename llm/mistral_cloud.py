@@ -255,9 +255,7 @@ class MistralCloudProvider(BaseLLMProvider):
             )
 
     @staticmethod
-    def _validate(
-        validator: Draft202012Validator, instance: dict[str, Any]
-    ) -> str | None:
+    def _validate(validator: Draft202012Validator, instance: dict[str, Any]) -> str | None:
         """Return human-readable error message, or None if valid."""
         try:
             validator.validate(instance)

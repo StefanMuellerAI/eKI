@@ -21,8 +21,8 @@ Geprüft wird:
 
 import asyncio
 import time
-from typing import Any
 from datetime import timedelta
+from typing import Any
 
 import pytest
 
@@ -31,7 +31,6 @@ from workflows.security_check import (
     _resolve_activity_timeout,
     _resolve_concurrency,
 )
-
 
 # ---------------------------------------------------------------------------
 # Gating: llm_parallel_enabled MUSS gesetzt sein, sonst immer 1
@@ -89,16 +88,14 @@ def test_resolve_activity_timeout_default_600s_for_legacy_jobs() -> None:
 
 
 def test_resolve_activity_timeout_uses_job_data_value() -> None:
-    assert _resolve_activity_timeout(
-        {"llm_activity_timeout_seconds": 1200}
-    ) == timedelta(seconds=1200)
+    assert _resolve_activity_timeout({"llm_activity_timeout_seconds": 1200}) == timedelta(
+        seconds=1200
+    )
 
 
 def test_resolve_activity_timeout_enforces_minimum_60s() -> None:
     """Sehr kleine Werte werden auf 60s gehoben (verhindert Selbst-DoS)."""
-    assert _resolve_activity_timeout(
-        {"llm_activity_timeout_seconds": 5}
-    ) == timedelta(seconds=60)
+    assert _resolve_activity_timeout({"llm_activity_timeout_seconds": 5}) == timedelta(seconds=60)
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +115,10 @@ async def test_run_indexed_sequential_preserves_order_and_calls_progress_monoton
         seen_progress.append(done)
 
     results = await wf._run_indexed(
-        total=5, concurrency=1, factory=factory, progress_cb=progress_cb,
+        total=5,
+        concurrency=1,
+        factory=factory,
+        progress_cb=progress_cb,
     )
 
     assert results == [0, 10, 20, 30, 40]
@@ -145,7 +145,10 @@ async def test_run_indexed_parallel_preserves_index_order_in_results() -> None:
         return i * 10
 
     results = await wf._run_indexed(
-        total=6, concurrency=4, factory=factory, progress_cb=None,
+        total=6,
+        concurrency=4,
+        factory=factory,
+        progress_cb=None,
     )
     assert results == [0, 10, 20, 30, 40, 50]
 
@@ -171,8 +174,7 @@ async def test_run_indexed_parallel_is_faster_than_sequential() -> None:
     par = time.monotonic() - t0
 
     assert par * 1.6 < seq, (
-        f"Parallel sollte mindestens 1.6x schneller sein: "
-        f"seq={seq:.3f}s, par={par:.3f}s"
+        f"Parallel sollte mindestens 1.6x schneller sein: seq={seq:.3f}s, par={par:.3f}s"
     )
 
 
@@ -192,7 +194,10 @@ async def test_run_indexed_parallel_calls_progress_total_times() -> None:
         seen.append(done)
 
     await wf._run_indexed(
-        total=10, concurrency=3, factory=factory, progress_cb=progress_cb,
+        total=10,
+        concurrency=3,
+        factory=factory,
+        progress_cb=progress_cb,
     )
 
     assert len(seen) == 10

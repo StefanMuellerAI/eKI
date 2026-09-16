@@ -32,19 +32,15 @@ class TaxonomyManager:
         t_path = Path(taxonomy_path) if taxonomy_path else _CONFIG_DIR / "taxonomy.yaml"
         m_path = Path(measures_path) if measures_path else _CONFIG_DIR / "measures.yaml"
 
-        self._taxonomy: dict[str, Any] = yaml.safe_load(
-            t_path.read_text(encoding="utf-8")
-        )
-        self._measures_raw: dict[str, Any] = yaml.safe_load(
-            m_path.read_text(encoding="utf-8")
-        )
+        self._taxonomy: dict[str, Any] = yaml.safe_load(t_path.read_text(encoding="utf-8"))
+        self._measures_raw: dict[str, Any] = yaml.safe_load(m_path.read_text(encoding="utf-8"))
 
         # Build fast lookup indexes
         self._class_index: dict[str, dict[str, Any]] = {}  # class_name -> {rule_id, category, ...}
-        self._rule_index: dict[str, str] = {}               # rule_id -> class_name
+        self._rule_index: dict[str, str] = {}  # rule_id -> class_name
         self._measures: dict[str, dict[str, Any]] = self._measures_raw.get("measures", {})
-        self._thresholds: dict[str, int] = (
-            self._taxonomy.get("severity_matrix", {}).get("thresholds", {})
+        self._thresholds: dict[str, int] = self._taxonomy.get("severity_matrix", {}).get(
+            "thresholds", {}
         )
 
         for cat_name, cat_data in self._taxonomy.get("categories", {}).items():
@@ -204,9 +200,7 @@ class TaxonomyManager:
         impact = int(finding.get("impact") or 1)
         finding["likelihood"] = max(1, min(5, likelihood))
         finding["impact"] = max(1, min(5, impact))
-        finding["risk_level"] = self.calculate_severity(
-            finding["likelihood"], finding["impact"]
-        )
+        finding["risk_level"] = self.calculate_severity(finding["likelihood"], finding["impact"])
 
         # Resolve measures
         raw_codes = finding.pop("measure_codes", []) or []

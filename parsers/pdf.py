@@ -53,7 +53,8 @@ def _effective_pdf_limits(max_pages: int | None) -> tuple[int, int]:
         s = get_settings()
         cfg_max_pages = int(getattr(s, "max_pdf_pages", _MAX_PDF_PAGES))
         cfg_max_size = int(getattr(s, "max_pdf_size_bytes", _MAX_PDF_SIZE))
-    except Exception:
+    except Exception:  # nosec B110
+        # Settings unavailable (e.g. import-time in scripts) -> keep module defaults.
         pass
 
     effective_pages = max_pages if max_pages is not None else cfg_max_pages
@@ -71,8 +72,8 @@ def extract_pdf_text(
     - *warnings* collects non-fatal issues encountered during extraction
     """
     import pdfplumber
-    from pdfminer.pdfparser import PDFSyntaxError
     from pdfminer.pdfdocument import PDFPasswordIncorrect
+    from pdfminer.pdfparser import PDFSyntaxError
     from pdfplumber.utils.exceptions import PdfminerException
 
     effective_max_pages, effective_max_size = _effective_pdf_limits(max_pages)
@@ -131,10 +132,7 @@ def extract_pdf_text(
     full_text = "\n".join(pages_text)
 
     if pages_text and len(full_text.strip()) < 50:
-        warnings.append(
-            "PDF contains very little extractable text. "
-            "Results may be incomplete."
-        )
+        warnings.append("PDF contains very little extractable text. Results may be incomplete.")
 
     return full_text, pages_text, ocr_needed, warnings
 
@@ -165,6 +163,7 @@ class PDFParser(ParserBase):
         if self._llm is None:
             from api.config import get_settings
             from llm.factory import get_llm_provider
+
             self._llm = get_llm_provider(get_settings())
 
         # 1. Extract text
@@ -184,13 +183,11 @@ class PDFParser(ParserBase):
         # 2. Deterministic split at INT/EXT markers (with page-based fallback)
         blocks = split_into_scenes(full_text, page_texts=page_texts)
         used_page_fallback = any(
-            not b.is_preamble and b.heading_line.startswith("PAGE ")
-            for b in blocks
+            not b.is_preamble and b.heading_line.startswith("PAGE ") for b in blocks
         )
         if used_page_fallback:
             warnings.append(
-                "No scene markers (INT/EXT) found. "
-                "Falling back to page-by-page splitting."
+                "No scene markers (INT/EXT) found. Falling back to page-by-page splitting."
             )
 
         # 3. LLM structuring per scene
@@ -240,13 +237,14 @@ class PDFParser(ParserBase):
         characters = self._build_character_index(scenes)
         elapsed = time.monotonic() - t0
 
-        avg_confidence = (
-            sum(s.parse_confidence for s in scenes) / len(scenes) if scenes else 0.0
-        )
+        avg_confidence = sum(s.parse_confidence for s in scenes) / len(scenes) if scenes else 0.0
 
         logger.info(
             "PDF parsed: %d scenes, %d characters, confidence=%.2f in %.1fs",
-            len(scenes), len(characters), avg_confidence, elapsed,
+            len(scenes),
+            len(characters),
+            avg_confidence,
+            elapsed,
         )
 
         return ParsedScript(

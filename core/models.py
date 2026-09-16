@@ -4,15 +4,17 @@ import base64
 import ipaddress
 import re
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 from urllib.parse import urlparse
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
+from core.version import __version__
 
-class JobStatus(str, Enum):
+
+class JobStatus(StrEnum):
     """Status of an async security check job."""
 
     PENDING = "pending"
@@ -22,7 +24,7 @@ class JobStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
-class RiskLevel(str, Enum):
+class RiskLevel(StrEnum):
     """Risk level classification."""
 
     CRITICAL = "critical"
@@ -32,7 +34,7 @@ class RiskLevel(str, Enum):
     INFO = "info"
 
 
-class ScriptFormat(str, Enum):
+class ScriptFormat(StrEnum):
     """Supported script formats."""
 
     FDX = "fdx"  # Final Draft XML
@@ -44,7 +46,7 @@ class ScriptFormat(str, Enum):
 # ---------------------------------------------------------------------------
 
 
-class TimeOfDay(str, Enum):
+class TimeOfDay(StrEnum):
     """Time-of-day designation extracted from scene headings."""
 
     DAY = "DAY"
@@ -57,7 +59,7 @@ class TimeOfDay(str, Enum):
     UNKNOWN = "UNKNOWN"
 
 
-class LocationType(str, Enum):
+class LocationType(StrEnum):
     """Interior/exterior designation from scene headings."""
 
     INT = "INT"
@@ -88,7 +90,9 @@ class ParsedScene(BaseModel):
     dialogue: list[DialogueLine] = Field(default_factory=list, description="Dialogue lines")
     text: str = Field(default="", description="Full scene text (heading + action + dialogue)")
     parse_confidence: float = Field(
-        default=1.0, ge=0.0, le=1.0,
+        default=1.0,
+        ge=0.0,
+        le=1.0,
         description="Confidence of structural classification (1.0 = FDX/certain, 0.0 = failed)",
     )
     parse_method: str = Field(
@@ -113,13 +117,13 @@ class ParsedScript(BaseModel):
     format: ScriptFormat = Field(..., description="Source format (fdx/pdf)")
     total_scenes: int = Field(..., description="Total number of scenes")
     scenes: list[ParsedScene] = Field(default_factory=list, description="Parsed scenes")
-    characters: list[CharacterInfo] = Field(
-        default_factory=list, description="Character index"
-    )
+    characters: list[CharacterInfo] = Field(default_factory=list, description="Character index")
     parsing_time_seconds: float = Field(..., description="Time taken to parse")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Parser metadata")
     overall_confidence: float = Field(
-        default=1.0, ge=0.0, le=1.0,
+        default=1.0,
+        ge=0.0,
+        le=1.0,
         description="Average parse confidence across all scenes",
     )
     warnings: list[str] = Field(
@@ -162,7 +166,8 @@ class SecurityCheckRequest(BaseModel):
         default="pull", description="Delivery mode: 'pull' (One-Shot GET) or 'push' (POST to ePro)"
     )
     idempotency_key: str | None = Field(
-        None, description="Optional idempotency key to prevent duplicate jobs",
+        None,
+        description="Optional idempotency key to prevent duplicate jobs",
         max_length=255,
     )
     metadata: dict[str, Any] = Field(
@@ -240,8 +245,7 @@ class SecurityCheckRequest(BaseModel):
 
         if hostname.lower().rstrip(".") not in allowed_domains:
             raise ValueError(
-                "Callback URL domain not allowed. "
-                f"Allowed: {', '.join(sorted(allowed_domains))}"
+                f"Callback URL domain not allowed. Allowed: {', '.join(sorted(allowed_domains))}"
             )
 
         return v
@@ -305,7 +309,7 @@ class HealthResponse(BaseModel):
 
     status: str = Field(default="healthy", description="Service health status")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="Response timestamp")
-    version: str = Field(default="0.1.0", description="API version")
+    version: str = Field(default=__version__, description="API version")
 
 
 class ReadinessResponse(BaseModel):
@@ -330,7 +334,9 @@ class RiskFinding(BaseModel):
 
     id: str = Field(..., description="Unique finding ID")
     scene_number: str | None = Field(None, description="Scene number where risk was found")
-    risk_level: RiskLevel = Field(..., description="Severity level (calculated from likelihood x impact)")
+    risk_level: RiskLevel = Field(
+        ..., description="Severity level (calculated from likelihood x impact)"
+    )
     category: str = Field(..., description="Risk category: PHYSICAL, ENVIRONMENTAL, PSYCHOLOGICAL")
     risk_class: str = Field(
         default="", description="Specific risk class (e.g. FIRE, HEIGHT, INTIMACY)"
@@ -427,9 +433,7 @@ class ReportResponse(BaseModel):
     """Response for report retrieval (one-shot pull mode)."""
 
     report: SecurityReport = Field(..., description="Security analysis report")
-    pdf_base64: str | None = Field(
-        None, description="Base64-encoded PDF report (human-readable)"
-    )
+    pdf_base64: str | None = Field(None, description="Base64-encoded PDF report (human-readable)")
     message: str = Field(
         default="Report retrieved successfully. This URL is now invalidated.",
         description="Human-readable message",

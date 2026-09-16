@@ -52,7 +52,7 @@ class _DummyEngine:
 
 
 class _DummySession:
-    async def __aenter__(self) -> "_DummySession":
+    async def __aenter__(self) -> _DummySession:
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -68,9 +68,10 @@ async def test_kb_disabled_returns_none_marker_without_side_effects() -> None:
     """Default path: flag OFF means no DB or LLM access whatsoever."""
     # If the function tried to use the DB or KB service when disabled,
     # these mocks would throw because they assert call counts below.
-    with patch("sqlalchemy.ext.asyncio.create_async_engine") as engine_mock, patch(
-        "services.knowledge_base.KnowledgeBaseService"
-    ) as kb_mock:
+    with (
+        patch("sqlalchemy.ext.asyncio.create_async_engine") as engine_mock,
+        patch("services.knowledge_base.KnowledgeBaseService") as kb_mock,
+    ):
         result = await _build_kb_context(
             scene_text="A man falls from a roof at night.",
             settings=_settings(enabled=False),
@@ -93,9 +94,7 @@ async def test_kb_disabled_returns_none_for_empty_scene_text() -> None:
 @pytest.mark.asyncio
 async def test_kb_failure_is_non_fatal() -> None:
     """If anything inside the KB lookup raises, we must return '(none)'."""
-    with patch(
-        "sqlalchemy.ext.asyncio.create_async_engine", side_effect=RuntimeError("boom")
-    ):
+    with patch("sqlalchemy.ext.asyncio.create_async_engine", side_effect=RuntimeError("boom")):
         result = await _build_kb_context(
             scene_text="Stunt fall sequence.",
             settings=_settings(enabled=True),
@@ -127,12 +126,11 @@ async def test_kb_enabled_formats_hits_with_title_and_truncated_text() -> None:
 
     kb_service_mock = SimpleNamespace(search=AsyncMock(return_value=hits))
 
-    with patch(
-        "sqlalchemy.ext.asyncio.create_async_engine", return_value=_DummyEngine()
-    ), patch(
-        "sqlalchemy.ext.asyncio.async_sessionmaker", return_value=_session_factory
-    ), patch("llm.factory.get_llm_provider"), patch(
-        "services.knowledge_base.KnowledgeBaseService", return_value=kb_service_mock
+    with (
+        patch("sqlalchemy.ext.asyncio.create_async_engine", return_value=_DummyEngine()),
+        patch("sqlalchemy.ext.asyncio.async_sessionmaker", return_value=_session_factory),
+        patch("llm.factory.get_llm_provider"),
+        patch("services.knowledge_base.KnowledgeBaseService", return_value=kb_service_mock),
     ):
         result = await _build_kb_context(
             scene_text="Stunt fall sequence at night.",
@@ -150,12 +148,11 @@ async def test_kb_enabled_formats_hits_with_title_and_truncated_text() -> None:
 async def test_kb_enabled_returns_none_when_no_hits() -> None:
     kb_service_mock = SimpleNamespace(search=AsyncMock(return_value=[]))
 
-    with patch(
-        "sqlalchemy.ext.asyncio.create_async_engine", return_value=_DummyEngine()
-    ), patch(
-        "sqlalchemy.ext.asyncio.async_sessionmaker", return_value=_session_factory
-    ), patch("llm.factory.get_llm_provider"), patch(
-        "services.knowledge_base.KnowledgeBaseService", return_value=kb_service_mock
+    with (
+        patch("sqlalchemy.ext.asyncio.create_async_engine", return_value=_DummyEngine()),
+        patch("sqlalchemy.ext.asyncio.async_sessionmaker", return_value=_session_factory),
+        patch("llm.factory.get_llm_provider"),
+        patch("services.knowledge_base.KnowledgeBaseService", return_value=kb_service_mock),
     ):
         result = await _build_kb_context(
             scene_text="Unrelated calm dialogue.",

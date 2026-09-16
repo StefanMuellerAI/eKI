@@ -1,9 +1,6 @@
 """Tests for risk taxonomy, measures catalog, scoring engine, and TaxonomyManager."""
 
-import pytest
-
 from services.taxonomy import TaxonomyManager, get_taxonomy_manager
-
 
 # ===================================================================
 # TaxonomyManager Loading
@@ -20,9 +17,19 @@ class TestTaxonomyLoading:
     def test_all_physical_classes_present(self):
         tm = TaxonomyManager()
         physical = [
-            "STUNTS", "FALLS", "FIGHTS", "WEAPONS", "VEHICLES",
-            "HEIGHT", "WATER", "FIRE", "ELECTRICAL", "ANIMALS",
-            "WEATHER", "FATIGUE", "CROWD",
+            "STUNTS",
+            "FALLS",
+            "FIGHTS",
+            "WEAPONS",
+            "VEHICLES",
+            "HEIGHT",
+            "WATER",
+            "FIRE",
+            "ELECTRICAL",
+            "ANIMALS",
+            "WEATHER",
+            "FATIGUE",
+            "CROWD",
         ]
         for cls in physical:
             assert tm.is_valid_class(cls), f"Missing physical class: {cls}"
@@ -36,8 +43,12 @@ class TestTaxonomyLoading:
     def test_all_psychological_classes_present(self):
         tm = TaxonomyManager()
         psychological = [
-            "VIOLENCE", "DEATH_GRIEF", "TRAUMA", "SEXUALIZED",
-            "DISCRIMINATION", "INTIMACY",
+            "VIOLENCE",
+            "DEATH_GRIEF",
+            "TRAUMA",
+            "SEXUALIZED",
+            "DISCRIMINATION",
+            "INTIMACY",
         ]
         for cls in psychological:
             assert tm.is_valid_class(cls), f"Missing psychological class: {cls}"

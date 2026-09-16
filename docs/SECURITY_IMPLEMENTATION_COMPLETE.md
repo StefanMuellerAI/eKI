@@ -188,15 +188,15 @@ wait
 **Before:**
 ```python
 # Too permissive ❌
-allow_methods=["*"]
-allow_headers=["*"]
+allow_methods = ["*"]
+allow_headers = ["*"]
 ```
 
 **After:**
 ```python
 # Explicit whitelist ✅
-allow_methods=["GET", "POST", "PUT", "DELETE"]
-allow_headers=["Authorization", "Content-Type", "X-Request-ID", ...]
+allow_methods = ["GET", "POST", "PUT", "DELETE"]
+allow_headers = ["Authorization", "Content-Type", "X-Request-ID", ...]
 ```
 
 ### 9. Prompt Injection Protection

@@ -9,7 +9,7 @@ surface as 409, and the response shape matches ``KBDocumentResponse``.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -27,8 +27,8 @@ def _summary(title: str = "Stunt-SOP", source: str = "PLACEHOLDER") -> KBDocumen
         source=source,
         tags=["placeholder", "stunt"],
         uploaded_by="test-user-123",
-        created_at=datetime.now(timezone.utc),
-        expires_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
+        expires_at=datetime.now(UTC),
         chunk_count=4,
     )
 

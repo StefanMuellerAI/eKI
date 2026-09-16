@@ -60,7 +60,9 @@ async def test_valid_json_returned_as_dict() -> None:
     provider = _make_provider()
     valid = json.dumps({"answer": "hi", "count": 3})
 
-    with patch.object(httpx.AsyncClient, "post", new=AsyncMock(return_value=_mock_chat_response(valid))) as mock_post:
+    with patch.object(
+        httpx.AsyncClient, "post", new=AsyncMock(return_value=_mock_chat_response(valid))
+    ) as mock_post:
         result = await provider.generate_structured(
             prompt="Say hi", schema=_SCHEMA, temperature=0.1
         )
@@ -80,7 +82,9 @@ async def test_markdown_fences_are_stripped() -> None:
     provider = _make_provider()
     wrapped = "```json\n" + json.dumps({"answer": "hi", "count": 1}) + "\n```"
 
-    with patch.object(httpx.AsyncClient, "post", new=AsyncMock(return_value=_mock_chat_response(wrapped))):
+    with patch.object(
+        httpx.AsyncClient, "post", new=AsyncMock(return_value=_mock_chat_response(wrapped))
+    ):
         result = await provider.generate_structured(prompt="Say hi", schema=_SCHEMA)
 
     assert result == {"answer": "hi", "count": 1}
@@ -103,7 +107,9 @@ async def test_invalid_schema_triggers_single_retry() -> None:
     assert mock_post.call_count == 2
     # The retry must include the prior failed JSON in the user message
     retry_user = mock_post.call_args_list[1].kwargs["json"]["messages"][1]["content"]
-    assert "previous response was NOT valid" in retry_user.lower() or "not valid" in retry_user.lower()
+    assert (
+        "previous response was NOT valid" in retry_user.lower() or "not valid" in retry_user.lower()
+    )
     assert "hello" in retry_user
 
 
@@ -126,7 +132,9 @@ async def test_retry_failure_raises_llm_exception() -> None:
 async def test_unparseable_json_raises_llm_exception() -> None:
     provider = _make_provider()
     with patch.object(
-        httpx.AsyncClient, "post", new=AsyncMock(return_value=_mock_chat_response("not json at all"))
+        httpx.AsyncClient,
+        "post",
+        new=AsyncMock(return_value=_mock_chat_response("not json at all")),
     ):
         with pytest.raises(LLMException) as excinfo:
             await provider.generate_structured(prompt="x", schema=_SCHEMA)

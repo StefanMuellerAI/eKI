@@ -26,7 +26,7 @@ class TestAuthentication:
 
         response = client.post("/v1/security/check", json=payload)
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
-        assert "authorization" in response.json()["detail"].lower()
+        assert "not authenticated" in response.json()["message"].lower()
 
     def test_invalid_authorization_format(self, client):
         """Test request with invalid Authorization format."""
@@ -66,7 +66,7 @@ class TestAuthentication:
         headers = {"Authorization": "Bearer eki_invalid_key_12345"}
         response = client.post("/v1/security/check", json=payload, headers=headers)
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
-        assert "invalid" in response.json()["detail"].lower()
+        assert "invalid" in response.json()["message"].lower()
 
     @pytest.mark.asyncio
     async def test_expired_api_key(self, client, db_session):
@@ -166,7 +166,7 @@ class TestAuthorization:
 
         response = client.post("/v1/security/check", json=payload, headers=mismatched_headers)
         assert response.status_code == status.HTTP_403_FORBIDDEN
-        assert "does not match" in response.json()["detail"].lower()
+        assert "does not match" in response.json()["message"].lower()
 
     @pytest.mark.asyncio
     async def test_idor_job_access_prevention(
@@ -192,8 +192,8 @@ class TestAuthorization:
         response = client.get(f"/v1/security/jobs/{job_id}", headers=auth_headers_user2)
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert (
-            "not found" in response.json()["detail"].lower()
-            or "denied" in response.json()["detail"].lower()
+            "not found" in response.json()["message"].lower()
+            or "denied" in response.json()["message"].lower()
         )
 
     @pytest.mark.asyncio
@@ -276,7 +276,7 @@ class TestAuthorization:
         # Second retrieval should fail (410 Gone)
         response = client.get(f"/v1/security/reports/{report_id}", headers=auth_headers)
         assert response.status_code == status.HTTP_410_GONE
-        assert "already retrieved" in response.json()["detail"].lower()
+        assert "already retrieved" in response.json()["message"].lower()
 
 
 class TestInputValidation:

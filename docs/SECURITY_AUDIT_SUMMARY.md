@@ -125,11 +125,10 @@ from security_fixes.auth_secure import verify_api_key_jwt as verify_api_key
 # api/routers/security.py
 from security_fixes.authorization_secure import check_job_ownership
 
+
 @router.get("/jobs/{job_id}")
 async def get_job_status(
-    job_id: UUID,
-    api_key: ApiKeyModel = Depends(verify_api_key),
-    db: AsyncSession = Depends(get_db)
+    job_id: UUID, api_key: ApiKeyModel = Depends(verify_api_key), db: AsyncSession = Depends(get_db)
 ):
     job = await check_job_ownership(job_id, api_key, db)
     # ...
@@ -139,6 +138,7 @@ async def get_job_status(
 ```python
 # core/models.py
 from security_fixes.input_validation_secure import *
+
 
 class SecurityCheckRequest(BaseModel):
     # Replace validators with secure versions

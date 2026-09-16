@@ -78,9 +78,7 @@ def test_llm_provider_accepts_valid_values(monkeypatch, value, expected):
         ("local-mistral", "local_mistral"),
     ],
 )
-def test_llm_provider_hyphen_typo_is_rejected_with_hint(
-    monkeypatch, value, expected_hint
-):
+def test_llm_provider_hyphen_typo_is_rejected_with_hint(monkeypatch, value, expected_hint):
     """Bindestrich-Schreibweise wird abgewiesen, Fehlermeldung nennt den
     korrekten Unterstrich-Namen."""
     monkeypatch.setenv("LLM_PROVIDER", value)

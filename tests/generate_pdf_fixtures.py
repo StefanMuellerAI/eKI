@@ -8,7 +8,6 @@ import random
 from pathlib import Path
 
 from reportlab.lib.pagesizes import LETTER
-from reportlab.lib.units import inch
 from reportlab.pdfgen import canvas
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "pdf"
@@ -106,11 +105,31 @@ def create_multi_scene():
     c.setFont(FONT, FONT_SIZE)
 
     scenes = [
-        ["INT. POLICE STATION - DAY", "Detective JONES reviews case files.", "JONES", "Something doesn't add up."],
-        ["EXT. ALLEY - NIGHT", "Jones follows a suspect into a dark alley.", "JONES", "Stop right there!"],
-        ["INT. INTERROGATION ROOM - DAY", "A suspect sits across from Jones.", "SUSPECT", "I want my lawyer."],
+        [
+            "INT. POLICE STATION - DAY",
+            "Detective JONES reviews case files.",
+            "JONES",
+            "Something doesn't add up.",
+        ],
+        [
+            "EXT. ALLEY - NIGHT",
+            "Jones follows a suspect into a dark alley.",
+            "JONES",
+            "Stop right there!",
+        ],
+        [
+            "INT. INTERROGATION ROOM - DAY",
+            "A suspect sits across from Jones.",
+            "SUSPECT",
+            "I want my lawyer.",
+        ],
         ["EXT. ROOFTOP - DUSK", "A chase ends on a rooftop.", "JONES", "It's over."],
-        ["INT. HOSPITAL - NIGHT", "Jones visits an injured colleague.", "JONES", "You're going to be fine."],
+        [
+            "INT. HOSPITAL - NIGHT",
+            "Jones visits an injured colleague.",
+            "JONES",
+            "You're going to be fine.",
+        ],
         ["EXT. PARKING LOT - DAY", "Jones gets into his car.", "JONES", "Time to end this."],
         ["INT. COURTROOM - DAY", "The trial begins.", "JUDGE", "Order in the court."],
         ["EXT. BEACH - EVENING", "Jones walks along the shore.", "JONES", "Finally, some peace."],
@@ -212,6 +231,7 @@ def create_password_protected():
     """Password-protected PDF for testing rejection."""
     path = FIXTURES_DIR / "password_protected.pdf"
     from reportlab.lib.pagesizes import LETTER as L
+
     c = canvas.Canvas(str(path), pagesize=L)
     c.setFont(FONT, FONT_SIZE)
     c.drawString(72, L[1] - 72, "This PDF is password-protected.")
@@ -219,6 +239,7 @@ def create_password_protected():
 
     try:
         import pikepdf
+
         pdf = pikepdf.open(str(path), allow_overwriting_input=True)
         pdf.save(
             str(path),
@@ -235,10 +256,30 @@ def create_large_120_pages():
     c = canvas.Canvas(str(path), pagesize=LETTER)
     c.setFont(FONT, FONT_SIZE)
 
-    locations_int = ["OFFICE", "KITCHEN", "BEDROOM", "HALLWAY", "LIBRARY",
-                     "HOSPITAL", "CLASSROOM", "ELEVATOR", "PRISON CELL", "STUDIO"]
-    locations_ext = ["PARK", "STREET", "ROOFTOP", "BEACH", "FOREST",
-                     "PARKING LOT", "BRIDGE", "HARBOR", "HIGHWAY", "GARDEN"]
+    locations_int = [
+        "OFFICE",
+        "KITCHEN",
+        "BEDROOM",
+        "HALLWAY",
+        "LIBRARY",
+        "HOSPITAL",
+        "CLASSROOM",
+        "ELEVATOR",
+        "PRISON CELL",
+        "STUDIO",
+    ]
+    locations_ext = [
+        "PARK",
+        "STREET",
+        "ROOFTOP",
+        "BEACH",
+        "FOREST",
+        "PARKING LOT",
+        "BRIDGE",
+        "HARBOR",
+        "HIGHWAY",
+        "GARDEN",
+    ]
     times = ["DAY", "NIGHT", "DAWN", "DUSK", "MORNING", "EVENING"]
     characters = ["ANNA", "MAX", "SARAH", "DAVID", "LENA", "KARL", "JONES", "MARIA"]
     actions = [
@@ -261,7 +302,7 @@ def create_large_120_pages():
 
     all_lines = ["THE LONG SCRIPT", "A Benchmark Test", "", ""]
 
-    for i in range(60):
+    for _i in range(60):
         if random.random() < 0.5:
             loc = random.choice(locations_int)
             prefix = "INT"

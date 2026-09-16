@@ -10,9 +10,9 @@ import pytest
 
 from core.exceptions import NotFoundException, ParsingException
 from core.models import LocationType, ParsedScript, ScriptFormat, TimeOfDay
-from parsers.base import ParserBase, get_parser
+from parsers.base import get_parser
 from parsers.fdx import FDXParser
-from parsers.scene_heading import HeadingComponents, parse_scene_heading
+from parsers.scene_heading import parse_scene_heading
 from parsers.secure_xml import parse_xml_safe
 from services.secure_buffer import SecureBuffer, _derive_fernet_key
 
@@ -317,7 +317,9 @@ class TestSecureBuffer:
 
     @pytest.fixture()
     def buffer(self, mock_redis):
-        return SecureBuffer(mock_redis, secret_key="test-secret-key-at-least-32-chars", default_ttl=3600)
+        return SecureBuffer(
+            mock_redis, secret_key="test-secret-key-at-least-32-chars", default_ttl=3600
+        )
 
     @pytest.mark.asyncio
     async def test_store_and_retrieve(self, buffer, mock_redis):

@@ -25,7 +25,6 @@ import pytest
 from llm import ollama as ollama_module
 from llm.ollama import OllamaProvider
 
-
 _SIMPLE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {"x": {"type": "integer"}},
@@ -34,13 +33,15 @@ _SIMPLE_SCHEMA: dict[str, Any] = {
 
 
 def _make_provider() -> OllamaProvider:
-    return OllamaProvider({
-        "base_url": "http://test-ollama:11434",
-        "model": "test-model",
-        "timeout": 5,
-        "think": False,
-        "num_ctx": 1024,
-    })
+    return OllamaProvider(
+        {
+            "base_url": "http://test-ollama:11434",
+            "model": "test-model",
+            "timeout": 5,
+            "think": False,
+            "num_ctx": 1024,
+        }
+    )
 
 
 def _make_chat_response() -> httpx.Response:
@@ -111,7 +112,9 @@ async def test_cap_1_serialises_all_calls() -> None:
     tracker = _ConcurrencyTracker()
 
     with patch.object(ollama_module, "_get_throttle_config", return_value=(1, 0)):
-        with patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=_make_tracking_post(tracker))):
+        with patch(
+            "httpx.AsyncClient.post", new=AsyncMock(side_effect=_make_tracking_post(tracker))
+        ):
             provider = _make_provider()
             tasks = [
                 provider.generate_structured(
@@ -146,7 +149,9 @@ async def test_cap_2_allows_two_but_never_more() -> None:
     tracker = _ConcurrencyTracker()
 
     with patch.object(ollama_module, "_get_throttle_config", return_value=(2, 0)):
-        with patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=_make_tracking_post(tracker))):
+        with patch(
+            "httpx.AsyncClient.post", new=AsyncMock(side_effect=_make_tracking_post(tracker))
+        ):
             provider = _make_provider()
             tasks = [
                 provider.generate_structured(
@@ -174,7 +179,9 @@ async def test_cap_4_allows_four() -> None:
     tracker = _ConcurrencyTracker()
 
     with patch.object(ollama_module, "_get_throttle_config", return_value=(4, 0)):
-        with patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=_make_tracking_post(tracker))):
+        with patch(
+            "httpx.AsyncClient.post", new=AsyncMock(side_effect=_make_tracking_post(tracker))
+        ):
             provider = _make_provider()
             tasks = [
                 provider.generate_structured(
@@ -186,9 +193,7 @@ async def test_cap_4_allows_four() -> None:
             ]
             await asyncio.gather(*tasks)
 
-    assert tracker.max_observed == 4, (
-        f"Cap=4 erwartet, gemessen: {tracker.max_observed}"
-    )
+    assert tracker.max_observed == 4, f"Cap=4 erwartet, gemessen: {tracker.max_observed}"
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +209,10 @@ async def test_min_interval_enforces_gap_between_calls() -> None:
     tracker = _ConcurrencyTracker()
 
     with patch.object(ollama_module, "_get_throttle_config", return_value=(1, 50)):
-        with patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=_make_tracking_post(tracker, hold_seconds=0.0))):
+        with patch(
+            "httpx.AsyncClient.post",
+            new=AsyncMock(side_effect=_make_tracking_post(tracker, hold_seconds=0.0)),
+        ):
             provider = _make_provider()
             t0 = asyncio.get_event_loop().time()
             for _ in range(5):
@@ -237,24 +245,32 @@ async def test_semaphore_reallocates_when_capacity_changes() -> None:
     with patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=_make_tracking_post(tracker_a))):
         with patch.object(ollama_module, "_get_throttle_config", return_value=(1, 0)):
             provider = _make_provider()
-            await asyncio.gather(*[
-                provider.generate_structured(
-                    prompt="P", schema=_SIMPLE_SCHEMA, temperature=0.1,
-                )
-                for _ in range(4)
-            ])
+            await asyncio.gather(
+                *[
+                    provider.generate_structured(
+                        prompt="P",
+                        schema=_SIMPLE_SCHEMA,
+                        temperature=0.1,
+                    )
+                    for _ in range(4)
+                ]
+            )
 
     assert tracker_a.max_observed == 1
 
     with patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=_make_tracking_post(tracker_b))):
         with patch.object(ollama_module, "_get_throttle_config", return_value=(3, 0)):
             provider = _make_provider()
-            await asyncio.gather(*[
-                provider.generate_structured(
-                    prompt="P", schema=_SIMPLE_SCHEMA, temperature=0.1,
-                )
-                for _ in range(8)
-            ])
+            await asyncio.gather(
+                *[
+                    provider.generate_structured(
+                        prompt="P",
+                        schema=_SIMPLE_SCHEMA,
+                        temperature=0.1,
+                    )
+                    for _ in range(8)
+                ]
+            )
 
     assert tracker_b.max_observed == 3, (
         f"Re-Allokation fehlerhaft: nach Cap=3 max_observed={tracker_b.max_observed}"

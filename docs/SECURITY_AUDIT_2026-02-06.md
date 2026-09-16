@@ -170,3 +170,20 @@ Keep `/health` public; restrict `/ready` to internal network or authenticated op
 3. Protect `/metrics` and `/ready` with network/auth controls (Findings 2, 8).
 4. Make one-shot retrieval atomic (Finding 5).
 5. Hardening tasks for tooling and future LLM path (Findings 6, 7).
+
+## Status-Update 2026-09 (Phase 0 / Hygiene-Sprint)
+
+Stand nach M08 und Hygiene-Sprint; Abgleich gegen den Code, nicht gegen die Doku.
+
+| # | Finding | Status | Nachweis |
+|---|---|---|---|
+| 1 | Rate-Limit-Bypass via `X-Forwarded-For` | Behoben | `TRUST_PROXY_HEADERS` (Default `false`) + `TRUSTED_PROXY_IPS`; `api/rate_limiting.py` nutzt Settings statt Literale |
+| 2 | `/metrics` öffentlich | Behoben | `Depends(verify_api_key)` in `api/main.py`; Worker-Metriken nur im internen Netz (M09) |
+| 3 | Unsichere Deployment-Defaults | Behoben | `docker-compose.prod.yml` ohne Host-Ports für Infra; `validate_production_security` blockiert Default-Secrets |
+| 4 | Kein Rate-Limit auf GET-Lookups | Behoben | `rate_limit_combined` auf `/jobs/{id}` und `/reports/{id}` |
+| 5 | One-Shot-Race | Behoben | Atomarer `UPDATE ... WHERE is_retrieved=false RETURNING` |
+| 6 | SQL-Injection im Key-Skript | Behoben | `scripts/create_api_key.py` nutzt SQLAlchemy-Insert, keine SQL-Strings |
+| 7 | Prompt-Sanitizer fail-open | Bewusst belassen (nur `embed`) | `generate`/`generate_structured` laufen mit `raise_on_unsafe=True`. Der Embedding-Pfad bleibt fail-open, weil KB-Dokumente legitim Markdown-Trenner (`---`, `===`) enthalten, die die Muster treffen; Treffer werden ab M09 als Metrik `eki_prompt_sanitizer_hits_total` gezählt und alarmierbar |
+| 8 | `/ready` anonym | Behoben | `Depends(verify_api_key)` in `api/routers/health.py`; Docker-Healthcheck nutzt `/health` |
+
+Zusätzlich im Hygiene-Sprint: Bandit läuft in der CI als harter Gate (`-ll`, Medium+), verbleibende Low-Findings sind als `# nosec` mit Begründung annotiert (B104 Container-Bind, B105 Feldnamen, B405 Typ-Import mit defusedxml-Parsing, B110 Settings-Fallback).

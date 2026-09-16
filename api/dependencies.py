@@ -122,10 +122,14 @@ async def verify_api_key(
 
 def get_actor_headers(
     x_actor_user_id: str | None = Header(
-        None, description="Actor user ID", include_in_schema=False,
+        None,
+        description="Actor user ID",
+        include_in_schema=False,
     ),
     x_actor_project_id: str | None = Header(
-        None, description="Actor project ID", include_in_schema=False,
+        None,
+        description="Actor project ID",
+        include_in_schema=False,
     ),
     api_key: ApiKeyModel = Depends(verify_api_key),
 ) -> dict[str, str | None]:

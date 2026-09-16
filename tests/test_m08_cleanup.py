@@ -33,9 +33,11 @@ class TestCleanupBufferActivity:
     async def test_deletes_multiple_keys(self):
         buf = _mock_buffer(delete_returns=3)
         with patch("workflows.activities._get_buffer", return_value=buf):
-            result = await cleanup_buffer_activity({
-                "ref_keys": ["eki:buf:a", "eki:buf:b", "eki:buf:c"],
-            })
+            result = await cleanup_buffer_activity(
+                {
+                    "ref_keys": ["eki:buf:a", "eki:buf:b", "eki:buf:c"],
+                }
+            )
         assert result == {"deleted": 3}
         buf.delete.assert_awaited_once_with("eki:buf:a", "eki:buf:b", "eki:buf:c")
 

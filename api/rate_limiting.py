@@ -125,7 +125,9 @@ async def rate_limit_by_api_key(
     except HTTPException:
         raise
     except Exception:
-        logger.warning("Redis unavailable for API-key rate limiting – allowing request", exc_info=True)
+        logger.warning(
+            "Redis unavailable for API-key rate limiting – allowing request", exc_info=True
+        )
 
 
 async def rate_limit_combined(

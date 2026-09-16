@@ -91,7 +91,7 @@ response = await provider.generate(
     prompt="What is the capital of France?",
     system_prompt="You are a helpful geography assistant.",
     temperature=0.7,
-    max_tokens=100
+    max_tokens=100,
 )
 ```
 
@@ -103,17 +103,12 @@ schema = {
     "properties": {
         "risk_level": {"type": "string"},
         "confidence": {"type": "number"},
-        "findings": {
-            "type": "array",
-            "items": {"type": "string"}
-        }
-    }
+        "findings": {"type": "array", "items": {"type": "string"}},
+    },
 }
 
 result = await provider.generate_structured(
-    prompt="Analyze this script for safety risks: ...",
-    schema=schema,
-    temperature=0.3
+    prompt="Analyze this script for safety risks: ...", schema=schema, temperature=0.3
 )
 # Returns: {"risk_level": "medium", "confidence": 0.85, "findings": [...]}
 ```
@@ -150,11 +145,7 @@ OLLAMA_TIMEOUT=120
 ```python
 from api.config import Settings
 
-settings = Settings(
-    llm_provider="ollama",
-    ollama_model="llama2",
-    ollama_timeout=60
-)
+settings = Settings(llm_provider="ollama", ollama_model="llama2", ollama_timeout=60)
 ```
 
 ## Custom Provider erstellen
@@ -164,6 +155,7 @@ settings = Settings(
 ```python
 # llm/custom_provider.py
 from llm.base import BaseLLMProvider
+
 
 class CustomProvider(BaseLLMProvider):
     async def generate(self, prompt: str, **kwargs) -> str:
@@ -188,6 +180,7 @@ class CustomProvider(BaseLLMProvider):
 ```python
 # llm/factory.py
 from llm.custom_provider import CustomProvider
+
 
 def get_llm_provider(settings: Settings) -> BaseLLMProvider:
     if settings.llm_provider == "custom":
@@ -214,10 +207,8 @@ except LLMException as e:
 ```python
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=4, max=10)
-)
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 async def generate_with_retry(provider, prompt):
     return await provider.generate(prompt)
 ```
@@ -226,6 +217,7 @@ async def generate_with_retry(provider, prompt):
 
 ```python
 from functools import lru_cache
+
 
 @lru_cache(maxsize=1000)
 def get_cached_response(prompt_hash: str):
@@ -240,6 +232,7 @@ from aiolimiter import AsyncLimiter
 
 rate_limiter = AsyncLimiter(max_rate=10, time_period=60)
 
+
 async def generate_rate_limited(provider, prompt):
     async with rate_limiter:
         return await provider.generate(prompt)
@@ -253,12 +246,10 @@ async def generate_rate_limited(provider, prompt):
 import pytest
 from llm.ollama import OllamaProvider
 
+
 @pytest.mark.asyncio
 async def test_ollama_generation():
-    provider = OllamaProvider({
-        "base_url": "http://localhost:11434",
-        "model": "mistral"
-    })
+    provider = OllamaProvider({"base_url": "http://localhost:11434", "model": "mistral"})
 
     response = await provider.generate("Test prompt")
     assert isinstance(response, str)
@@ -287,7 +278,7 @@ async def process_batch(provider, prompts: list[str]):
 ```python
 # Für lange Antworten
 async for chunk in provider.generate_stream(prompt):
-    print(chunk, end='', flush=True)
+    print(chunk, end="", flush=True)
 ```
 
 ### 3. Temperature-Tuning
@@ -307,8 +298,9 @@ response = await provider.generate(prompt, temperature=0.9)
 ```python
 from prometheus_client import Counter, Histogram
 
-llm_requests = Counter('llm_requests_total', 'Total LLM requests')
-llm_latency = Histogram('llm_request_duration_seconds', 'LLM request latency')
+llm_requests = Counter("llm_requests_total", "Total LLM requests")
+llm_latency = Histogram("llm_request_duration_seconds", "LLM request latency")
+
 
 @llm_latency.time()
 async def monitored_generate(provider, prompt):
@@ -327,7 +319,7 @@ logger.info(
     "llm_request",
     provider=provider.provider_name,
     prompt_length=len(prompt),
-    temperature=temperature
+    temperature=temperature,
 )
 ```
 

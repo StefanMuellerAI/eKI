@@ -36,9 +36,7 @@ import structlog
 # Log-Pipeline gelesen wird. Default leerer String, damit der Worker
 # (der keine HTTP-Middleware hat) ein gut definiertes "nicht gesetzt"
 # loggt.
-_REQUEST_ID_CTX: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "eki_request_id", default=""
-)
+_REQUEST_ID_CTX: contextvars.ContextVar[str] = contextvars.ContextVar("eki_request_id", default="")
 
 
 def set_request_id(request_id: str | None) -> str:
@@ -71,25 +69,27 @@ def _request_id_processor(_logger: Any, _method_name: str, event_dict: dict) -> 
 #      (z.B. httpx, sqlalchemy, temporalio) gefiltert werden.
 #   2. Im structlog-Processor, damit ``log.info("…", findings=[…])``
 #      ebenfalls greift.
-_SENSITIVE_KEYS: frozenset[str] = frozenset({
-    "script_content",
-    "text",
-    "full_text",
-    "findings",
-    "description",
-    "evidence",
-    "assessment",
-    "action_text",
-    "dialogue",
-    "recommendation",
-    "page_texts",
-    "scene_text",
-    "scenes",
-    "report",
-    "report_package",
-    "epro_body",
-    "epro_response",
-})
+_SENSITIVE_KEYS: frozenset[str] = frozenset(
+    {
+        "script_content",
+        "text",
+        "full_text",
+        "findings",
+        "description",
+        "evidence",
+        "assessment",
+        "action_text",
+        "dialogue",
+        "recommendation",
+        "page_texts",
+        "scene_text",
+        "scenes",
+        "report",
+        "report_package",
+        "epro_body",
+        "epro_response",
+    }
+)
 
 _REDACTED = "<redacted>"
 
@@ -115,9 +115,7 @@ def _redact_event_dict(event_dict: dict) -> dict:
     return event_dict
 
 
-def _sensitive_content_processor(
-    _logger: Any, _method_name: str, event_dict: dict
-) -> dict:
+def _sensitive_content_processor(_logger: Any, _method_name: str, event_dict: dict) -> dict:
     """structlog processor: maskiert sensible Schluessel."""
     return _redact_event_dict(event_dict)
 

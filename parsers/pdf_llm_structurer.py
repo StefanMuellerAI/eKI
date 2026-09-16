@@ -6,12 +6,11 @@ dialogue, etc. -- the parts that pure regex cannot reliably handle across
 varying screenplay formats.
 """
 
-import json
 import logging
 from typing import Any
 
 from core.exceptions import LLMException
-from core.models import DialogueLine, LocationType, ParsedScene, TimeOfDay
+from core.models import DialogueLine, LocationType, TimeOfDay
 from llm.prompt_manager import get_prompt_manager
 
 logger = logging.getLogger(__name__)
@@ -32,8 +31,14 @@ SCENE_SCHEMA: dict[str, Any] = {
         "time_of_day": {
             "type": "string",
             "enum": [
-                "DAY", "NIGHT", "DAWN", "DUSK", "MORNING",
-                "EVENING", "CONTINUOUS", "UNKNOWN",
+                "DAY",
+                "NIGHT",
+                "DAWN",
+                "DUSK",
+                "MORNING",
+                "EVENING",
+                "CONTINUOUS",
+                "UNKNOWN",
             ],
             "description": "Time of day from the scene heading",
         },
@@ -61,8 +66,12 @@ SCENE_SCHEMA: dict[str, Any] = {
         },
     },
     "required": [
-        "location", "location_type", "time_of_day",
-        "characters", "action_text", "dialogue",
+        "location",
+        "location_type",
+        "time_of_day",
+        "characters",
+        "action_text",
+        "dialogue",
     ],
 }
 
@@ -89,9 +98,7 @@ async def structure_scene_with_llm(
     minimal fallback dict so the pipeline does not break.
     """
     pm = get_prompt_manager()
-    system_prompt, user_prompt = pm.get(
-        "pdf_structuring", "scene", scene_text=scene_text
-    )
+    system_prompt, user_prompt = pm.get("pdf_structuring", "scene", scene_text=scene_text)
 
     try:
         result = await llm_provider.generate_structured(
@@ -113,9 +120,7 @@ async def extract_title_from_preamble(
 ) -> str | None:
     """Extract a script title from the preamble text via LLM."""
     pm = get_prompt_manager()
-    system_prompt, user_prompt = pm.get(
-        "pdf_structuring", "preamble", preamble_text=preamble_text
-    )
+    system_prompt, user_prompt = pm.get("pdf_structuring", "preamble", preamble_text=preamble_text)
 
     try:
         result = await llm_provider.generate_structured(

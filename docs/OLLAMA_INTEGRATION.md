@@ -168,7 +168,7 @@ provider = get_llm_provider(settings)
 response = await provider.generate(
     prompt="Analyze this script scene for safety risks: ...",
     system_prompt="You are a safety expert for film productions.",
-    temperature=0.3
+    temperature=0.3,
 )
 
 # Strukturierte Ausgabe
@@ -177,14 +177,11 @@ schema = {
     "properties": {
         "risk_level": {"type": "string", "enum": ["low", "medium", "high"]},
         "findings": {"type": "array", "items": {"type": "string"}},
-        "confidence": {"type": "number"}
-    }
+        "confidence": {"type": "number"},
+    },
 }
 
-result = await provider.generate_structured(
-    prompt="Analyze: ...",
-    schema=schema
-)
+result = await provider.generate_structured(prompt="Analyze: ...", schema=schema)
 # Returns: {"risk_level": "medium", "findings": [...], "confidence": 0.85}
 ```
 
@@ -259,6 +256,7 @@ Wenn M06 (LLM-Adapter) implementiert wird, sind die Provider bereits fertig:
 # workflows/activities.py
 from llm.factory import get_llm_provider
 
+
 @activity.defn(name="analyze_risks")
 async def analyze_risks_activity(parsed_data: dict) -> dict:
     settings = get_settings()
@@ -268,7 +266,7 @@ async def analyze_risks_activity(parsed_data: dict) -> dict:
     result = await provider.generate_structured(
         prompt=f"Analyze scenes for safety risks: {parsed_data['scenes']}",
         schema=RISK_SCHEMA,
-        system_prompt=SAFETY_EXPERT_PROMPT
+        system_prompt=SAFETY_EXPERT_PROMPT,
     )
 
     return result

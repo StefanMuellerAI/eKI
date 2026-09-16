@@ -1,6 +1,6 @@
 [project]
 name = "eki-api"
-version = "0.1.0"
+dynamic = ["version"]
 description = "KI-gestützte Sicherheitsprüfung für Drehbücher - Filmakademie Baden-Württemberg"
 authors = [
     {name = "Filmakademie Baden-Württemberg"}
@@ -111,6 +111,9 @@ dev = [
 requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.dynamic]
+version = {attr = "core.version.__version__"}
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["api*", "core*", "services*", "workflows*", "worker*", "llm*", "db*", "parsers*", "config*"]
@@ -118,13 +121,13 @@ exclude = ["tests*", "docker*", "postman*", "secrets*", "openapi*", "scripts*"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = "-ra -q --strict-markers --cov=api --cov=core --cov=services --cov=workflows --cov=parsers"
+addopts = "-ra -q --strict-markers --cov=api --cov=core --cov=services --cov=workflows --cov=parsers --cov=llm"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 pythonpath = ["."]
 
 [tool.coverage.run]
-source = ["api", "core", "services", "workflows", "worker", "parsers"]
+source = ["api", "core", "services", "workflows", "worker", "parsers", "llm"]
 omit = ["tests/*", "*/migrations/*"]
 
 [tool.coverage.report]

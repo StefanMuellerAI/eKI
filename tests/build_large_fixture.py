@@ -31,7 +31,6 @@ from reportlab.platypus import (
     Spacer,
 )
 
-
 # Drehbuch-typische Layout-Konstanten
 PAGE_MARGIN = 2.0 * cm
 HEADING_FONT_SIZE = 12
@@ -317,10 +316,12 @@ def build_pdf(out_path: Path, n_scenes: int = TARGET_SCENES) -> None:
         spaceAfter=24,
     )
     flow.append(Paragraph("DAS UNGESCHRIEBENE", title_style))
-    flow.append(Paragraph(
-        "Synthetisches Test-Drehbuch (eKI M07 Großdokument-Benchmark)",
-        styles["Italic"],
-    ))
+    flow.append(
+        Paragraph(
+            "Synthetisches Test-Drehbuch (eKI M07 Großdokument-Benchmark)",
+            styles["Italic"],
+        )
+    )
     flow.append(Spacer(1, 1.0 * cm))
     flow.append(Paragraph("FADE IN:", action_style))
     flow.append(Spacer(1, 0.5 * cm))
@@ -337,9 +338,7 @@ def build_pdf(out_path: Path, n_scenes: int = TARGET_SCENES) -> None:
         heading = f"{scene_no} {tpl['heading']}"
         flow.append(Paragraph(heading, heading_style))
 
-        action = tpl["action"].format(
-            char_a=tpl["char_a"], char_b=tpl["char_b"]
-        )
+        action = tpl["action"].format(char_a=tpl["char_a"], char_b=tpl["char_b"])
         flow.append(Paragraph(action, action_style))
 
         flow.append(Paragraph(tpl["char_a"], character_style))
@@ -347,9 +346,7 @@ def build_pdf(out_path: Path, n_scenes: int = TARGET_SCENES) -> None:
 
         flow.append(Paragraph(tpl["char_b"], character_style))
         if tpl.get("parenthetical_b"):
-            flow.append(
-                Paragraph(f"({tpl['parenthetical_b']})", parenthetical_style)
-            )
+            flow.append(Paragraph(f"({tpl['parenthetical_b']})", parenthetical_style))
         flow.append(Paragraph(tpl["dialogue_b"], dialogue_style))
 
         # Jede Szene endet auf eigener "Seite". Drehbuchstandard ist

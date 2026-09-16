@@ -53,9 +53,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: Run Bandit security scan
-        run: bandit -r api core services workflows worker -f json -o bandit-report.json
-        continue-on-error: true
+      - name: Run Bandit security scan (fails on medium+ severity)
+        run: |
+          bandit -r api core services workflows worker llm parsers -f json -o bandit-report.json || true
+          bandit -r api core services workflows worker llm parsers -ll -q
 
       - name: Upload Bandit report
         uses: actions/upload-artifact@v4
@@ -64,7 +65,7 @@ jobs:
           name: bandit-report
           path: bandit-report.json
 
-      - name: Run Safety check
+      - name: Run Safety dependency check (advisory)
         run: safety check --json
         continue-on-error: true
 
@@ -116,7 +117,7 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://eki_user:eki_password@localhost:5432/eki_test
           REDIS_URL: redis://localhost:6379/0
           ENV: test
-        run: pytest --cov --cov-report=xml --cov-report=html
+        run: pytest --cov --cov-report=xml --cov-report=html --cov-fail-under=70
 
       - name: Upload coverage to artifacts
         uses: actions/upload-artifact@v4
@@ -148,9 +149,8 @@ jobs:
       - name: Install Spectral
         run: npm install -g @stoplight/spectral-cli
 
-      - name: Validate OpenAPI spec
-        run: spectral lint openapi/eki-api-v0.1.yaml --ruleset .spectral.yaml
-        continue-on-error: true
+      - name: Validate OpenAPI spec (0 errors required)
+        run: spectral lint openapi/eki-api-v0.1.yaml --ruleset .spectral.yaml --fail-severity=error
 
   docker-build:
     name: Docker Build

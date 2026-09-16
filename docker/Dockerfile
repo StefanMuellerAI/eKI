@@ -12,8 +12,9 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
+# Copy requirements (core/version.py is read by setuptools for the dynamic version)
 COPY pyproject.toml ./
+COPY core/version.py ./core/version.py
 
 # Install dependencies
 RUN pip install --upgrade pip && \

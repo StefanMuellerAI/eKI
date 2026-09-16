@@ -5,8 +5,9 @@ import json
 import logging
 import re
 import time
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator
+from typing import Any
 
 import httpx
 
@@ -106,10 +107,7 @@ async def _ollama_slot() -> AsyncIterator[None]:
         if interval_ms > 0:
             global _OLLAMA_LAST_CALL_MONOTONIC
             async with _get_throttle_lock():
-                wait = (
-                    _OLLAMA_LAST_CALL_MONOTONIC + (interval_ms / 1000.0)
-                    - time.monotonic()
-                )
+                wait = _OLLAMA_LAST_CALL_MONOTONIC + (interval_ms / 1000.0) - time.monotonic()
                 if wait > 0:
                     await asyncio.sleep(wait)
                 _OLLAMA_LAST_CALL_MONOTONIC = time.monotonic()
@@ -394,7 +392,9 @@ class OllamaProvider(BaseLLMProvider):
         if len(clean_text) > self.embedding_max_chars:
             logger.warning(
                 "Embedding input truncated from %d to %d chars to fit '%s' context window",
-                len(clean_text), self.embedding_max_chars, self.embedding_model,
+                len(clean_text),
+                self.embedding_max_chars,
+                self.embedding_model,
             )
             clean_text = clean_text[: self.embedding_max_chars]
 

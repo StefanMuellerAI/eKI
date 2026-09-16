@@ -59,7 +59,7 @@ class KBDocumentResponse(BaseModel):
     chunk_count: int
 
     @classmethod
-    def from_summary(cls, summary: KBDocumentSummary) -> "KBDocumentResponse":
+    def from_summary(cls, summary: KBDocumentSummary) -> KBDocumentResponse:
         return cls(
             doc_id=summary.doc_id,
             title=summary.title,

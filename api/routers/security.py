@@ -16,12 +16,9 @@ import redis.asyncio as aioredis
 from fastapi import (
     APIRouter,
     Depends,
-    File,
-    Form,
     HTTPException,
     Path,
     Request,
-    UploadFile,
     status,
 )
 from pydantic import ValidationError
@@ -39,6 +36,7 @@ from api.dependencies import (
 )
 from api.rate_limiting import rate_limit_combined
 from core.db_models import ApiKeyModel, JobMetadata, ReportMetadata
+from core.exceptions import ServiceUnavailableException
 from core.models import (
     AsyncSecurityCheckRequest,
     AsyncSecurityCheckResponse,
@@ -51,7 +49,6 @@ from core.models import (
     SecurityReport,
     SyncSecurityCheckResponse,
 )
-from core.exceptions import ServiceUnavailableException
 from services.secure_buffer import SecureBuffer
 from workflows.security_check import SecurityCheckWorkflow
 
@@ -100,41 +97,72 @@ class ResolvedRequest:
     script_id: int | None = None
 
 
-async def _resolve_request(request: Request) -> ResolvedRequest:
-    """Inspect Content-Type and parse the request into a ResolvedRequest."""
-    ct = (request.headers.get("content-type") or "").lower()
-    if "multipart/form-data" in ct:
-        return await _resolve_multipart(request)
-    return await _resolve_json(request)
+def _validation_error_to_http(exc: ValidationError) -> HTTPException:
+    details = "; ".join(
+        f"{'.'.join(str(loc) for loc in e['loc'])}: {e['msg']}" if e.get("loc") else e["msg"]
+        for e in exc.errors()
+    )
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=f"Request validation failed: {details}",
+    )
 
 
-async def _resolve_json(request: Request) -> ResolvedRequest:
-    body = await request.json()
+def _validate_priority(raw: Any) -> int:
+    """Validate the async-only ``priority`` field (1..10) outside of Pydantic.
+
+    Both request resolvers accept the priority as loosely typed input
+    (JSON number or multipart string); this funnels it through the same
+    bounds as ``AsyncSecurityCheckRequest.priority``.
+    """
     try:
-        req = SecurityCheckRequest(**body)
-    except ValidationError as exc:
-        details = "; ".join(
-            f"{'.'.join(str(l) for l in e['loc'])}: {e['msg']}" if e.get("loc")
-            else e["msg"]
-            for e in exc.errors()
-        )
+        priority = int(raw)
+    except (TypeError, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Request validation failed: {details}",
+            detail="Request validation failed: priority: must be an integer between 1 and 10",
         ) from exc
+    if not 1 <= priority <= 10:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Request validation failed: priority: must be between 1 and 10",
+        )
+    return priority
+
+
+async def _resolve_request(request: Request, *, is_async: bool = False) -> ResolvedRequest:
+    """Inspect Content-Type and parse the request into a ResolvedRequest.
+
+    ``is_async`` selects the stricter ``AsyncSecurityCheckRequest`` model so
+    that async-only fields (``priority``) are validated server-side.
+    """
+    ct = (request.headers.get("content-type") or "").lower()
+    if "multipart/form-data" in ct:
+        return await _resolve_multipart(request, is_async=is_async)
+    return await _resolve_json(request, is_async=is_async)
+
+
+async def _resolve_json(request: Request, *, is_async: bool = False) -> ResolvedRequest:
+    body = await request.json()
+    model_cls = AsyncSecurityCheckRequest if is_async else SecurityCheckRequest
+    try:
+        req = model_cls(**body)
+    except ValidationError as exc:
+        raise _validation_error_to_http(exc) from exc
+    priority = req.priority if isinstance(req, AsyncSecurityCheckRequest) else 5
     return ResolvedRequest(
         b64_content=req.script_content,
         script_format=req.script_format,
         project_id=req.project_id,
         metadata=req.metadata,
-        priority=body.get("priority", 5),
+        priority=priority,
         delivery=req.delivery,
         idempotency_key=req.idempotency_key,
         script_id=req.script_id,
     )
 
 
-async def _resolve_multipart(request: Request) -> ResolvedRequest:
+async def _resolve_multipart(request: Request, *, is_async: bool = False) -> ResolvedRequest:
     form = await request.form()
     upload = form.get("file")
     if upload is None or not hasattr(upload, "read"):
@@ -182,12 +210,14 @@ async def _resolve_multipart(request: Request) -> ResolvedRequest:
     raw_script_id = form.get("script_id")
     script_id = int(raw_script_id) if raw_script_id not in (None, "") else None
 
+    priority = _validate_priority(form.get("priority", 5)) if is_async else 5
+
     return ResolvedRequest(
         b64_content=b64,
         script_format=fmt,
         project_id=project_id,
         metadata={},
-        priority=int(form.get("priority", 5)),
+        priority=priority,
         delivery=str(form.get("delivery", "pull")),
         idempotency_key=str(form.get("idempotency_key", "")) or None,
         script_id=script_id,
@@ -295,13 +325,11 @@ async def security_check_async(
     settings = get_settings()
     buffer = _get_buffer(redis_client)
 
-    resolved = await _resolve_request(request)
+    resolved = await _resolve_request(request, is_async=True)
 
     # Idempotency check: if key exists, return existing job
     if resolved.idempotency_key:
-        stmt = select(JobMetadata).where(
-            JobMetadata.idempotency_key == resolved.idempotency_key
-        )
+        stmt = select(JobMetadata).where(JobMetadata.idempotency_key == resolved.idempotency_key)
         existing = await db.execute(stmt)
         existing_job = existing.scalar_one_or_none()
         if existing_job:

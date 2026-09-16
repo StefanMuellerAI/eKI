@@ -155,22 +155,16 @@ class KnowledgeDocument(Base):
 
     __tablename__ = "kb_documents"
 
-    doc_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    doc_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     # Allowed values: UPLOAD, SHARE, URL, PLACEHOLDER (seed data marker)
     source: Mapped[str] = mapped_column(String(20), nullable=False)
-    tenant_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), nullable=False, index=True
-    )
+    tenant_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, index=True)
     tags: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, default=list, server_default="[]"
     )
     original_text_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    content_hash: Mapped[str] = mapped_column(
-        String(64), nullable=False, unique=True, index=True
-    )
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     uploaded_by: Mapped[str] = mapped_column(String(255), nullable=False)
     ttl_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=720)
     created_at: Mapped[datetime] = mapped_column(
