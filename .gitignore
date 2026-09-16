@@ -29,6 +29,7 @@ ENV/
 # IDEs
 .vscode/
 .idea/
+.cursor/
 *.swp
 *.swo
 *~
@@ -37,6 +38,8 @@ ENV/
 .pytest_cache/
 .coverage
 htmlcov/
+# Lokale Testlauf-Ergebnisse (enthalten ggf. echte Drehbuch-Reports -- nie ins Repo)
+tests/reports/
 .tox/
 .hypothesis/
 
