@@ -345,6 +345,7 @@ class SecurityCheckWorkflow:
                 "scene_ref_keys": scene_ref_keys,
                 "title": title,
                 "ocr_pages_skipped": text_result.get("ocr_pages_skipped", []),
+                "ocr_pages_done": text_result.get("ocr_pages_done", []),
                 "blocks_ref_key": split_result["blocks_ref_key"],
                 "used_page_fallback": used_page_fallback,
                 "extra_warnings": extraction_warnings,

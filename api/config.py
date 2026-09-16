@@ -222,6 +222,13 @@ class Settings(BaseSettings):
             "to keep the context window under control on large screenplays."
         ),
     )
+    # OCR fallback for image-only PDF pages (Pflichtenheft 4.1).
+    ocr_enabled: bool = Field(default=True, description="Run tesseract on pages without text layer")
+    ocr_languages: str = Field(default="deu+eng", description="Tesseract language string")
+    ocr_max_pages: int = Field(default=50, description="Max OCR'd pages per document")
+    ocr_dpi: int = Field(default=300, description="Render resolution for OCR")
+    ocr_page_timeout_seconds: int = Field(default=60, description="Tesseract timeout per page")
+
     # M09: KB-TTL-Cleanup als Temporal-Schedule (taeglich 03:00 UTC).
     kb_cleanup_enabled: bool = Field(
         default=True, description="Create the daily KB TTL cleanup schedule"

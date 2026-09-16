@@ -100,6 +100,7 @@ Beide Workflows teilen sich die Risikoanalyse (pro Szene) und Delivery-Activitie
 - Docker & Docker Compose
 - Python 3.11+ (fuer lokale Entwicklung)
 - Ollama mit `mistral-small3.2` fuer LLM-Inferenz
+- Fuer lokale Entwicklung ohne Docker: `tesseract-ocr tesseract-ocr-deu tesseract-ocr-eng` (OCR-Fallback; im Docker-Image enthalten)
 
 ### Setup
 
@@ -193,9 +194,15 @@ Verarbeitet Final Draft XML (.fdx) Drehbuecher mit `defusedxml` (XXE-Schutz). Al
 
 Verarbeitet PDF-Drehbuecher in drei Schritten:
 
-1. **Text-Extraktion** (pdfplumber): Seitenweise, in-memory, OCR-Erkennung fuer gescannte Seiten
-2. **Deterministischer Split** (Regex): Zuverlaessige Aufteilung an INT/EXT/INNEN/AUSSEN-Markern
-3. **LLM-Strukturierung** (Ollama/Mistral Structured Output): Jeder Szenenblock wird per KI in das ParsedScene-Schema ueberfuehrt -- Location, Characters, Dialogue, Action
+1. **Text-Extraktion** (pdfplumber): Seitenweise, in-memory
+2. **OCR-Fallback** (Tesseract, Pflichtenheft §4.1): Seiten ohne Textebene (Scans) werden
+   in-memory gerendert und per `pytesseract` erkannt (`deu+eng`). Der erkannte Text wird an der
+   Seitenposition eingesetzt, sodass der Seiten-Fallback-Splitter ausgerichtet bleibt; Szenen aus
+   OCR-Seiten erhalten Confidence x 0,7. Steuerung: `OCR_ENABLED` (Default `true`),
+   `OCR_LANGUAGES`, `OCR_MAX_PAGES` (Laufzeit-Cap), `OCR_DPI`, `OCR_PAGE_TIMEOUT_SECONDS`.
+   Fehlt Tesseract, wird die Seite mit Warnung uebersprungen (kein Abbruch).
+3. **Deterministischer Split** (Regex): Zuverlaessige Aufteilung an INT/EXT/INNEN/AUSSEN-Markern
+4. **LLM-Strukturierung** (Ollama/Mistral Structured Output): Jeder Szenenblock wird per KI in das ParsedScene-Schema ueberfuehrt -- Location, Characters, Dialogue, Action
 
 IDs, Zaehler und der Character-Index werden programmatisch vergeben, nicht von der KI.
 
@@ -526,7 +533,8 @@ eKI_API/
 ├── parsers/                      # Drehbuch-Parser
 │   ├── base.py                   # Async ParserBase + Factory
 │   ├── fdx.py                    # Final Draft XML Parser (M02)
-│   ├── pdf.py                    # PDF Parser mit LLM-Strukturierung (M03)
+│   ├── pdf.py                    # PDF Parser mit LLM-Strukturierung (M03) + OCR-Fallback
+│   ├── pdf_ocr.py                # Tesseract-OCR fuer bildbasierte Seiten
 │   ├── pdf_scene_splitter.py     # Deterministischer INT/EXT-Split (M03)
 │   ├── pdf_llm_structurer.py     # LLM Structured Output pro Szene (M03)
 │   ├── scene_heading.py          # Scene-Heading-Parser (DE/EN)

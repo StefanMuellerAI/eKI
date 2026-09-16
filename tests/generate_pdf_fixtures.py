@@ -346,6 +346,90 @@ def create_large_120_pages():
     print(f"Created: {path} ({c.getPageNumber()} pages)")
 
 
+SCANNED_LINES = [
+    "INT. KUECHE - TAG",
+    "",
+    "Eine helle Kueche. ANNA schneidet Gemuese.",
+    "Ein Topf kocht auf dem Herd.",
+    "",
+    "                    ANNA",
+    "          Das Essen ist gleich fertig.",
+    "",
+    "EXT. HOF - NACHT",
+    "",
+    "PAUL laeuft ueber den dunklen Hof.",
+    "Ein Hund bellt in der Ferne.",
+]
+
+
+def _render_text_image(lines: list[str], width_px: int = 1700, height_px: int = 2200):
+    """Render screenplay lines to a PIL image (simulates a scanned page)."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    image = Image.new("L", (width_px, height_px), color=255)
+    draw = ImageDraw.Draw(image)
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", size=40)
+    except OSError:
+        font = ImageFont.load_default()
+    y = 150
+    for line in lines:
+        draw.text((150, y), line, fill=0, font=font)
+        y += 70
+    return image
+
+
+def create_scanned_screenplay():
+    """OCR fixture: one image-only page followed by one page with a text layer.
+
+    Page 1 carries no text layer at all (pure raster), page 2 is a normal
+    text page, so the fixture also verifies page-index alignment.
+    """
+    import io
+
+    from reportlab.lib.utils import ImageReader
+
+    path = FIXTURES_DIR / "scanned_screenplay.pdf"
+    c = canvas.Canvas(str(path), pagesize=LETTER)
+
+    image = _render_text_image(SCANNED_LINES)
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    buf.seek(0)
+    c.drawImage(ImageReader(buf), 0, 0, width=LETTER[0], height=LETTER[1])
+    c.showPage()
+
+    c.setFont(FONT, FONT_SIZE)
+    _write_lines(
+        c,
+        [
+            "INT. WOHNZIMMER - ABEND",
+            "",
+            "ANNA und PAUL sitzen auf dem Sofa.",
+            "",
+            "                    PAUL",
+            "          Was fuer ein Tag.",
+        ],
+        LETTER[1] - 72,
+    )
+    c.save()
+    print(f"Created {path}")
+
+
+def create_blank_middle_page():
+    """Alignment fixture: text page, completely blank page, text page."""
+    path = FIXTURES_DIR / "blank_middle_page.pdf"
+    c = canvas.Canvas(str(path), pagesize=LETTER)
+    c.setFont(FONT, FONT_SIZE)
+    _write_lines(c, ["INT. BUERO - TAG", "", "Erste Seite mit Text."], LETTER[1] - 72)
+    c.showPage()  # page 2: intentionally empty
+    c.showPage()
+    c.setFont(FONT, FONT_SIZE)
+    _write_lines(c, ["EXT. STRASSE - NACHT", "", "Dritte Seite mit Text."], LETTER[1] - 72)
+    c.save()
+    print(f"Created {path}")
+
+
 if __name__ == "__main__":
     create_simple_screenplay()
     create_german_screenplay()
@@ -354,4 +438,6 @@ if __name__ == "__main__":
     create_no_structure_multi_page()
     create_password_protected()
     create_large_120_pages()
+    create_scanned_screenplay()
+    create_blank_middle_page()
     print("All PDF fixtures generated!")

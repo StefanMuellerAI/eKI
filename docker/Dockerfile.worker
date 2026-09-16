@@ -25,9 +25,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
+# Install runtime dependencies (tesseract = OCR fallback for scanned PDFs)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
+    tesseract-ocr \
+    tesseract-ocr-deu \
+    tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder

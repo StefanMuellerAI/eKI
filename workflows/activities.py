@@ -93,9 +93,15 @@ async def extract_pdf_text_activity(job_data: dict[str, Any]) -> dict[str, Any]:
     b64_content = raw_data["script_content"]
     content_bytes = base64.b64decode(b64_content)
 
+    import asyncio
+
     from parsers.pdf import extract_pdf_text
 
-    full_text, page_texts, ocr_pages, warnings = extract_pdf_text(content_bytes)
+    # OCR (if triggered) is CPU-bound -> keep the worker event loop responsive.
+    extraction = await asyncio.to_thread(extract_pdf_text, content_bytes)
+    full_text, page_texts = extraction.full_text, extraction.page_texts
+    if extraction.ocr_pages_done:
+        metrics.SCENES_PROCESSED_TOTAL.labels(stage="ocr_page").inc(len(extraction.ocr_pages_done))
 
     text_ref = await buffer.store(
         {
@@ -107,9 +113,10 @@ async def extract_pdf_text_activity(job_data: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "text_ref_key": text_ref,
-        "ocr_pages_skipped": ocr_pages,
+        "ocr_pages_done": extraction.ocr_pages_done,
+        "ocr_pages_skipped": extraction.ocr_pages_skipped,
         "text_length": len(full_text),
-        "extraction_warnings": warnings,
+        "extraction_warnings": extraction.warnings,
     }
 
 
@@ -245,6 +252,7 @@ async def aggregate_script_activity(job_data: dict[str, Any]) -> dict[str, Any]:
     scene_ref_keys = job_data.get("scene_ref_keys", [])
     title = job_data.get("title")
     ocr_pages = job_data.get("ocr_pages_skipped", [])
+    ocr_pages_done = job_data.get("ocr_pages_done", [])
     blocks_ref_key = job_data.get("blocks_ref_key", "")
     used_page_fallback = job_data.get("used_page_fallback", False)
     extra_warnings = job_data.get("extra_warnings", [])
@@ -281,8 +289,13 @@ async def aggregate_script_activity(job_data: dict[str, Any]) -> dict[str, Any]:
     scenes: list[ParsedScene] = []
     warnings: list[str] = list(extra_warnings)
 
+    if ocr_pages_done:
+        warnings.append(f"Pages {ocr_pages_done} had no text layer; text recovered via OCR.")
     if ocr_pages:
-        warnings.append(f"Pages {ocr_pages} appear scanned. OCR is not yet supported.")
+        warnings.append(
+            f"Pages {ocr_pages} appear to be image-only and could not be OCR'd "
+            "(OCR disabled, unavailable, capped or no text recognised)."
+        )
 
     for i, ref_key in enumerate(scene_ref_keys):
         scene_data = await buffer.retrieve(ref_key)
@@ -347,6 +360,7 @@ async def aggregate_script_activity(job_data: dict[str, Any]) -> dict[str, Any]:
         warnings=warnings,
         metadata={
             "parser": "pdf_page_fallback" if used_page_fallback else "pdf_llm",
+            "ocr_pages_done": ocr_pages_done,
             "ocr_pages_skipped": ocr_pages,
             "used_page_fallback": used_page_fallback,
         },

@@ -26,6 +26,7 @@ from parsers.pdf_llm_structurer import (
     llm_result_to_parsed_scene_fields,
     structure_scene_with_llm,
 )
+from parsers.pdf_ocr import MIN_TEXT_CHARS_PER_PAGE, OcrConfig, OcrRunner, PdfExtraction
 from parsers.pdf_scene_splitter import split_into_scenes
 
 logger = logging.getLogger(__name__)
@@ -62,14 +63,20 @@ def _effective_pdf_limits(max_pages: int | None) -> tuple[int, int]:
 
 
 def extract_pdf_text(
-    content: bytes, max_pages: int | None = None
-) -> tuple[str, list[str], list[int], list[str]]:
+    content: bytes,
+    max_pages: int | None = None,
+    *,
+    ocr_config: OcrConfig | None = None,
+) -> PdfExtraction:
     """Extract text from a PDF, page by page, in-memory only.
 
-    Returns ``(full_text, page_texts, ocr_needed_pages, warnings)`` where:
-    - *page_texts* preserves per-page text (used for page-based fallback splitting)
-    - *ocr_needed_pages* lists 1-based page numbers that appear image-only
-    - *warnings* collects non-fatal issues encountered during extraction
+    Returns a :class:`PdfExtraction`. It still unpacks as the legacy 4-tuple
+    ``(full_text, page_texts, ocr_needed_pages, warnings)``.
+
+    Pages without a text layer (< ``MIN_TEXT_CHARS_PER_PAGE`` chars) go through
+    the OCR fallback (``parsers/pdf_ocr.py``). Their text is inserted **at the
+    page's own position** in ``page_texts``; pages that still yield nothing stay
+    as empty strings so page indices remain aligned with page numbers.
     """
     import pdfplumber
     from pdfminer.pdfdocument import PDFPasswordIncorrect
@@ -85,8 +92,8 @@ def extract_pdf_text(
         )
 
     pages_text: list[str] = []
-    ocr_needed: list[int] = []
     warnings: list[str] = []
+    ocr = OcrRunner(ocr_config)
 
     try:
         with pdfplumber.open(io.BytesIO(content)) as pdf:
@@ -98,9 +105,8 @@ def extract_pdf_text(
                 )
             for i, page in enumerate(pdf.pages[:effective_max_pages]):
                 text = page.extract_text() or ""
-                if len(text.strip()) < 10:
-                    ocr_needed.append(i + 1)
-                    continue
+                if len(text.strip()) < MIN_TEXT_CHARS_PER_PAGE:
+                    text = ocr.process(page, i + 1)
                 pages_text.append(text)
     except PDFPasswordIncorrect:
         raise ParsingException(
@@ -129,12 +135,39 @@ def extract_pdf_text(
             details={"reason": str(exc)},
         )
 
-    full_text = "\n".join(pages_text)
+    full_text = "\n".join(t for t in pages_text if t)
+    warnings.extend(ocr.warnings)
 
+    if ocr.pages_done:
+        logger.info(
+            "OCR fallback applied to %d page(s): %s", len(ocr.pages_done), ocr.pages_done[:20]
+        )
     if pages_text and len(full_text.strip()) < 50:
         warnings.append("PDF contains very little extractable text. Results may be incomplete.")
 
-    return full_text, pages_text, ocr_needed, warnings
+    return PdfExtraction(
+        full_text=full_text,
+        page_texts=pages_text,
+        ocr_pages_done=sorted(ocr.pages_done),
+        ocr_pages_skipped=sorted(ocr.pages_skipped),
+        warnings=warnings,
+    )
+
+
+def _block_touches_pages(block: Any, page_texts: list[str], ocr_pages: set[int]) -> bool:
+    """Heuristic: does *block* contain text that came from an OCR'd page?
+
+    Scene blocks do not carry page numbers, so we check whether the block's
+    first non-empty line appears in any OCR'd page's text.
+    """
+    probe = next((ln.strip() for ln in block.text.splitlines() if ln.strip()), "")
+    if not probe:
+        return False
+    for page_no in ocr_pages:
+        idx = page_no - 1
+        if 0 <= idx < len(page_texts) and probe in page_texts[idx]:
+            return True
+    return False
 
 
 class PDFParser(ParserBase):
@@ -166,19 +199,29 @@ class PDFParser(ParserBase):
 
             self._llm = get_llm_provider(get_settings())
 
-        # 1. Extract text
-        full_text, page_texts, ocr_pages, extract_warnings = extract_pdf_text(content)
-        warnings.extend(extract_warnings)
-        if ocr_pages:
+        # 1. Extract text (with OCR fallback for image-only pages)
+        extraction = extract_pdf_text(content)
+        full_text, page_texts = extraction.full_text, extraction.page_texts
+        warnings.extend(extraction.warnings)
+        if extraction.ocr_pages_done:
             warnings.append(
-                f"Pages {ocr_pages} appear to be scanned/image-only. OCR is not yet supported."
+                f"Pages {extraction.ocr_pages_done} had no text layer; text recovered via OCR."
+            )
+        if extraction.ocr_pages_skipped:
+            warnings.append(
+                f"Pages {extraction.ocr_pages_skipped} appear to be image-only and could not be "
+                "OCR'd (OCR disabled, unavailable, capped or no text recognised)."
             )
         if not full_text.strip():
             raise ParsingException(
-                "PDF contains no extractable text. "
-                "The document may be image-only (scanned). OCR is not yet supported.",
-                details={"ocr_pages": ocr_pages},
+                "PDF contains no extractable text, even after OCR. "
+                "The document may be image-only with unreadable scans.",
+                details={
+                    "ocr_pages_done": extraction.ocr_pages_done,
+                    "ocr_pages_skipped": extraction.ocr_pages_skipped,
+                },
             )
+        ocr_page_set = set(extraction.ocr_pages_done)
 
         # 2. Deterministic split at INT/EXT markers (with page-based fallback)
         blocks = split_into_scenes(full_text, page_texts=page_texts)
@@ -209,6 +252,9 @@ class PDFParser(ParserBase):
                     confidence = 0.3 if fields["location"] != "UNKNOWN" else 0.1
                 else:
                     confidence = 1.0 if fields["location"] != "UNKNOWN" else 0.5
+                # OCR'd pages: recognised text is less reliable than a text layer.
+                if ocr_page_set and _block_touches_pages(block, page_texts, ocr_page_set):
+                    confidence = round(confidence * 0.7, 3)
             except Exception as exc:
                 logger.warning("Scene %d LLM structuring failed: %s", scene_counter, exc)
                 fields = {
@@ -259,7 +305,8 @@ class PDFParser(ParserBase):
             warnings=warnings,
             metadata={
                 "parser": "pdf_llm",
-                "ocr_pages_skipped": ocr_pages,
+                "ocr_pages_done": extraction.ocr_pages_done,
+                "ocr_pages_skipped": extraction.ocr_pages_skipped,
             },
         )
 

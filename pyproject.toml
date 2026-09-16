@@ -64,8 +64,10 @@ dependencies = [
     # Encryption (Fernet for SecureBuffer)
     "cryptography>=42.0.0",
 
-    # PDF Parsing
+    # PDF Parsing (+ OCR fallback via tesseract binary)
     "pdfplumber>=0.10.0",
+    "pytesseract>=0.3.10",
+    "Pillow>=10.0",
 
     # YAML (Prompt Management)
     "pyyaml>=6.0",
