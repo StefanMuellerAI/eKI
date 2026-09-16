@@ -150,6 +150,25 @@ class Settings(BaseSettings):
     mistral_model: str = Field(default="mistral-large-latest", description="Mistral model name")
     mistral_timeout: int = Field(default=120, description="Mistral request timeout in seconds")
 
+    # M11: Lokaler Mistral-Adapter (Produktion, Pflichtenheft 4.3). Laeuft ueber
+    # Ollama; nutzt die OLLAMA_*-Werte als Fallback, damit ein Wechsel von
+    # LLM_PROVIDER=ollama auf local_mistral ohne weitere Konfig moeglich ist.
+    local_mistral_model: str = Field(
+        default="mistral-small3.2",
+        description="Ollama model tag for the production LocalMistral adapter",
+    )
+    local_mistral_base_url: str | None = Field(
+        default=None,
+        description="Ollama base URL for the LocalMistral adapter (defaults to OLLAMA_BASE_URL)",
+    )
+    llm_allow_external_providers: bool = Field(
+        default=False,
+        description=(
+            "Allow cloud LLM providers (mistral_cloud) in production. Default false "
+            "enforces Pflichtenheft 4.3 'keine externen Cloud-Aufrufe' (Abnahmetest 9)."
+        ),
+    )
+
     # Ollama Configuration
     ollama_base_url: str = Field(default="http://ollama:11434", description="Ollama base URL")
     ollama_model: str = Field(
@@ -486,6 +505,13 @@ class Settings(BaseSettings):
 
         if self.debug:
             raise ValueError("DEBUG must be false in production")
+
+        # M11: Pflichtenheft 4.3 / Abnahmetest 9 -- in production only local inference.
+        if self.llm_provider.lower() == "mistral_cloud" and not self.llm_allow_external_providers:
+            raise ValueError(
+                "LLM_PROVIDER=mistral_cloud is not allowed in production "
+                "(set LLM_ALLOW_EXTERNAL_PROVIDERS=true to override explicitly)"
+            )
 
         return self
 

@@ -171,7 +171,7 @@ class OllamaProvider(BaseLLMProvider):
         except ValueError as e:
             raise LLMException(
                 "Prompt blocked by security policy",
-                details={"provider": "ollama", "reason": str(e)},
+                details={"provider": self.provider_name, "reason": str(e)},
             )
 
         # Use default system prompt if none provided
@@ -215,7 +215,7 @@ class OllamaProvider(BaseLLMProvider):
             logger.error(f"Ollama API error: {e}")
             raise LLMException(
                 f"Ollama API request failed: {str(e)}",
-                details={"provider": "ollama", "base_url": self.base_url},
+                details={"provider": self.provider_name, "base_url": self.base_url},
             )
 
     async def generate_chat(
@@ -237,9 +237,28 @@ class OllamaProvider(BaseLLMProvider):
         Returns:
             Generated text
         """
+        # M11 parity: chat messages get the same injection protection as
+        # generate()/generate_structured(). User content is sanitized (fail-closed),
+        # system content is wrapped with the system lock.
+        safe_messages: list[dict[str, str]] = []
+        for message in messages:
+            role = message.get("role", "user")
+            content = message.get("content", "")
+            if role == "user":
+                try:
+                    content = PromptSanitizer.validate_and_sanitize(content, raise_on_unsafe=True)
+                except ValueError as e:
+                    raise LLMException(
+                        "Prompt blocked by security policy",
+                        details={"provider": self.provider_name, "reason": str(e)},
+                    )
+            elif role == "system":
+                content, _ = PromptSanitizer.wrap_with_system_lock("", content)
+            safe_messages.append({"role": role, "content": content})
+
         payload = {
             "model": self.model,
-            "messages": messages,
+            "messages": safe_messages,
             "stream": False,
             "options": {
                 "temperature": temperature,
@@ -265,7 +284,7 @@ class OllamaProvider(BaseLLMProvider):
             logger.error(f"Ollama Chat API error: {e}")
             raise LLMException(
                 f"Ollama Chat API request failed: {str(e)}",
-                details={"provider": "ollama", "base_url": self.base_url},
+                details={"provider": self.provider_name, "base_url": self.base_url},
             )
 
     async def generate_structured(
@@ -273,7 +292,7 @@ class OllamaProvider(BaseLLMProvider):
         prompt: str,
         schema: dict[str, Any],
         system_prompt: str | None = None,
-        temperature: float = 0.7,
+        temperature: float = 0.2,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Generate structured output using Ollama's native schema-constrained format.
@@ -289,7 +308,7 @@ class OllamaProvider(BaseLLMProvider):
         except ValueError as e:
             raise LLMException(
                 "Prompt blocked by security policy",
-                details={"provider": "ollama", "reason": str(e)},
+                details={"provider": self.provider_name, "reason": str(e)},
             )
 
         effective_system_prompt = system_prompt
@@ -335,7 +354,7 @@ class OllamaProvider(BaseLLMProvider):
             logger.error(f"Ollama Chat API error: {e}")
             raise LLMException(
                 f"Ollama Chat API request failed: {str(e)}",
-                details={"provider": "ollama", "base_url": self.base_url},
+                details={"provider": self.provider_name, "base_url": self.base_url},
             )
 
         response_text = (result.get("message", {}).get("content") or "").strip()
@@ -384,7 +403,7 @@ class OllamaProvider(BaseLLMProvider):
         if not text or not text.strip():
             raise LLMException(
                 "Cannot embed empty text",
-                details={"provider": "ollama"},
+                details={"provider": self.provider_name},
             )
 
         try:
@@ -392,7 +411,7 @@ class OllamaProvider(BaseLLMProvider):
         except ValueError as e:
             raise LLMException(
                 "Embedding input blocked by security policy",
-                details={"provider": "ollama", "reason": str(e)},
+                details={"provider": self.provider_name, "reason": str(e)},
             )
 
         if len(clean_text) > self.embedding_max_chars:
@@ -407,7 +426,7 @@ class OllamaProvider(BaseLLMProvider):
         payload = {"model": self.embedding_model, "prompt": clean_text}
 
         try:
-            async with observe_llm_call(self.provider_name, "embed"):
+            async with _ollama_slot(), observe_llm_call(self.provider_name, "embed"):
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
                     response = await client.post(
                         f"{self.base_url}/api/embeddings",
@@ -419,14 +438,14 @@ class OllamaProvider(BaseLLMProvider):
             logger.error(f"Ollama embeddings API error: {e}")
             raise LLMException(
                 f"Ollama embeddings API request failed: {str(e)}",
-                details={"provider": "ollama", "model": self.embedding_model},
+                details={"provider": self.provider_name, "model": self.embedding_model},
             )
 
         vector = result.get("embedding")
         if not isinstance(vector, list) or not vector:
             raise LLMException(
                 "Ollama returned an empty or malformed embedding",
-                details={"provider": "ollama", "model": self.embedding_model},
+                details={"provider": self.provider_name, "model": self.embedding_model},
             )
         return [float(v) for v in vector]
 

@@ -1,6 +1,6 @@
 # eKI API -- KI-gestuetzte Sicherheitspruefung fuer Drehbuecher
 
-**Version:** 0.10.0 (Meilenstein M10 abgeschlossen)
+**Version:** 0.11.0 (Meilenstein M11 abgeschlossen)
 **Auftraggeber:** Filmakademie Baden-Wuerttemberg
 **Auftragnehmer:** StefanAI -- Research & Development
 
@@ -458,6 +458,25 @@ Admin-Keys: `python scripts/create_api_key.py --insert --admin`. Ein Replay aus 
 bewusst nicht vorgesehen -- der Inhalt wird beim endgueltigen Scheitern geloescht
 (Delete-on-Delivery); ePro stoesst den Check neu an. Runbook: `docs/M10_FAILOVER_RUNBOOK.md`.
 
+## Lokaler LLM-Adapter & Paritaetstests (M11)
+
+Produktion laeuft ausschliesslich lokal (Pflichtenheft §4.3): `LLM_PROVIDER=local_mistral` nutzt
+`llm/local_mistral.py` mit `LOCAL_MISTRAL_MODEL=mistral-small3.2` (Default) ueber Ollama; der
+Healthcheck prueft, dass das Modell gepullt ist. In `ENV=production` wird `mistral_cloud`
+abgelehnt, solange nicht `LLM_ALLOW_EXTERNAL_PROVIDERS=true` gesetzt ist (Abnahmetest 9).
+`gemma4` bleibt als Alternative konfigurierbar (`LLM_PROVIDER=ollama`, `OLLAMA_MODEL=gemma4:31b`).
+
+```bash
+# Paritaet Cloud <-> Lokal auf dem Golden-Set (16 Szenen)
+python scripts/run_parity.py --providers mistral_cloud,local_mistral,ollama:gemma4:31b
+# Prod-Cutover-Smoke: E2E-Job, One-Shot, Delete-on-Delivery, keine externen LLM-Calls
+python scripts/smoke_prod.py
+```
+
+Report-Rahmen und Schwellen: `docs/M11_PARITY_REPORT.md`. Betriebsleitfaden:
+`docs/OPERATIONS_GUIDE.md`. Release-Images werden bei `v*`-Tags nach GHCR gepusht
+(`docker-compose.prod.yml` referenziert sie ueber `GHCR_OWNER`/`EKI_IMAGE_TAG`).
+
 ## Prompt-Management
 
 Alle LLM-Prompts werden zentral in `config/prompts/prompts.yaml` verwaltet:
@@ -544,6 +563,7 @@ eKI_API/
 │   ├── taxonomy.py               # TaxonomyManager: Scoring, Validierung (M04)
 │   ├── report_generator.py       # JSON + PDF Report Generator (M05)
 │   ├── knowledge_base.py         # KB Ingest/Search/Cleanup mit pgvector (M06)
+│   ├── parity.py                 # Cloud<->Lokal Paritaets-Harness (M11)
 │   └── security_service.py       # Security Service
 ├── workflows/                    # Temporal Workflows
 │   ├── security_check.py         # FDX/PDF Workflow-Router (M03)
@@ -557,7 +577,7 @@ eKI_API/
 │   ├── prompt_manager.py         # YAML Prompt Loader (M03, system-format fix M06)
 │   ├── ollama.py                 # Ollama Provider (Generation + Embeddings, M06)
 │   ├── mistral_cloud.py          # Mistral Cloud Provider (Schema-validated JSON, M06)
-│   └── local_mistral.py          # Local Mistral Alias
+│   └── local_mistral.py          # Lokaler Produktiv-Adapter (mistral-small3.2, M11)
 ├── db/
 │   ├── session.py                # Async Session Management
 │   └── migrations/               # Alembic Migrations
@@ -657,7 +677,7 @@ MISTRAL_API_KEY=your-key
 | M08 | Security/Privacy & Delete-on-Delivery | Abgeschlossen | 6h-Retry-Fenster (`schedule_to_close_timeout`), `cleanup_buffer_activity` im Failure-Branch, opt-in `security.delivery.failed`-Webhook (Anhang 1), `cleanup_buffer_activity`, zentrale Logging-Konfiguration mit `SensitiveContentFilter`, Request-ID-Middleware, OpenAPI-`webhooks`-Block, 34 zusaetzliche Tests |
 | M09 | Observability & SLOs | Abgeschlossen | `core/metrics.py` (20+ Metrikfamilien, API + Worker), HTTP-Metrik-Middleware, OpenTelemetry-Tracing opt-in (`core/tracing.py`), request_id/job_id-Korrelation via Temporal-Interceptor, Observability-Compose-Overlay (Prometheus, Alertmanager, Grafana, Jaeger), 11 Alert-Regeln, 3 provisionierte Dashboards, SLO-Dokument, KB-TTL-Schedule, 40 zusaetzliche Tests |
 | M10 | Outbound-Adapter Hardening | Abgeschlossen | Zustell-Lebenszyklus mit `DELIVERING`, Attempt-Bookkeeping, Idempotency-Header an ePro, 408/425/429 retryable, nutzerbezogene race-sichere Idempotenz, Dead-Letter-Tabelle + `/v1/ops/*`, Pull-TTL-Watch, `X-One-Shot`-Header, Workflow-Timeout 10 h, Failover-Runbook, 30 zusaetzliche Tests (inkl. echter Workflow auf Temporal-Testserver) |
-| M11 | Lokaler LLM-Adapter & Paritaetstests | Ausstehend | |
+| M11 | Lokaler LLM-Adapter & Paritaetstests | Abgeschlossen | Echter `LocalMistralProvider` (mistral-small3.2, Modell-Check, Embeddings aus Settings), Prod-Guard gegen Cloud-Provider, Provider-Paritaetsangleichung, Golden-Set (16 Szenen) + Paritaets-Harness/CLI, GHCR-Release-Images in CI, `docker-compose.prod.yml` (Gunicorn, GPU, Limits), Betriebsleitfaden, `scripts/smoke_prod.py`, 31 zusaetzliche Tests |
 | M12 | UAT-Paket & Uebergabe | Ausstehend | |
 
 ---

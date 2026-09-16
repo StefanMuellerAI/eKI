@@ -46,7 +46,7 @@ class BaseLLMProvider(ABC):
         prompt: str,
         schema: dict[str, Any],
         system_prompt: str | None = None,
-        temperature: float = 0.7,
+        temperature: float = 0.2,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """

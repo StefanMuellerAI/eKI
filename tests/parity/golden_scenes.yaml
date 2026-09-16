@@ -1,0 +1,181 @@
+# M11 -- Golden set for Cloud <-> Local LLM parity tests.
+#
+# Synthetic screenplay scenes with the risk classes a competent safety
+# reviewer expects (Pflichtenheft 4.1 Taxonomie). No real productions.
+#
+# Fields:
+#   id                  stable identifier used in reports
+#   heading             scene heading (also fed to the structurer check)
+#   location_type       expected INT/EXT classification by the structurer
+#   text                scene text handed to the risk analysis
+#   expected_classes    risk classes that MUST be found (recall is measured)
+#   min_severity        lowest acceptable overall severity for the scene
+#                       (info < low < medium < high < critical)
+#   negative            true = scene is benign; any high/critical finding is a false positive
+
+version: "1.0"
+scenes:
+  - id: fire_kitchen
+    heading: "INT. KUECHE - NACHT"
+    location_type: INT
+    text: |
+      INT. KUECHE - NACHT
+      Fett spritzt aus der Pfanne, eine Stichflamme schlaegt bis zur Decke.
+      MARA reisst den brennenden Vorhang herunter und tritt die Flammen aus.
+      Dichter Rauch fuellt den Raum.
+    expected_classes: [FIRE, SMOKE_DUST]
+    min_severity: high
+
+  - id: rooftop_chase
+    heading: "EXT. HOCHHAUSDACH - TAG"
+    location_type: EXT
+    text: |
+      EXT. HOCHHAUSDACH - TAG
+      JONAS rennt ueber das Kiesdach, springt ueber den Luftschacht und landet
+      hart an der Dachkante. Zwanzig Stockwerke unter ihm der Verkehr.
+      Er haelt sich mit einer Hand am Gelaender, die Fuesse baumeln ins Leere.
+    expected_classes: [HEIGHT, FALLS, STUNTS]
+    min_severity: critical
+
+  - id: car_crash
+    heading: "EXT. LANDSTRASSE - DAEMMERUNG"
+    location_type: EXT
+    text: |
+      EXT. LANDSTRASSE - DAEMMERUNG
+      Der Kombi schleudert bei Tempo 120 ueber die nasse Fahrbahn, kracht durch
+      die Leitplanke und ueberschlaegt sich zweimal, bevor er im Graben liegen bleibt.
+    expected_classes: [VEHICLES, STUNTS]
+    min_severity: critical
+
+  - id: bar_fight_knife
+    heading: "INT. KNEIPE - NACHT"
+    location_type: INT
+    text: |
+      INT. KNEIPE - NACHT
+      KARL zieht ein Klappmesser. Die Klinge blitzt auf. TOM weicht aus, ein
+      Barhocker splittert an der Wand. Glas zerbricht, jemand schreit.
+    expected_classes: [WEAPONS, FIGHTS]
+    min_severity: high
+
+  - id: river_rescue
+    heading: "EXT. FLUSS - TAG"
+    location_type: EXT
+    text: |
+      EXT. FLUSS - TAG
+      Die Stroemung reisst das Kind mit. LENA springt ins eiskalte Wasser,
+      taucht unter, kommt keuchend wieder hoch und kaempft sich mit dem Kind
+      zum Ufer.
+    expected_classes: [WATER]
+    min_severity: high
+
+  - id: horse_stampede
+    heading: "EXT. WEIDE - TAG"
+    location_type: EXT
+    text: |
+      EXT. WEIDE - TAG
+      Zwoelf Pferde galoppieren in Panik auf die Kamera zu. ANNA steht mitten
+      auf der Weide und versucht, das Leittier am Halfter zu packen.
+    expected_classes: [ANIMALS]
+    min_severity: high
+
+  - id: blizzard_mountain
+    heading: "EXT. GEBIRGSPASS - NACHT"
+    location_type: EXT
+    text: |
+      EXT. GEBIRGSPASS - NACHT
+      Schneesturm. Minus zwanzig Grad. Die Wanderer stapfen erschoepft durch
+      hueftiefen Schnee, sie sind seit achtzehn Stunden unterwegs.
+    expected_classes: [WEATHER, FATIGUE]
+    min_severity: high
+
+  - id: festival_crowd
+    heading: "EXT. FESTIVALGELAENDE - NACHT"
+    location_type: EXT
+    text: |
+      EXT. FESTIVALGELAENDE - NACHT
+      Zehntausend Menschen draengen zur Buehne. Die Absperrung gibt nach,
+      Menschen stuerzen uebereinander. Pyrotechnik explodiert ueber der Menge.
+    expected_classes: [CROWD, FIRE]
+    min_severity: critical
+
+  - id: electrical_flood
+    heading: "INT. KELLER - NACHT"
+    location_type: INT
+    text: |
+      INT. KELLER - NACHT
+      Knoecheltief steht das Wasser. Ein offener Sicherungskasten funkt,
+      Kabel haengen ins Wasser. MARKUS watet mit einer Taschenlampe hindurch.
+    expected_classes: [ELECTRICAL, WATER]
+    min_severity: critical
+
+  - id: mine_shaft
+    heading: "INT. STOLLEN - TAG"
+    location_type: INT
+    text: |
+      INT. STOLLEN - TAG
+      Der Gang ist kaum einen Meter hoch. Staub rieselt von der Decke, die
+      Luft ist stickig. Die Gruppe kriecht auf allen Vieren tiefer in den Berg.
+    expected_classes: [CONFINED_SPACE, SMOKE_DUST, DANGEROUS_LOCATION]
+    min_severity: high
+
+  - id: abuse_flashback
+    heading: "INT. KINDERZIMMER - NACHT (RUECKBLENDE)"
+    location_type: INT
+    text: |
+      INT. KINDERZIMMER - NACHT (RUECKBLENDE)
+      Der Vater steht in der Tuer. Das Kind zieht die Decke ueber den Kopf.
+      Wir hoeren Schlaege und ein unterdruecktes Weinen.
+    expected_classes: [VIOLENCE, TRAUMA]
+    min_severity: high
+
+  - id: intimate_scene
+    heading: "INT. HOTELZIMMER - NACHT"
+    location_type: INT
+    text: |
+      INT. HOTELZIMMER - NACHT
+      EVA und DANIEL kuessen sich, ziehen sich langsam aus. Die Szene endet
+      im Bett, die Kamera bleibt auf den Gesichtern.
+    expected_classes: [INTIMACY]
+    min_severity: medium
+
+  - id: funeral
+    heading: "EXT. FRIEDHOF - TAG"
+    location_type: EXT
+    text: |
+      EXT. FRIEDHOF - TAG
+      Der Sarg wird hinabgelassen. Die Mutter bricht zusammen, der Bruder
+      haelt sie fest. Regen faellt auf die schwarzen Schirme.
+    expected_classes: [DEATH_GRIEF]
+    min_severity: medium
+
+  - id: racist_confrontation
+    heading: "INT. BUS - TAG"
+    location_type: INT
+    text: |
+      INT. BUS - TAG
+      Ein Fahrgast beschimpft AMIRA mit rassistischen Beleidigungen und spuckt
+      vor ihre Fuesse. Die anderen Fahrgaeste schauen weg.
+    expected_classes: [DISCRIMINATION]
+    min_severity: medium
+
+  - id: benign_breakfast
+    heading: "INT. FRUEHSTUECKSRAUM - MORGEN"
+    location_type: INT
+    text: |
+      INT. FRUEHSTUECKSRAUM - MORGEN
+      Sonnenlicht. LISA giesst Kaffee ein, blaettert in der Zeitung und
+      laechelt ueber einen Comic. Der Toaster klickt.
+    expected_classes: []
+    min_severity: info
+    negative: true
+
+  - id: benign_office
+    heading: "INT. BUERO - TAG"
+    location_type: INT
+    text: |
+      INT. BUERO - TAG
+      Zwei Kollegen besprechen am Whiteboard das Quartalsbudget. Ein Telefon
+      klingelt, jemand holt sich Wasser vom Spender.
+    expected_classes: []
+    min_severity: info
+    negative: true

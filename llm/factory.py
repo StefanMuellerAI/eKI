@@ -4,7 +4,7 @@ import logging
 
 from api.config import Settings
 from llm.base import BaseLLMProvider
-from llm.local_mistral import LocalMistralProvider
+from llm.local_mistral import DEFAULT_LOCAL_MODEL, LocalMistralProvider
 from llm.mistral_cloud import MistralCloudProvider
 from llm.ollama import OllamaProvider
 
@@ -29,6 +29,16 @@ def get_llm_provider(settings: Settings) -> BaseLLMProvider:
     logger.info(f"Initializing LLM provider: {provider_type}")
 
     if provider_type == "mistral_cloud":
+        # M11 guard (Pflichtenheft 4.3 / Abnahmetest 9): no cloud calls in production
+        # unless explicitly allowed. Settings validation already rejects this at
+        # startup; this second check protects callers that build Settings manually.
+        if getattr(settings, "is_production", False) and not getattr(
+            settings, "llm_allow_external_providers", False
+        ):
+            raise ValueError(
+                "mistral_cloud is disabled in production "
+                "(LLM_ALLOW_EXTERNAL_PROVIDERS=false); use local_mistral"
+            )
         config = {
             "api_key": settings.mistral_api_key,
             "model": settings.mistral_model,
@@ -38,11 +48,15 @@ def get_llm_provider(settings: Settings) -> BaseLLMProvider:
 
     elif provider_type == "local_mistral":
         config = {
-            "base_url": settings.ollama_base_url,
-            "model": "mistral",
+            "base_url": getattr(settings, "local_mistral_base_url", None)
+            or settings.ollama_base_url,
+            "model": getattr(settings, "local_mistral_model", None) or DEFAULT_LOCAL_MODEL,
             "timeout": settings.ollama_timeout,
             "think": settings.ollama_think,
             "num_ctx": settings.ollama_num_ctx,
+            # Previously omitted -> embeddings silently fell back to hardcoded defaults.
+            "embedding_model": settings.ollama_embedding_model,
+            "embedding_max_chars": settings.ollama_embedding_max_chars,
         }
         return LocalMistralProvider(config)
 
@@ -63,6 +77,11 @@ def get_llm_provider(settings: Settings) -> BaseLLMProvider:
             f"Invalid LLM provider: {provider_type}. "
             f"Valid options: mistral_cloud, local_mistral, ollama"
         )
+
+
+def is_external_provider(provider: BaseLLMProvider) -> bool:
+    """True for providers that leave the local network (cloud APIs)."""
+    return provider.provider_name == "mistral_cloud"
 
 
 async def test_llm_provider(provider: BaseLLMProvider) -> bool:
