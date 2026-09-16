@@ -1,6 +1,6 @@
 # eKI API -- KI-gestuetzte Sicherheitspruefung fuer Drehbuecher
 
-**Version:** 0.11.0 (Meilenstein M11 abgeschlossen)
+**Version:** 1.0.0 (Release -- Meilenstein M12 abgeschlossen)
 **Auftraggeber:** Filmakademie Baden-Wuerttemberg
 **Auftragnehmer:** StefanAI -- Research & Development
 
@@ -79,17 +79,17 @@ Beide Workflows teilen sich die Risikoanalyse (pro Szene) und Delivery-Activitie
 | Komponente | Technologie | Zweck |
 |---|---|---|
 | Framework | Python 3.11+ / FastAPI | REST-API (ASGI) |
-| Workflow-Engine | Temporal 1.23.0 | Asynchrone Verarbeitung mit Activities |
+| Workflow-Engine | Temporal 1.29.4 | Asynchrone Verarbeitung, 6h-Retry-Fenster, Schedules |
 | Datenbank | PostgreSQL 16 + pgvector | Metadaten, Embeddings (spaeter) |
 | Cache | Redis 7 | SecureBuffer, Rate Limiting |
-| LLM | Ollama (Mistral Small 3.2) | Lokale Inferenz (Strukturierung + Risikoanalyse) |
-| LLM (Cloud) | Mistral Cloud API | Entwicklungsumgebung |
+| LLM | Ollama (mistral-small3.2 via LocalMistralProvider) | Lokale Inferenz in Produktion (Strukturierung + Risikoanalyse) |
+| LLM (Cloud) | Mistral Cloud API | Stage-Umgebung (in Produktion gesperrt) |
 | FDX-Parser | defusedxml | Sicheres XML-Parsing (XXE-Schutz) |
-| PDF-Parser | pdfplumber (MIT) | Text-Extraktion aus PDFs |
+| PDF-Parser | pdfplumber (MIT) + Tesseract OCR | Text-Extraktion aus PDFs, OCR-Fallback fuer Scans |
 | Prompt-Management | YAML + PromptManager | Versionierbare LLM-Prompts |
 | Verschluesselung | cryptography (Fernet) | AES-Verschluesselung transienter Daten |
 | Container | Docker / Docker Compose | Deployment |
-| Monitoring | Prometheus, OpenTelemetry | Metriken, Tracing |
+| Monitoring | Prometheus, Grafana, Alertmanager, OpenTelemetry/Jaeger | Metriken, Dashboards, Alerts, Tracing |
 
 ---
 
@@ -477,6 +477,28 @@ Report-Rahmen und Schwellen: `docs/M11_PARITY_REPORT.md`. Betriebsleitfaden:
 `docs/OPERATIONS_GUIDE.md`. Release-Images werden bei `v*`-Tags nach GHCR gepusht
 (`docker-compose.prod.yml` referenziert sie ueber `GHCR_OWNER`/`EKI_IMAGE_TAG`).
 
+## UAT-Paket & Uebergabe (M12)
+
+| Artefakt | Pfad |
+|---|---|
+| OpenAPI 1.0.0 (Single Source of Truth, Spectral 0 Errors, Contract-Test) | `openapi/eki-api-v1.0.yaml`, `tests/test_m12_openapi_contract.py` |
+| Postman Collection + Environment | `postman/eKI-API-v1.0.postman_collection.json`, `postman/eKI-API.postman_environment.json` |
+| Aenderungsprotokoll | `CHANGELOG.md` |
+| Testplan fuer die 9 Abnahmetests, Protokollvorlage | `docs/UAT/UAT_TESTPLAN.md`, `docs/UAT/UAT_PROTOCOL_TEMPLATE.md` |
+| Go-Live-Checkliste, Schulungsunterlagen, Uebergabe | `docs/UAT/GO_LIVE_CHECKLIST.md`, `docs/UAT/TRAINING.md`, `docs/UAT/HANDOVER.md` |
+| ePro-Mock und automatisierte Abnahmetests 2-7 | `scripts/uat/mock_epro_server.py`, `scripts/uat/run_acceptance_tests.py` |
+| Prod-Cutover-Smoke, Paritaetslauf | `scripts/smoke_prod.py`, `scripts/run_parity.py` |
+
+```bash
+python scripts/uat/mock_epro_server.py --port 9999        # Terminal 1 (ePro-Attrappe)
+export EKI_API_URL=http://localhost:8000 EKI_API_KEY=eki_... EKI_ADMIN_KEY=eki_... MOCK_URL=http://localhost:9999
+python scripts/uat/run_acceptance_tests.py --redis-url redis://localhost:6379/0 --log-cmd "docker compose logs api worker"
+# -> tests/reports/uat_<timestamp>.md (inhaltsfreies Protokoll)
+```
+
+Abnahmetests 1, 8 und 9 (Stage-ePro, Prod-Cutover) sind im Testplan als manuelle Schritte mit
+Protokollvorlage beschrieben.
+
 ## Prompt-Management
 
 Alle LLM-Prompts werden zentral in `config/prompts/prompts.yaml` verwaltet:
@@ -564,7 +586,6 @@ eKI_API/
 │   ├── report_generator.py       # JSON + PDF Report Generator (M05)
 │   ├── knowledge_base.py         # KB Ingest/Search/Cleanup mit pgvector (M06)
 │   ├── parity.py                 # Cloud<->Lokal Paritaets-Harness (M11)
-│   └── security_service.py       # Security Service
 ├── workflows/                    # Temporal Workflows
 │   ├── security_check.py         # FDX/PDF Workflow-Router (M03)
 │   ├── maintenance.py            # KB-TTL-Cleanup als Temporal-Schedule (M09)
@@ -644,7 +665,10 @@ pytest tests/ --cov --cov-report=html
 | Request Extensions | 2 | delivery + idempotency_key Felder |
 | DB Extensions | 2 | Neue Spalten in JobMetadata/ReportMetadata |
 | Integration | 5 | Base64-Roundtrip, Serialisierung, Benchmark |
-| **Gesamt** | **124** | Alle bestanden |
+| **Gesamt (M01-M05)** | **124** | Alle bestanden |
+
+Gesamte Suite nach M12: `pytest` -> 460+ Tests, Coverage >= 80 % (CI-Gate). Marker `temporal`
+(Temporal-Testserver) und `ocr` (Tesseract) lassen sich per `-m "not temporal and not ocr"` abwaehlen.
 
 ---
 
@@ -678,7 +702,7 @@ MISTRAL_API_KEY=your-key
 | M09 | Observability & SLOs | Abgeschlossen | `core/metrics.py` (20+ Metrikfamilien, API + Worker), HTTP-Metrik-Middleware, OpenTelemetry-Tracing opt-in (`core/tracing.py`), request_id/job_id-Korrelation via Temporal-Interceptor, Observability-Compose-Overlay (Prometheus, Alertmanager, Grafana, Jaeger), 11 Alert-Regeln, 3 provisionierte Dashboards, SLO-Dokument, KB-TTL-Schedule, 40 zusaetzliche Tests |
 | M10 | Outbound-Adapter Hardening | Abgeschlossen | Zustell-Lebenszyklus mit `DELIVERING`, Attempt-Bookkeeping, Idempotency-Header an ePro, 408/425/429 retryable, nutzerbezogene race-sichere Idempotenz, Dead-Letter-Tabelle + `/v1/ops/*`, Pull-TTL-Watch, `X-One-Shot`-Header, Workflow-Timeout 10 h, Failover-Runbook, 30 zusaetzliche Tests (inkl. echter Workflow auf Temporal-Testserver) |
 | M11 | Lokaler LLM-Adapter & Paritaetstests | Abgeschlossen | Echter `LocalMistralProvider` (mistral-small3.2, Modell-Check, Embeddings aus Settings), Prod-Guard gegen Cloud-Provider, Provider-Paritaetsangleichung, Golden-Set (16 Szenen) + Paritaets-Harness/CLI, GHCR-Release-Images in CI, `docker-compose.prod.yml` (Gunicorn, GPU, Limits), Betriebsleitfaden, `scripts/smoke_prod.py`, 31 zusaetzliche Tests |
-| M12 | UAT-Paket & Uebergabe | Ausstehend | |
+| M12 | UAT-Paket & Uebergabe | Abgeschlossen | OpenAPI 1.0.0 + Contract-Test, Postman v1.0 + Environment, `CHANGELOG.md`, `docs/UAT/` (Testplan fuer 9 Abnahmetests, Protokollvorlage, Go-Live-Checkliste, Schulungsunterlagen, Uebergabe), ePro-Mock + automatisierte Abnahmetests 2-7, Coverage-Gate 80 %, Version 1.0.0 |
 
 ---
 

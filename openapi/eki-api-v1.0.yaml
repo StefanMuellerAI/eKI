@@ -1,7 +1,7 @@
 openapi: 3.1.1
 info:
   title: eKI API
-  version: 0.11.0
+  version: 1.0.0
   description: |
     KI-gestützte Sicherheitsprüfung für Drehbücher - Filmakademie Baden-Württemberg
 
@@ -17,12 +17,20 @@ info:
     ## Meilenstein-Status
     - M01: Projektgerüst & OpenAPI ✓
     - M02: Parser Basis (FDX) ✓
-    - M03: PDF & Streaming-Parsing ✓
+    - M03: PDF & Streaming-Parsing (inkl. OCR-Fallback) ✓
     - M04: Risiko-Taxonomie & Scoring ✓
     - M05: Reports (JSON/PDF) & One-Shot-GET ✓
     - M06: LLM-Adapter (Mistral Cloud) & KB-Grundlage ✓
     - M07: Großdokument-Optimierung ✓
     - M08: Security/Privacy & Delete-on-Delivery ✓
+    - M09: Observability & SLOs ✓
+    - M10: Outbound-Adapter Hardening (Dead Letters, /v1/ops) ✓
+    - M11: Lokaler LLM-Adapter & Paritätstests ✓
+    - M12: UAT-Paket & Übergabe (OpenAPI 1.0.0) ✓
+
+    ## Fehlerformat
+    Alle Fehlerantworten nutzen `ErrorResponse` mit den Feldern `error`, `message`,
+    `details[]`, `request_id`, `timestamp`. Jede Antwort trägt den Header `X-Request-ID`.
 
   contact:
     name: Filmakademie Baden-Württemberg
@@ -44,6 +52,10 @@ tags:
     description: Security check operations
   - name: KnowledgeBase
     description: Knowledge Base management (M06) for RAG-augmented risk analysis
+  - name: Operations
+    description: >-
+      Operations endpoints (M10). Require an API key with `is_admin=true`
+      (`scripts/create_api_key.py --admin`). Metadata only, never script or report content.
 
 paths:
   /health:
@@ -249,6 +261,14 @@ paths:
       responses:
         '200':
           description: Report retrieved successfully (URL now invalidated)
+          headers:
+            X-One-Shot:
+              description: Always `true`; signals that this URL is deleted after this response (Pflichtenheft Anhang 1)
+              schema:
+                type: string
+                example: 'true'
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -349,10 +369,12 @@ paths:
         - name: limit
           in: query
           required: false
+          description: Page size
           schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
         - name: offset
           in: query
           required: false
+          description: Page offset
           schema: { type: integer, minimum: 0, default: 0 }
       responses:
         '200':
@@ -380,6 +402,7 @@ paths:
         - name: tag
           in: query
           required: true
+          description: Tag whose documents are deleted (e.g. `placeholder`)
           schema: { type: string }
       responses:
         '200':
@@ -408,6 +431,7 @@ paths:
         - name: doc_id
           in: path
           required: true
+          description: KB document ID
           schema: { type: string, format: uuid }
       responses:
         '200':
@@ -433,6 +457,7 @@ paths:
         - name: doc_id
           in: path
           required: true
+          description: KB document ID
           schema: { type: string, format: uuid }
       responses:
         '200':
@@ -445,6 +470,201 @@ paths:
           $ref: '#/components/responses/NotFound'
         '401':
           $ref: '#/components/responses/Unauthorized'
+
+  # -------------------------------------------------------------------------
+  # M10: Operations endpoints (admin API key)
+  # -------------------------------------------------------------------------
+  /v1/ops/summary:
+    get:
+      tags:
+        - Operations
+      summary: Operations summary
+      description: Job counts by status and delivery status plus unacknowledged dead letters.
+      operationId: opsSummary
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Summary counters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsSummaryResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+
+  /v1/ops/jobs:
+    get:
+      tags:
+        - Operations
+      summary: Job overview (metadata only)
+      description: >-
+        Paged list of jobs across all users (Pflichtenheft §6 "Job-Übersicht ohne Inhalte").
+        Filterable by job status, delivery status and project.
+      operationId: opsListJobs
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Job status filter
+          schema:
+            $ref: '#/components/schemas/JobStatus'
+        - name: delivery_status
+          in: query
+          required: false
+          description: Delivery status filter
+          schema:
+            $ref: '#/components/schemas/DeliveryStatus'
+        - name: project_id
+          in: query
+          required: false
+          description: eProjekt project ID filter
+          schema: { type: string, maxLength: 255 }
+        - name: limit
+          in: query
+          required: false
+          description: Page size
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          description: Page offset
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Job list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsJobListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+
+  /v1/ops/dead-letters:
+    get:
+      tags:
+        - Operations
+      summary: List delivery dead letters
+      description: >-
+        Definitively failed deliveries: 6h retry window exhausted, 4xx hard fail,
+        or pull report not retrieved within TTL. Content-free by design; replay is
+        not offered because the report was deleted on failure (Delete-on-Delivery).
+      operationId: opsListDeadLetters
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: acknowledged
+          in: query
+          required: false
+          description: "true = only acknowledged, false = only open, omit = all"
+          schema: { type: boolean }
+        - name: limit
+          in: query
+          required: false
+          description: Page size
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          description: Page offset
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Dead letter list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeadLetterListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+
+  /v1/ops/dead-letters/{dead_letter_id}:
+    get:
+      tags:
+        - Operations
+      summary: Get one dead letter
+      description: Single dead-letter record (metadata only).
+      operationId: opsGetDeadLetter
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: dead_letter_id
+          in: path
+          required: true
+          description: Dead letter ID
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Dead letter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeadLetterSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/ops/dead-letters/{dead_letter_id}:acknowledge:
+    post:
+      tags:
+        - Operations
+      summary: Acknowledge a dead letter
+      description: >-
+        Marks the dead letter as investigated (records operator and optional note).
+        Returns 409 if already acknowledged.
+      operationId: opsAcknowledgeDeadLetter
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: dead_letter_id
+          in: path
+          required: true
+          description: Dead letter ID
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeadLetterAcknowledgeRequest'
+      responses:
+        '200':
+          description: Acknowledged dead letter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeadLetterSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Dead letter already acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
 # -----------------------------------------------------------------------------
 # M08: Outgoing webhooks (eKI -> eProjekt)
@@ -522,8 +742,18 @@ components:
 
     JobStatus:
       type: string
-      enum: [pending, running, completed, failed, cancelled]
-      description: Status of an async security check job
+      enum: [pending, running, delivering, completed, failed, cancelled]
+      description: >-
+        Status of an async security check job. `delivering` (M10) = report generated,
+        outbound push to ePro in progress; `completed` is reached only after a 2xx from ePro
+        (push) or when the report is ready for one-shot retrieval (pull).
+
+    DeliveryStatus:
+      type: string
+      enum: [pending, delivering, delivered, failed, dead_lettered]
+      description: >-
+        Outbound delivery state, independent of the job status (M10).
+        `dead_lettered` = definitively failed, content deleted, webhook sent.
 
     RiskLevel:
       type: string
@@ -660,7 +890,7 @@ components:
           format: date-time
         version:
           type: string
-          example: 0.5.0
+          example: 1.0.0
 
     ReadinessResponse:
       type: object
@@ -729,8 +959,7 @@ components:
         risk_level:
           $ref: '#/components/schemas/RiskLevel'
         category:
-          type: string
-          description: "Risk category: PHYSICAL, ENVIRONMENTAL, PSYCHOLOGICAL"
+          $ref: '#/components/schemas/RiskCategory'
         risk_class:
           type: string
           description: >-
@@ -914,9 +1143,31 @@ components:
           type: string
           nullable: true
         metadata:
-          type: object
-          additionalProperties: true
-          description: "Job metadata (includes delivery_mode)"
+          $ref: '#/components/schemas/JobDeliveryMetadata'
+
+    JobDeliveryMetadata:
+      type: object
+      description: Delivery bookkeeping exposed with the job status (M10)
+      required: [delivery_mode, delivery_status, delivery_attempts]
+      properties:
+        delivery_mode:
+          type: string
+          enum: [pull, push]
+        delivery_status:
+          $ref: '#/components/schemas/DeliveryStatus'
+        delivery_attempts:
+          type: integer
+          minimum: 0
+          description: Push attempts so far (0 in pull mode)
+        delivery_last_status_code:
+          type: integer
+          nullable: true
+          description: HTTP status of the last push attempt
+        delivered_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Push 2xx timestamp or one-shot retrieval timestamp
 
     ReportResponse:
       type: object
@@ -935,6 +1186,102 @@ components:
         message:
           type: string
           example: Report retrieved successfully. This URL is now invalidated.
+
+    # -----------------------------------------------------------------------
+    # M10: Operations schemas (metadata only)
+    # -----------------------------------------------------------------------
+    OpsJobSummary:
+      type: object
+      required: [job_id, project_id, user_id, script_format, status, delivery_mode, delivery_status, delivery_attempts, created_at, updated_at]
+      properties:
+        job_id: { type: string, format: uuid }
+        project_id: { type: string }
+        user_id: { type: string }
+        script_format:
+          $ref: '#/components/schemas/ScriptFormat'
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        progress_percentage: { type: integer, nullable: true }
+        delivery_mode: { type: string, enum: [pull, push] }
+        delivery_status:
+          $ref: '#/components/schemas/DeliveryStatus'
+        delivery_attempts: { type: integer, minimum: 0 }
+        delivery_last_status_code: { type: integer, nullable: true }
+        delivery_last_attempt_at: { type: string, format: date-time, nullable: true }
+        delivered_at: { type: string, format: date-time, nullable: true }
+        report_id: { type: string, format: uuid, nullable: true }
+        error_message: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    OpsJobListResponse:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OpsJobSummary'
+        total: { type: integer, minimum: 0 }
+        limit: { type: integer }
+        offset: { type: integer }
+
+    DeadLetterSummary:
+      type: object
+      required: [id, job_id, project_id, user_id, delivery_mode, reason, attempts, webhook_sent, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        job_id: { type: string, format: uuid }
+        report_id: { type: string, format: uuid, nullable: true }
+        project_id: { type: string }
+        user_id: { type: string }
+        delivery_mode: { type: string, enum: [pull, push] }
+        reason:
+          type: string
+          enum: [retry_window_exhausted, hard_4xx, pull_ttl_expired, delivery_failed]
+        attempts: { type: integer, minimum: 0 }
+        last_status_code: { type: integer, nullable: true }
+        last_error_type: { type: string, nullable: true }
+        webhook_sent: { type: boolean }
+        created_at: { type: string, format: date-time }
+        acknowledged_at: { type: string, format: date-time, nullable: true }
+        acknowledged_by: { type: string, nullable: true }
+        note: { type: string, nullable: true, maxLength: 1000 }
+
+    DeadLetterListResponse:
+      type: object
+      required: [items, total, unacknowledged, limit, offset]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeadLetterSummary'
+        total: { type: integer, minimum: 0 }
+        unacknowledged: { type: integer, minimum: 0 }
+        limit: { type: integer }
+        offset: { type: integer }
+
+    DeadLetterAcknowledgeRequest:
+      type: object
+      properties:
+        note:
+          type: string
+          nullable: true
+          maxLength: 1000
+          description: Operator note (ticket number, action taken). No report content.
+
+    OpsSummaryResponse:
+      type: object
+      required: [jobs_by_status, jobs_by_delivery_status, dead_letters_unacknowledged, generated_at]
+      properties:
+        jobs_by_status:
+          type: object
+          additionalProperties: { type: integer }
+        jobs_by_delivery_status:
+          type: object
+          additionalProperties: { type: integer }
+        dead_letters_unacknowledged: { type: integer, minimum: 0 }
+        generated_at: { type: string, format: date-time }
 
     # --- Error Schemas ---
 
@@ -1062,15 +1409,31 @@ components:
         reason:
           type: string
           description: >-
-            Maschinenlesbarer Grund der Zustellungs-Aufgabe.
-            Beispiele: "retry_window_exhausted", "hard_4xx",
-            "epro_unreachable".
+            Maschinenlesbarer Grund der Zustellungs-Aufgabe:
+            "retry_window_exhausted" (6h Push-Retry erschoepft), "hard_4xx"
+            (nicht-retrybarer ePro-Fehler), "pull_ttl_expired" (Report im
+            Pull-Modus nicht innerhalb der TTL abgeholt), "delivery_failed".
         attempts:
           type: integer
-          minimum: 1
-          description: Anzahl der Zustellungsversuche bis zum Abbruch.
+          minimum: 0
+          description: >-
+            Anzahl der Zustellungsversuche bis zum Abbruch (0 wenn nicht
+            ermittelbar, z.B. Pull-TTL abgelaufen).
+
+  headers:
+    XRequestId:
+      description: Correlation ID (echoed from the request or generated); appears in all logs and traces
+      schema:
+        type: string
 
   responses:
+    Forbidden:
+      description: Forbidden (e.g. admin API key required for /v1/ops/*, or X-Actor-User-Id mismatch)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
     BadRequest:
       description: Bad request (missing fields, invalid file type, empty file)
       content:

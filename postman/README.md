@@ -1,13 +1,13 @@
-# eKI API - Postman Collection v0.6
+# eKI API - Postman Collection v1.0
 
-Diese Postman Collection enthält alle API-Endpunkte der eKI API mit vollständiger LLM-Risikoanalyse und der neuen Knowledge Base (M06).
+Diese Postman Collection enthält alle API-Endpunkte der eKI API v1.0.0: Security-Checks (FDX/PDF, Push/Pull), Knowledge Base (M06), Operations/Dead Letters (M10) und Schnellnachweise für die Abnahmetests (M12).
 
 ## Import
 
 1. Öffne Postman
 2. Click auf **Import**
-3. Wähle `eKI-API-v0.6.postman_collection.json` (v0.5 bleibt verfügbar)
-4. Click **Import**
+3. Wähle `eKI-API-v1.0.postman_collection.json` **und** `eKI-API.postman_environment.json`
+4. Click **Import**, dann oben rechts das Environment „eKI API - local" auswählen
 
 ## Setup
 
@@ -35,8 +35,9 @@ In Postman, gehe zu **Variables** Tab und setze:
 | `BASE_URL` | `http://localhost:8000` | API Base URL |
 | `API_KEY` | `eki_your_key_here` | API Key von Schritt 2 |
 | `API_KEY_USER2` | `eki_second_key` | Zweiter Key (anderer user_id) für IDOR-Tests |
+| `ADMIN_API_KEY` | `eki_admin_key` | Key mit `is_admin=true` (`--admin`) für Ordner 9 |
 
-`JOB_ID`, `REPORT_ID` und `SCRIPT_B64` werden automatisch durch Pre-Request und Test Scripts gesetzt.
+`JOB_ID`, `REPORT_ID`, `SCRIPT_B64`, `DOC_ID`, `DEAD_LETTER_ID`, `UAT_*` werden automatisch durch Pre-Request und Test Scripts gesetzt. Die Environment-Datei enthält alle Schlüssel mit Platzhaltern (`eki_REPLACE_ME`).
 
 ## Collection-Struktur
 
@@ -105,6 +106,21 @@ Echte Drehbücher aus `tests/fixtures/pdf/`:
 > Risikoanalyse einfließen, steuert `KB_RETRIEVAL_ENABLED` in `.env.local`
 > (Default `false`).
 
+### 9. Operations (M10, Admin-Key)
+- **Summary** - Jobs nach Status/Zustellstatus, offene Dead Letters
+- **List Jobs** - Job-Übersicht ohne Inhalte, Filter `status`/`delivery_status`/`project_id`
+- **List Dead Letters (open)** - setzt `DEAD_LETTER_ID`
+- **Get / Acknowledge Dead Letter** - Einzelansicht, Quittierung (409 bei Doppelquittung)
+- **Test: Non-admin key is 403** - Normaler Key wird abgewiesen
+
+### 10. Abnahmetests (M12)
+- **AT5 Idempotenz** - zwei Aufrufe mit gleichem Key liefern dieselbe `job_id`
+- **AT3 Job-Status** - `metadata.delivery_status` / `delivery_attempts` vorhanden
+- **AT7 Fehlerformat** - `ErrorResponse` (`error`, `message`, `details`, `request_id`, `timestamp`) + `X-Request-ID`
+
+Die Fetch-Report-Requests prüfen zusätzlich den Header `X-One-Shot: true`.
+Vollständiger Testplan: `docs/UAT/UAT_TESTPLAN.md`; automatisierte Tests 2/4/6: `scripts/uat/run_acceptance_tests.py`.
+
 ## Testing Workflows
 
 ### Happy Path (PDF - Empfohlen)
@@ -148,6 +164,6 @@ Echte Drehbücher aus `tests/fixtures/pdf/`:
 
 ---
 
-**Version:** 0.6.0
-**Last Updated:** 2026-05-21
-**Status:** Production Ready (M06 KB additive, Feature-Flag default OFF)
+**Version:** 1.0.0
+**Last Updated:** 2026-09-16
+**Status:** Release (M12 UAT-Paket)

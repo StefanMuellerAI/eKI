@@ -121,7 +121,7 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://eki_user:eki_password@localhost:5432/eki_test
           REDIS_URL: redis://localhost:6379/0
           ENV: test
-        run: pytest --cov --cov-report=xml --cov-report=html --cov-fail-under=70
+        run: pytest --cov --cov-report=xml --cov-report=html --cov-fail-under=80
 
       - name: Upload coverage to artifacts
         uses: actions/upload-artifact@v4
@@ -154,7 +154,7 @@ jobs:
         run: npm install -g @stoplight/spectral-cli
 
       - name: Validate OpenAPI spec (0 errors required)
-        run: spectral lint openapi/eki-api-v0.1.yaml --ruleset .spectral.yaml --fail-severity=error
+        run: spectral lint openapi/eki-api-v1.0.yaml --ruleset .spectral.yaml --fail-severity=error
 
   observability-validation:
     name: Observability Rules (M09)

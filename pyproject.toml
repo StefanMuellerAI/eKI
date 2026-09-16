@@ -137,6 +137,10 @@ markers = [
 [tool.coverage.run]
 source = ["api", "core", "services", "workflows", "worker", "parsers", "llm"]
 omit = ["tests/*", "*/migrations/*"]
+# SQLAlchemy asyncio switches greenlets inside `await session.execute(...)`;
+# without greenlet support the tracer loses every handler frame after its first
+# DB call and under-reports coverage by ~10 points.
+concurrency = ["thread", "greenlet"]
 
 [tool.coverage.report]
 precision = 2

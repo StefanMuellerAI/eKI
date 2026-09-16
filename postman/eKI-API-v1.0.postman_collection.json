@@ -1,7 +1,7 @@
 {
   "info": {
-    "name": "eKI API v0.5 - Complete Security Analysis",
-    "description": "KI-gestuetzte Sicherheitspruefung fuer Drehbuecher - Filmakademie Baden-Wuerttemberg\n\n**Features (M01-M05):**\n- FDX + PDF Drehbuch-Parsing\n- LLM-gestuetzte Risikoanalyse (Ollama/Mistral)\n- Risiko-Taxonomie mit 23 Klassen und Scoring\n- JSON + PDF Report-Erzeugung\n- One-Shot Report-Abholung (Pull) oder Push an ePro\n- Idempotenz und Job-Status-Tracking\n\n**Setup:**\n1. Start services: docker compose up -d\n2. Run migration: docker compose exec api alembic upgrade head\n3. Create API Key: docker compose exec api python scripts/create_api_key.py --insert\n4. Set API_KEY variable in Postman",
+    "name": "eKI API v1.0 - Security Analysis, Knowledge Base, Operations",
+    "description": "Vollstaendige Postman-Sammlung fuer die eKI API v1.0.0 (Pflichtenheft-Abnahme). Ordner 1-8 wie bisher; neu: 9. Operations (M10, Admin-Key) und 10. Abnahmetests (M12). Variablen ueber die mitgelieferte Environment-Datei eKI-API.postman_environment.json setzen.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
     "_exporter_id": "eki-api",
     "version": "0.5.0"
@@ -51,6 +51,31 @@
       "value": "",
       "type": "string",
       "description": "Auto-set by pre-request scripts"
+    },
+    {
+      "key": "ADMIN_API_KEY",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "DOC_ID",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "DEAD_LETTER_ID",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "UAT_JOB_ID",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "UAT_IDEMPOTENCY_KEY",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -60,13 +85,19 @@
         {
           "name": "Health Check",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "header": [],
             "url": {
               "raw": "{{BASE_URL}}/health",
-              "host": ["{{BASE_URL}}"],
-              "path": ["health"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "health"
+              ]
             },
             "description": "Liveness probe\n\n**Expected:** 200 OK\n**Auth:** None"
           }
@@ -78,8 +109,12 @@
             "header": [],
             "url": {
               "raw": "{{BASE_URL}}/ready",
-              "host": ["{{BASE_URL}}"],
-              "path": ["ready"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "ready"
+              ]
             },
             "description": "Readiness probe - checks DB, Redis, Temporal\n\n**Expected:** 200 OK with services status\n**Auth:** Bearer token"
           }
@@ -87,13 +122,19 @@
         {
           "name": "Root Endpoint",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "header": [],
             "url": {
               "raw": "{{BASE_URL}}/",
-              "host": ["{{BASE_URL}}"],
-              "path": [""]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                ""
+              ]
             },
             "description": "API info and links to documentation"
           }
@@ -105,8 +146,12 @@
             "header": [],
             "url": {
               "raw": "{{BASE_URL}}/metrics",
-              "host": ["{{BASE_URL}}"],
-              "path": ["metrics"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "metrics"
+              ]
             },
             "description": "Prometheus metrics\n\n**Auth:** Bearer token"
           }
@@ -170,8 +215,14 @@
             },
             "url": {
               "raw": "{{BASE_URL}}/v1/security/check:async",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check:async"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check:async"
+              ]
             },
             "description": "Regiefassung TRANCE (Vollstaendiges Drehbuch).\n\n**Fixture:** `tests/fixtures/pdf/TRANCE_REGIEFASSUNG_27042025.pdf`\n**Tipp:** Falls Datei nicht gefunden wird, Postman Working Directory auf das Projekt-Root setzen:\nSettings -> General -> Working Directory -> `/pfad/zu/eKI_API`"
           }
@@ -229,8 +280,14 @@
             },
             "url": {
               "raw": "{{BASE_URL}}/v1/security/check:async",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check:async"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check:async"
+              ]
             },
             "description": "Drehbuch Sinkende Schiffe.\n\n**Fixture:** `tests/fixtures/pdf/SINKENDE_SCHIFFE_190730.pdf`"
           }
@@ -288,8 +345,14 @@
             },
             "url": {
               "raw": "{{BASE_URL}}/v1/security/check:async",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check:async"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check:async"
+              ]
             },
             "description": "Drehbuch H2Gold v3.7.\n\n**Fixture:** `tests/fixtures/pdf/H2Gold_250406_h2gold_V3.7.pdf`"
           }
@@ -347,8 +410,14 @@
             },
             "url": {
               "raw": "{{BASE_URL}}/v1/security/check:async",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check:async"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check:async"
+              ]
             },
             "description": "Drehbuch Babystar (Fuenfte Fassung).\n\n**Fixture:** `tests/fixtures/pdf/Babystar_Drehbuch_Babystar_Fuenfte_Fassung_240414.pdf`"
           }
@@ -406,8 +475,14 @@
             },
             "url": {
               "raw": "{{BASE_URL}}/v1/security/check:async",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check:async"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check:async"
+              ]
             },
             "description": "Screenplay Matroshki (deutsch).\n\n**Fixture:** `tests/fixtures/pdf/Matroshki_250515_Matroshki_Screenplay-DE.pdf`"
           }
@@ -472,8 +547,14 @@
             },
             "url": {
               "raw": "{{BASE_URL}}/v1/security/check:async",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check:async"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check:async"
+              ]
             },
             "description": "Eigene PDF-Datei per Dateiauswahl hochladen.\n\n**Weitere Fixtures in `tests/fixtures/pdf/`:**\n- Fische haben kein Gewissen 5.2 Fassung.pdf\n- Gaia_Scipt_French.pdf (franzoesisch)\n- ICONIC 220202_ICONIC_PPM-MAPPE_JUNGLE.pdf (Projektmappe)\n- Trance_Projektmappe_TRANCE(AT)_F8_25022025.pdf (Projektmappe)\n- Sinkende Schiffe_SE_Projektmappe_190717.pdf (Projektmappe)\n- h2gold_Treatment_2024.pdf (Treatment)\n- KOENIGSKINDER_Buch_F2_Test_211122 (1).pdf\n- The_fly_MAPPE_THEFLY_v4_lq.pdf\n- If I could Fly 221212 FLY v17_compressed.pdf"
           }
@@ -501,8 +582,15 @@
             "header": [],
             "url": {
               "raw": "{{BASE_URL}}/v1/security/jobs/{{JOB_ID}}",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "jobs", "{{JOB_ID}}"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "jobs",
+                "{{JOB_ID}}"
+              ]
             },
             "description": "Poll until status=completed and report_id is set.\n\n**Repeat** every 10-30 seconds until status is 'completed'.\nPDF workflows dauern laenger wegen LLM-Szenenstrukturierung.\n**Then:** Fetch the report using the report_id."
           }
@@ -514,11 +602,31 @@
             "header": [],
             "url": {
               "raw": "{{BASE_URL}}/v1/security/reports/{{REPORT_ID}}",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "reports", "{{REPORT_ID}}"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "reports",
+                "{{REPORT_ID}}"
+              ]
             },
             "description": "ONE-SHOT: Fetches JSON report + PDF (base64).\n\n**WARNING:** This URL is invalidated after the first successful call!\n**Response contains:**\n- report: Full JSON with findings, risk_summary, measures, scores\n- pdf_base64: Base64-encoded PDF report\n\n**Finding fields (M04):**\n- risk_class, rule_id, category, likelihood, impact, risk_level\n- evidence: Textauszug/Regelbegruendung aus dem Drehbuch\n- vulnerability: Verletzlichkeitsfaktoren (Kinder, Tiere, Stunts-Double)\n- complexity: Komplexitaetsfaktoren (Extras, Mehrkameras, Wasser/Feuer)\n- exposure_duration: Geschaetzte Dauer der Risikoexposition\n- measures: Zugeordnete Sicherheitsmassnahmen\n\n**Second call returns:** 410 Gone"
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('X-One-Shot header present (M10)', function () {",
+                  "    pm.expect(pm.response.headers.get('X-One-Shot')).to.eql('true');",
+                  "});"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Verify One-Shot (Expect 410)",
@@ -527,8 +635,15 @@
             "header": [],
             "url": {
               "raw": "{{BASE_URL}}/v1/security/reports/{{REPORT_ID}}",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "reports", "{{REPORT_ID}}"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "reports",
+                "{{REPORT_ID}}"
+              ]
             },
             "description": "Verify One-Shot enforcement.\n\n**Expected:** 410 Gone\n**Proves:** Report was deleted after first retrieval."
           }
@@ -589,12 +704,22 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"script_content\": \"{{SCRIPT_B64}}\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"postman-fdx-test\",\n  \"delivery\": \"pull\",\n  \"idempotency_key\": \"postman-fdx-{{$timestamp}}\",\n  \"metadata\": {\n    \"source\": \"postman\",\n    \"test_run\": true\n  }\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{BASE_URL}}/v1/security/check:async",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check:async"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check:async"
+              ]
             },
             "description": "Submit a 4-scene FDX stunt script (inline Base64/JSON).\n\nScenes: cliff jump, highway chase with explosion, burning building, rooftop fight.\n\n**Expected:** 202 Accepted with job_id"
           }
@@ -637,12 +762,22 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"script_content\": \"{{SCRIPT_B64}}\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"postman-push-test\",\n  \"delivery\": \"push\",\n  \"callback_url\": \"https://epro.filmakademie.de/api/v1/security-reports\",\n  \"idempotency_key\": \"postman-push-{{$timestamp}}\",\n  \"metadata\": {\n    \"source\": \"postman\",\n    \"delivery_test\": \"push\"\n  }\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{BASE_URL}}/v1/security/check:async",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check:async"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check:async"
+              ]
             },
             "description": "Submit a script with **push delivery** - the report is POSTed to callback_url when done.\n\n**callback_url** must be HTTPS and on a whitelisted domain:\n- epro.filmakademie.de\n- epro-stage.filmakademie.de\n\n**Expected:** 202 Accepted with job_id"
           }
@@ -670,8 +805,15 @@
             "header": [],
             "url": {
               "raw": "{{BASE_URL}}/v1/security/jobs/{{JOB_ID}}",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "jobs", "{{JOB_ID}}"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "jobs",
+                "{{JOB_ID}}"
+              ]
             },
             "description": "Poll until status=completed and report_id is set.\n\n**Repeat** every 10-30 seconds until status is 'completed'."
           }
@@ -683,11 +825,31 @@
             "header": [],
             "url": {
               "raw": "{{BASE_URL}}/v1/security/reports/{{REPORT_ID}}",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "reports", "{{REPORT_ID}}"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "reports",
+                "{{REPORT_ID}}"
+              ]
             },
             "description": "ONE-SHOT: Fetches JSON report + PDF (base64).\n\n**WARNING:** URL is invalidated after first call!\n\n**Finding fields (M04):** evidence, vulnerability, complexity, exposure_duration, measures\n\n**Second call returns:** 410 Gone"
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('X-One-Shot header present (M10)', function () {",
+                  "    pm.expect(pm.response.headers.get('X-One-Shot')).to.eql('true');",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ],
       "description": "FDX-Workflow mit inline Base64-Script.\n\nFuer den primaeren PDF-Workflow siehe Sektion 2."
@@ -720,12 +882,22 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"script_content\": \"{{SCRIPT_B64}}\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"postman-sync-test\",\n  \"metadata\": {\n    \"source\": \"postman\"\n  }\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{BASE_URL}}/v1/security/check",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check"
+              ]
             },
             "description": "Quick synchronous check.\n\n**Note:** Returns a stub report (M01). For real LLM-based analysis, use the async endpoint."
           }
@@ -764,8 +936,14 @@
             },
             "url": {
               "raw": "{{BASE_URL}}/v1/security/check",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check"
+              ]
             },
             "description": "Synchronous PDF check via file upload.\n\n**Note:** Returns a stub report (M01). For real analysis, use the async endpoint."
           }
@@ -779,18 +957,30 @@
         {
           "name": "Test: Missing Auth (401)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"script_content\": \"dGVzdA==\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test123\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{BASE_URL}}/v1/security/check",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check"
+              ]
             },
             "description": "**Expected:** 401 Unauthorized\n\nRequest without Authorization header."
           }
@@ -800,19 +990,35 @@
           "request": {
             "auth": {
               "type": "bearer",
-              "bearer": [{ "key": "token", "value": "eki_invalid_key_here", "type": "string" }]
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "eki_invalid_key_here",
+                  "type": "string"
+                }
+              ]
             },
             "method": "POST",
             "header": [],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"script_content\": \"dGVzdA==\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test123\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{BASE_URL}}/v1/security/check",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check"
+              ]
             },
             "description": "**Expected:** 401 Unauthorized\n\nRequest with invalid/unknown API key."
           }
@@ -825,12 +1031,22 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"script_content\": \"this-is-not-valid-base64!!!\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test123\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{BASE_URL}}/v1/security/check",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check"
+              ]
             },
             "description": "**Expected:** 422 Validation Error\n\nInvalid base64 in script_content."
           }
@@ -843,12 +1059,22 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"script_content\": \"dGVzdA==\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"'; DROP TABLE users; --\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{BASE_URL}}/v1/security/check",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check"
+              ]
             },
             "description": "**Expected:** 422 Validation Error\n\nSQL injection attempt in project_id (only alphanumeric + hyphens allowed)."
           }
@@ -861,12 +1087,22 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"script_content\": \"dGVzdA==\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test123\",\n  \"callback_url\": \"http://192.168.1.1/admin\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{BASE_URL}}/v1/security/check",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check"
+              ]
             },
             "description": "**Expected:** 422 Validation Error\n\nCallback URL with private IP blocked (SSRF prevention)."
           }
@@ -879,12 +1115,22 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"script_content\": \"dGVzdA==\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test123\",\n  \"callback_url\": \"https://evil-domain.com/steal-data\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{BASE_URL}}/v1/security/check",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check"
+              ]
             },
             "description": "**Expected:** 422 Validation Error\n\nOnly whitelisted domains allowed for callback_url (epro.filmakademie.de, epro-stage.filmakademie.de)."
           }
@@ -894,14 +1140,27 @@
           "request": {
             "auth": {
               "type": "bearer",
-              "bearer": [{ "key": "token", "value": "{{API_KEY_USER2}}", "type": "string" }]
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{API_KEY_USER2}}",
+                  "type": "string"
+                }
+              ]
             },
             "method": "GET",
             "header": [],
             "url": {
               "raw": "{{BASE_URL}}/v1/security/jobs/{{JOB_ID}}",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "jobs", "{{JOB_ID}}"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "jobs",
+                "{{JOB_ID}}"
+              ]
             },
             "description": "**Expected:** 404 Not Found\n\n**Setup:** Requires API_KEY_USER2 variable (different user_id than API_KEY).\nAccessing another user's job via a different API key should return 404 (ownership check)."
           }
@@ -931,18 +1190,235 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"script_content\": \"{{SCRIPT_B64}}\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"idem-test\",\n  \"idempotency_key\": \"same-key-twice\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{BASE_URL}}/v1/security/check:async",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check:async"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check:async"
+              ]
             },
             "description": "Send twice with same idempotency_key.\n\n**Expected:** Second call returns same job_id (no duplicate workflow created)."
           }
         }
       ],
       "description": "Security and validation tests.\n\nRun all requests - each should return the expected error code."
+    },
+    {
+      "name": "8. Knowledge Base (M06)",
+      "description": "Upload, list, and delete documents in the safety KB. Used by the RAG-augmented risk analysis when KB_RETRIEVAL_ENABLED=true.",
+      "item": [
+        {
+          "name": "Upload KB document (Markdown)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{API_KEY}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Path to a .pdf, .md, or .txt file"
+                },
+                {
+                  "key": "title",
+                  "value": "Stunt-SOP (Beispiel)",
+                  "type": "text"
+                },
+                {
+                  "key": "source",
+                  "value": "UPLOAD",
+                  "type": "text"
+                },
+                {
+                  "key": "tags",
+                  "value": "stunt,official",
+                  "type": "text"
+                },
+                {
+                  "key": "ttl_hours",
+                  "value": "720",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/kb/documents",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "kb",
+                "documents"
+              ]
+            },
+            "description": "Upload a single safety document into the KB."
+          }
+        },
+        {
+          "name": "List KB documents",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{API_KEY}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/kb/documents?limit=100",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "kb",
+                "documents"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "100"
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "disabled": true
+                },
+                {
+                  "key": "tag",
+                  "value": "placeholder",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List KB documents filtered by tag",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{API_KEY}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/kb/documents?tag=placeholder",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "kb",
+                "documents"
+              ],
+              "query": [
+                {
+                  "key": "tag",
+                  "value": "placeholder"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get KB document metadata",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{API_KEY}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/kb/documents/{{DOC_ID}}",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "kb",
+                "documents",
+                "{{DOC_ID}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete a KB document",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{API_KEY}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/kb/documents/{{DOC_ID}}",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "kb",
+                "documents",
+                "{{DOC_ID}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Wipe placeholders (bulk delete by tag)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{API_KEY}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/kb/documents?tag=placeholder",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "kb",
+                "documents"
+              ],
+              "query": [
+                {
+                  "key": "tag",
+                  "value": "placeholder"
+                }
+              ]
+            },
+            "description": "Removes only documents tagged 'placeholder'. Real docs stay."
+          }
+        }
+      ]
     },
     {
       "name": "6. Automated PDF Flow (Run as Collection)",
@@ -1022,8 +1498,14 @@
             },
             "url": {
               "raw": "{{BASE_URL}}/v1/security/check:async",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "check:async"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check:async"
+              ]
             },
             "description": "**Automated Flow Step 1:** Schickt eine PDF aus den Fixtures ab.\n\n**Vor dem ersten Run:**\n1. Klicke auf 'Select Files' beim file-Feld\n2. Waehle eine PDF aus `tests/fixtures/pdf/`, z.B.:\n   - TRANCE_REGIEFASSUNG_27042025.pdf (Regiefassung)\n   - SINKENDE_SCHIFFE_190730.pdf (Drehbuch)\n   - H2Gold_250406_h2gold_V3.7.pdf (Drehbuch)\n   - Babystar_Drehbuch_Babystar_Fuenfte_Fassung_240414.pdf\n   - Matroshki_250515_Matroshki_Screenplay-DE.pdf\n3. Danach den Ordner per 'Run folder' starten\n\n**Oder:** Postman Working Directory auf Projekt-Root setzen, dann wird der `src`-Pfad automatisch aufgeloest."
           }
@@ -1096,8 +1578,15 @@
             "header": [],
             "url": {
               "raw": "{{BASE_URL}}/v1/security/jobs/{{JOB_ID}}",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "jobs", "{{JOB_ID}}"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "jobs",
+                "{{JOB_ID}}"
+              ]
             },
             "description": "**Automated Flow Step 2:** Polls job status in a loop.\n\n- Waits 5-30s between polls (incremental backoff)\n- Loops back to itself until status is `completed`\n- On `completed`: saves REPORT_ID and proceeds to Step 3\n- On `failed`: stops with error\n- Max 60 polls before timeout"
           }
@@ -1156,7 +1645,10 @@
                   "    console.log('PDF size: ' + Math.round(resp.pdf_base64.length / 1024) + ' KB (base64)');",
                   "}",
                   "",
-                  "postman.setNextRequest(null);"
+                  "postman.setNextRequest(null);",
+                  "pm.test('X-One-Shot header present (M10)', function () {",
+                  "    pm.expect(pm.response.headers.get('X-One-Shot')).to.eql('true');",
+                  "});"
                 ],
                 "type": "text/javascript"
               }
@@ -1167,8 +1659,15 @@
             "header": [],
             "url": {
               "raw": "{{BASE_URL}}/v1/security/reports/{{REPORT_ID}}",
-              "host": ["{{BASE_URL}}"],
-              "path": ["v1", "security", "reports", "{{REPORT_ID}}"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "reports",
+                "{{REPORT_ID}}"
+              ]
             },
             "description": "**Automated Flow Step 3:** Fetches the completed report.\n\nValidates:\n- Report contains findings and risk_summary\n- PDF is included as base64\n- Logs summary to console\n\n**Note:** This is a one-shot URL -- it is invalidated after this call."
           }
@@ -1182,13 +1681,19 @@
         {
           "name": "Swagger UI (Dev only)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "header": [],
             "url": {
               "raw": "{{BASE_URL}}/docs",
-              "host": ["{{BASE_URL}}"],
-              "path": ["docs"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "docs"
+              ]
             },
             "description": "Interactive API docs.\n\n**Dev:** 200 OK\n**Production (DEBUG=false):** 404 Not Found"
           }
@@ -1196,13 +1701,19 @@
         {
           "name": "ReDoc (Dev only)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "header": [],
             "url": {
               "raw": "{{BASE_URL}}/redoc",
-              "host": ["{{BASE_URL}}"],
-              "path": ["redoc"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "redoc"
+              ]
             },
             "description": "Alternative API docs (ReDoc style).\n\n**Dev:** 200 OK\n**Production (DEBUG=false):** 404 Not Found"
           }
@@ -1210,19 +1721,561 @@
         {
           "name": "OpenAPI Spec",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "header": [],
             "url": {
               "raw": "{{BASE_URL}}/openapi.json",
-              "host": ["{{BASE_URL}}"],
-              "path": ["openapi.json"]
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "openapi.json"
+              ]
             },
             "description": "Machine-readable OpenAPI 3.1 specification"
           }
         }
       ],
       "description": "API documentation endpoints"
+    },
+    {
+      "name": "9. Operations (M10, Admin-Key)",
+      "description": "Erfordert einen API-Key mit is_admin=true (scripts/create_api_key.py --insert --admin). Alle Antworten sind inhaltsfrei (nur Metadaten).",
+      "item": [
+        {
+          "name": "Summary",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/ops/summary",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "ops",
+                "summary"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ADMIN_API_KEY}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('has counters', () => { const b = pm.response.json(); pm.expect(b).to.have.property('jobs_by_status'); pm.expect(b).to.have.property('dead_letters_unacknowledged'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Jobs (all)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/ops/jobs?limit=50&offset=0",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "ops",
+                "jobs"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ADMIN_API_KEY}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('content-free', () => { const s = pm.response.text(); pm.expect(s).to.not.include('findings'); pm.expect(s).to.not.include('script_content'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Jobs (dead_lettered)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/ops/jobs?delivery_status=dead_lettered",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "ops",
+                "jobs"
+              ],
+              "query": [
+                {
+                  "key": "delivery_status",
+                  "value": "dead_lettered"
+                }
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ADMIN_API_KEY}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Dead Letters (open)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/ops/dead-letters?acknowledged=false",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "ops",
+                "dead-letters"
+              ],
+              "query": [
+                {
+                  "key": "acknowledged",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ADMIN_API_KEY}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json(); if (b.items.length) { pm.environment.set('DEAD_LETTER_ID', b.items[0].id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Dead Letter",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/ops/dead-letters/{{DEAD_LETTER_ID}}",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "ops",
+                "dead-letters",
+                "{{DEAD_LETTER_ID}}"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ADMIN_API_KEY}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 or 404', () => pm.expect([200, 404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Acknowledge Dead Letter",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/ops/dead-letters/{{DEAD_LETTER_ID}}:acknowledge",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "ops",
+                "dead-letters",
+                "{{DEAD_LETTER_ID}}:acknowledge"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ADMIN_API_KEY}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"note\": \"Analysiert; ePro hat den Check neu angestossen (Ticket #...)\"\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, 404 or 409', () => pm.expect([200, 404, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Test: Non-admin key is 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/ops/summary",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "ops",
+                "summary"
+              ]
+            },
+            "description": ""
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 for non-admin key', () => pm.response.to.have.status(403));",
+                  "pm.test('ErrorResponse shape', () => { const b = pm.response.json(); pm.expect(b).to.have.property('error'); pm.expect(b).to.have.property('message'); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "10. Abnahmetests (M12)",
+      "description": "Schnellnachweise fuer Pflichtenheft 7 Abnahmetests 3 (Pull One-Shot), 5 (Idempotenz) und 7 (Log-Hygiene, Fehlerformat). Tests 2/4/6 laufen ueber scripts/uat/run_acceptance_tests.py, Tests 1/8/9 sind Stage-/Prod-Nachweise (docs/UAT/UAT_TESTPLAN.md).",
+      "item": [
+        {
+          "name": "AT5: Idempotenz - erster Aufruf",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check:async",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check:async"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"{{SCRIPT_B64}}\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"uat-idempotency\",\n  \"idempotency_key\": \"uat-key-{{$timestamp}}\"\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202', () => pm.response.to.have.status(202));",
+                  "const b = pm.response.json(); pm.environment.set('UAT_JOB_ID', b.job_id);",
+                  "const sent = JSON.parse(pm.request.body.raw); pm.environment.set('UAT_IDEMPOTENCY_KEY', sent.idempotency_key);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "AT5: Idempotenz - Wiederholung liefert gleiche job_id",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check:async",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check:async"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"{{SCRIPT_B64}}\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"uat-idempotency\",\n  \"idempotency_key\": \"{{UAT_IDEMPOTENCY_KEY}}\"\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202', () => pm.response.to.have.status(202));",
+                  "pm.test('same job_id (no duplicate)', () => pm.expect(pm.response.json().job_id).to.eql(pm.environment.get('UAT_JOB_ID')));",
+                  "pm.test('message mentions idempotency', () => pm.expect(pm.response.json().message.toLowerCase()).to.include('idempotency'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "AT3: Job-Status zeigt Zustell-Metadaten",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/jobs/{{UAT_JOB_ID}}",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "jobs",
+                "{{UAT_JOB_ID}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('delivery metadata present (M10)', () => { const m = pm.response.json().metadata; pm.expect(m).to.have.property('delivery_status'); pm.expect(m).to.have.property('delivery_attempts'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "AT7: Fehlerformat ohne Inhalte (ErrorResponse)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"not-valid-base64!!!\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"uat\"\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422', () => pm.response.to.have.status(422));",
+                  "pm.test('ErrorResponse fields', () => { const b = pm.response.json(); pm.expect(b).to.have.keys(['error','message','details','request_id','timestamp']); });",
+                  "pm.test('X-Request-ID header', () => pm.expect(pm.response.headers.has('X-Request-ID')).to.be.true);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
     }
   ]
 }
