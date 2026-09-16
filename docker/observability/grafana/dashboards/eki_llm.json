@@ -1,0 +1,330 @@
+{
+  "uid": "eki-llm",
+  "title": "eKI LLM (Latency, Errors, Queue)",
+  "tags": [
+    "eki",
+    "llm"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "templating": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "LLM calls in flight",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "eki-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "eki-prometheus"
+          },
+          "expr": "sum by (provider) (eki_llm_requests_in_flight)",
+          "legendFormat": "{{provider}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "LLM error ratio (15m)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "eki-prometheus"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "eki-prometheus"
+          },
+          "expr": "sum(rate(eki_llm_requests_total{outcome=\"error\"}[15m])) / clamp_min(sum(rate(eki_llm_requests_total[15m])), 1e-9)",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.05
+              },
+              {
+                "color": "red",
+                "value": 0.2
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Sanitizer hits (24h)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "eki-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "eki-prometheus"
+          },
+          "expr": "sum by (action) (increase(eki_prompt_sanitizer_hits_total[24h]))",
+          "legendFormat": "{{action}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "KB documents / retrieval hits (24h)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "eki-prometheus"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "eki-prometheus"
+          },
+          "expr": "eki_kb_documents",
+          "legendFormat": "documents",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "eki-prometheus"
+          },
+          "expr": "sum(increase(eki_kb_retrieval_hits_total[24h]))",
+          "legendFormat": "hits 24h",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "LLM latency p50 / p95 by operation",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "eki-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "eki-prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le, provider, operation) (rate(eki_llm_request_duration_seconds_bucket[15m])))",
+          "legendFormat": "p50 {{provider}}/{{operation}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "eki-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, provider, operation) (rate(eki_llm_request_duration_seconds_bucket[15m])))",
+          "legendFormat": "p95 {{provider}}/{{operation}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Queue wait for Ollama slot p95",
+      "description": "High values mean OLLAMA_MAX_CONCURRENT_REQUESTS is the bottleneck (M07 tuning).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "eki-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "eki-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, provider) (rate(eki_llm_queue_wait_seconds_bucket[15m])))",
+          "legendFormat": "{{provider}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "LLM calls by provider/operation/outcome (rate/h)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "eki-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "eki-prometheus"
+          },
+          "expr": "sum by (provider, operation, outcome) (rate(eki_llm_requests_total[1h])) * 3600",
+          "legendFormat": "{{provider}}/{{operation}}/{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    }
+  ]
+}

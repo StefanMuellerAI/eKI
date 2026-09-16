@@ -1,0 +1,120 @@
+# eKI alert rules (M09). Thresholds are derived from docs/M09_SLO.md.
+groups:
+  - name: eki-availability
+    rules:
+      - alert: EkiApiDown
+        expr: up{job="eki-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "eKI API is not scrapeable"
+          description: "Prometheus could not scrape the API /metrics endpoint for 2 minutes."
+
+      - alert: EkiWorkerDown
+        expr: up{job="eki-worker"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "eKI worker exporter is down"
+          description: "No worker metrics for 5 minutes -- jobs will queue in Temporal."
+
+      - alert: EkiHttp5xxRateHigh
+        expr: |
+          sum(rate(eki_http_requests_total{status=~"5.."}[5m]))
+            /
+          clamp_min(sum(rate(eki_http_requests_total[5m])), 1e-9) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 5% of API requests fail with 5xx"
+
+  - name: eki-slo-latency
+    rules:
+      # Pflichtenheft §5: <=50 scenes in <=10 min, 120 pages <=60 min,
+      # 300-350 pages <=120 min. Without page/scene labels we alert on the
+      # worst-case envelope: p95 of any job above 120 min breaches every SLO.
+      - alert: EkiJobDurationSloBreach
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(eki_job_duration_seconds_bucket[6h]))) > 7200
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 job duration above 120 minutes (Pflichtenheft §5)"
+
+      - alert: EkiJobFailureRateHigh
+        expr: |
+          sum(rate(eki_jobs_total{status=~"failed|delivery_failed"}[1h]))
+            /
+          clamp_min(sum(rate(eki_jobs_total{status=~"completed|failed|delivery_failed"}[1h])), 1e-9) > 0.1
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 10% of jobs end in failed/delivery_failed"
+
+  - name: eki-delivery
+    rules:
+      - alert: EkiDeliveryFailureRateHigh
+        expr: |
+          sum(rate(eki_delivery_attempts_total{mode="push",outcome!~"success|pull_ready"}[30m]))
+            /
+          clamp_min(sum(rate(eki_delivery_attempts_total{mode="push"}[30m])), 1e-9) > 0.5
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than half of push attempts to ePro are failing"
+          description: "Check ePro availability; Temporal retries for up to 6h before dead-lettering."
+
+      - alert: EkiDeadLettersPending
+        expr: eki_dead_letters_unacknowledged > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Unacknowledged delivery dead letters"
+          description: "Inspect GET /v1/ops/dead-letters and acknowledge after investigation."
+
+      - alert: EkiWebhookFailing
+        expr: increase(eki_webhook_sent_total{outcome="failed"}[1h]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "security.delivery.failed webhook could not be delivered"
+
+  - name: eki-llm
+    rules:
+      - alert: EkiLlmErrorRateHigh
+        expr: |
+          sum(rate(eki_llm_requests_total{outcome="error"}[15m]))
+            /
+          clamp_min(sum(rate(eki_llm_requests_total[15m])), 1e-9) > 0.2
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 20% of LLM calls fail"
+          description: "Ollama/Mistral unreachable, model not pulled, or VRAM exhausted."
+
+      - alert: EkiOllamaQueueWaitHigh
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(eki_llm_queue_wait_seconds_bucket[15m]))) > 120
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: "LLM calls wait >2 min for a concurrency slot"
+          description: "Consider raising OLLAMA_MAX_CONCURRENT_REQUESTS if the GPU has headroom (see M07)."
+
+      - alert: EkiPromptSanitizerBlockedSpike
+        expr: increase(eki_prompt_sanitizer_hits_total{action="blocked"}[1h]) > 20
+        for: 0m
+        labels:
+          severity: info
+        annotations:
+          summary: "Unusual number of prompts blocked by the sanitizer"

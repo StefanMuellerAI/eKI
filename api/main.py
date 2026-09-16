@@ -1,6 +1,7 @@
 """Main FastAPI application instance."""
 
 import logging
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -18,12 +19,19 @@ from api.routers import health, knowledge_base, security
 from core.db_models import ApiKeyModel
 from core.exceptions import EKIException
 from core.logging_config import configure_logging, set_request_id
+from core.metrics import (
+    HTTP_REQUEST_DURATION,
+    HTTP_REQUESTS_IN_FLIGHT,
+    HTTP_REQUESTS_TOTAL,
+    set_build_info,
+)
 from core.models import (
     AsyncSecurityCheckRequest,
     ErrorDetail,
     ErrorResponse,
     SecurityCheckRequest,
 )
+from core.tracing import configure_tracing
 from core.version import __version__
 
 # M08: zentrale Logging-Konfiguration. Setzt strukturierte JSON-Logs
@@ -40,7 +48,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     logger.info(f"Starting eKI API v{__version__} in {settings.env} environment")
 
-    # Startup: Initialize connections, etc.
+    set_build_info(version=__version__, llm_provider=settings.llm_provider, role="api")
     logger.info("Application startup complete")
 
     yield
@@ -60,6 +68,10 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.debug else None,  # Hide in production
     lifespan=lifespan,
 )
+
+# M09: OpenTelemetry (opt-in via OTEL_ENABLED). Instrumentiert FastAPI,
+# SQLAlchemy und httpx; Temporal-Spans kommen ueber den Client-Interceptor.
+configure_tracing(settings, role="api", app=app)
 
 # Add CORS middleware
 app.add_middleware(
@@ -96,6 +108,49 @@ async def request_id_middleware(request: Request, call_next):
         raise
     response.headers.setdefault("X-Request-ID", request_id)
     return response
+
+
+def _route_template(request: Request) -> str:
+    """Return a bounded-cardinality route label for metrics.
+
+    Newer FastAPI versions mount included routers, so ``scope["route"].path``
+    is relative to the router prefix. We therefore rebuild the template from
+    the concrete request path by replacing matched path parameters with
+    ``{name}`` placeholders. Unmatched paths collapse into one label.
+    """
+    if request.scope.get("route") is None:
+        return "unmatched"
+    segments = request.url.path.split("/")
+    for name, value in (request.scope.get("path_params") or {}).items():
+        raw = str(value)
+        segments = [f"{{{name}}}" if seg == raw else seg for seg in segments]
+    return "/".join(segments) or "/"
+
+
+# M09: HTTP-Metriken pro Route-Template. Bewusst als Middleware, damit auch
+# Fehlerantworten aus Exception-Handlern gezaehlt werden. /metrics selbst
+# wird ausgenommen, damit der Scrape die Zahlen nicht verfaelscht.
+@app.middleware("http")
+async def http_metrics_middleware(request: Request, call_next):
+    if request.url.path == "/metrics":
+        return await call_next(request)
+
+    HTTP_REQUESTS_IN_FLIGHT.inc()
+    started = time.perf_counter()
+    status_code = 500
+    try:
+        response: Response = await call_next(request)
+        status_code = response.status_code
+        return response
+    finally:
+        HTTP_REQUESTS_IN_FLIGHT.dec()
+        route = _route_template(request)
+        HTTP_REQUEST_DURATION.labels(method=request.method, route=route).observe(
+            time.perf_counter() - started
+        )
+        HTTP_REQUESTS_TOTAL.labels(
+            method=request.method, route=route, status=str(status_code)
+        ).inc()
 
 
 # Exception handlers

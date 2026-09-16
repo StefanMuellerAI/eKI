@@ -14,6 +14,7 @@ from temporalio.client import Client as TemporalClient
 from api.config import Settings, get_settings
 from core.db_models import ApiKeyModel
 from core.exceptions import ServiceUnavailableException
+from core.tracing import temporal_interceptors
 from db.session import get_db_session
 
 logger = logging.getLogger(__name__)
@@ -53,7 +54,10 @@ async def get_temporal_client() -> TemporalClient:
     """
     settings = get_settings()
     try:
-        client = await TemporalClient.connect(settings.temporal_host)
+        client = await TemporalClient.connect(
+            settings.temporal_host,
+            interceptors=temporal_interceptors(settings),
+        )
     except Exception as exc:
         logger.error(f"Failed to connect to Temporal at {settings.temporal_host}: {exc}")
         raise ServiceUnavailableException(

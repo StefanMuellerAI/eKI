@@ -152,6 +152,29 @@ jobs:
       - name: Validate OpenAPI spec (0 errors required)
         run: spectral lint openapi/eki-api-v0.1.yaml --ruleset .spectral.yaml --fail-severity=error
 
+  observability-validation:
+    name: Observability Rules (M09)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: promtool check alert rules
+        run: |
+          docker run --rm -v "${{ github.workspace }}/docker/observability:/obs:ro" \
+            --entrypoint promtool prom/prometheus:v2.53.0 check rules /obs/alerts.yml
+
+      - name: amtool check Alertmanager config
+        run: |
+          docker run --rm -v "${{ github.workspace }}/docker/observability:/obs:ro" \
+            --entrypoint amtool prom/alertmanager:v0.27.0 check-config /obs/alertmanager.yml
+
+      - name: docker compose config (base + observability overlay)
+        run: |
+          cp .env.example .env.local
+          mkdir -p secrets && touch secrets/prometheus_api_key.txt
+          docker compose -f docker-compose.yml -f docker-compose.observability.yml config -q
+
   docker-build:
     name: Docker Build
     runs-on: ubuntu-latest

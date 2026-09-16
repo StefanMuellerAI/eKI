@@ -32,3 +32,18 @@ chmod 600 *.txt
 - `database_url.txt` - Full `DATABASE_URL` consumed via `DATABASE_URL_FILE`
 
 **IMPORTANT**: Never commit these files to version control!
+
+## Observability (M09)
+
+Prometheus scrapes the API's key-protected `/metrics` endpoint. Create a
+dedicated, read-only API key for it and store it here:
+
+```bash
+# in the running stack
+docker compose exec api python scripts/create_api_key.py --insert   # name: prometheus-scraper
+# paste the printed eki_... key (no trailing newline)
+printf '%s' 'eki_...' > prometheus_api_key.txt && chmod 600 prometheus_api_key.txt
+```
+
+`docker-compose.observability.yml` mounts it read-only into the Prometheus
+container as `/etc/prometheus/api_key.txt`.

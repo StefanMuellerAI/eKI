@@ -8,12 +8,14 @@ plus metadata.  No screenplay content flows through Temporal history.
 import base64
 import logging
 import time
+from datetime import UTC
 from typing import Any
 
 import redis.asyncio as aioredis
 from temporalio import activity
 
 from api.config import get_settings
+from core import metrics
 from services.secure_buffer import SecureBuffer
 
 logger = logging.getLogger(__name__)
@@ -193,6 +195,7 @@ async def structure_scene_llm_activity(job_data: dict[str, Any]) -> dict[str, An
         return {"is_preamble": True, "title": title}
 
     llm_result = await structure_scene_with_llm(block["text"], llm)
+    metrics.SCENES_PROCESSED_TOTAL.labels(stage="structure").inc()
     fields = llm_result_to_parsed_scene_fields(llm_result)
 
     is_page_fallback = job_data.get("used_page_fallback", False)
@@ -368,6 +371,35 @@ async def aggregate_script_activity(job_data: dict[str, Any]) -> dict[str, Any]:
 # ===================================================================
 
 
+def _record_job_terminal_metric(
+    *,
+    script_format: str,
+    status: str,
+    error_message: Any,
+    created_at: Any,
+) -> None:
+    """Emit eki_jobs_total / eki_job_duration_seconds for a terminal transition.
+
+    ``delivery_failed:*`` errors are counted under their own status label so
+    the SLO dashboards can separate processing failures from outbound ones.
+    """
+    label = status
+    if status == "failed" and str(error_message or "").startswith("delivery_failed"):
+        label = "delivery_failed"
+
+    duration: float | None = None
+    if created_at is not None:
+        from datetime import datetime
+
+        now = datetime.now(UTC)
+        start = created_at
+        if getattr(start, "tzinfo", None) is None:
+            start = start.replace(tzinfo=UTC)
+        duration = max(0.0, (now - start).total_seconds())
+
+    metrics.record_job_terminal(script_format, label, duration)
+
+
 @activity.defn(name="update_job_status")
 async def update_job_status_activity(job_data: dict[str, Any]) -> dict[str, Any]:
     """Update job status and optional fields in the database.
@@ -403,8 +435,24 @@ async def update_job_status_activity(job_data: dict[str, Any]) -> dict[str, Any]
         if progress is not None:
             values["progress_percentage"] = int(progress)
 
+        terminal = new_status in (JobStatus.COMPLETED.value, JobStatus.FAILED.value)
+
         async with Session() as session:
-            from sqlalchemy import update
+            from sqlalchemy import select, update
+
+            script_format = "unknown"
+            created_at = None
+            if terminal:
+                row = (
+                    await session.execute(
+                        select(JobMetadata.script_format, JobMetadata.created_at).where(
+                            JobMetadata.job_id == UUIDType(job_id)
+                        )
+                    )
+                ).first()
+                if row is not None:
+                    script_format = str(getattr(row[0], "value", row[0]) or "unknown")
+                    created_at = row[1]
 
             await session.execute(
                 update(JobMetadata).where(JobMetadata.job_id == UUIDType(job_id)).values(**values)
@@ -412,6 +460,14 @@ async def update_job_status_activity(job_data: dict[str, Any]) -> dict[str, Any]
             await session.commit()
 
         await engine.dispose()
+
+        if terminal:
+            _record_job_terminal_metric(
+                script_format=script_format,
+                status=new_status,
+                error_message=error_message,
+                created_at=created_at,
+            )
         return {"updated": True}
 
     except Exception as exc:
@@ -480,6 +536,7 @@ async def _build_kb_context(*, scene_text: str, settings: Any) -> str:
                 snippet = snippet[:max_chars].rstrip() + "..."
             parts.append(f"[{h.title}] {snippet}")
         logger.info("KB retrieval: %d hits used for scene context", len(hits))
+        metrics.KB_RETRIEVAL_HITS_TOTAL.inc(len(hits))
         return "\n\n".join(parts)
 
     except Exception as exc:
@@ -666,6 +723,9 @@ async def analyze_scene_risk_activity(job_data: dict[str, Any]) -> dict[str, Any
         logger.info(
             "Scene %s: %d findings (taxonomy-enriched)", scene_number, len(enriched_findings)
         )
+        metrics.SCENES_PROCESSED_TOTAL.labels(stage="risk").inc()
+        for f in enriched_findings:
+            metrics.FINDINGS_TOTAL.labels(severity=str(f.get("risk_level", "unknown"))).inc()
         return {
             "scene_index": scene_index,
             "scene_number": scene_number,
@@ -881,6 +941,7 @@ async def deliver_report_activity(
         if settings.epro_auth_token:
             headers["Authorization"] = f"Bearer {settings.epro_auth_token}"
 
+        push_started = time.perf_counter()
         try:
             async with httpx.AsyncClient(timeout=settings.epro_timeout) as client:
                 response = await client.post(
@@ -889,6 +950,9 @@ async def deliver_report_activity(
                     files=files if files else None,
                     headers=headers or None,
                 )
+            metrics.DELIVERY_DURATION.labels(mode="push").observe(
+                time.perf_counter() - push_started
+            )
 
             status_code = response.status_code
 
@@ -905,6 +969,8 @@ async def deliver_report_activity(
 
                 # Pflichtenheft Abnahmetest 2: Buffer-Cleanup direkt nach 2xx.
                 await buffer.delete(report_ref_key)
+                metrics.BUFFER_DELETES_TOTAL.labels(source="push").inc()
+                metrics.DELIVERY_ATTEMPTS_TOTAL.labels(mode="push", outcome="success").inc()
 
                 return {
                     "delivered": True,
@@ -922,6 +988,7 @@ async def deliver_report_activity(
                     status_code,
                     delivery_config.get("job_id", ""),
                 )
+                metrics.DELIVERY_ATTEMPTS_TOTAL.labels(mode="push", outcome="hard_fail").inc()
                 return {
                     "delivered": False,
                     "delivery_mode": "push",
@@ -937,6 +1004,7 @@ async def deliver_report_activity(
                 status_code,
                 delivery_config.get("job_id", ""),
             )
+            metrics.DELIVERY_ATTEMPTS_TOTAL.labels(mode="push", outcome="retryable").inc()
             response.raise_for_status()
             # Defensiv: falls raise_for_status nichts wirft (3xx z.B.),
             # explizit selbst raisen, damit der Workflow nicht
@@ -959,12 +1027,14 @@ async def deliver_report_activity(
                 delivery_config.get("job_id", ""),
                 type(exc).__name__,
             )
+            metrics.DELIVERY_ATTEMPTS_TOTAL.labels(mode="push", outcome="transport_error").inc()
             raise
 
     else:
         # Pull: Report stays in Redis for One-Shot-GET
         # (already stored by aggregate_report_activity)
         logger.info("Pull mode: report %s available for One-Shot-GET (TTL 6h)", report_id)
+        metrics.DELIVERY_ATTEMPTS_TOTAL.labels(mode="pull", outcome="pull_ready").inc()
         return {
             "delivered": True,
             "delivery_mode": "pull",
@@ -1014,6 +1084,7 @@ async def cleanup_buffer_activity(payload: dict[str, Any]) -> dict[str, Any]:
         count,
         len(ref_keys),
     )
+    metrics.BUFFER_DELETES_TOTAL.labels(source="cleanup").inc(int(count))
     return {"deleted": int(count)}
 
 
@@ -1073,6 +1144,7 @@ async def send_delivery_failed_webhook_activity(
             reason,
             attempts,
         )
+        metrics.WEBHOOK_SENT_TOTAL.labels(outcome="disabled").inc()
         return {"sent": False, "reason": "no_webhook_url"}
 
     headers: dict[str, str] = {"Content-Type": "application/json"}
@@ -1103,6 +1175,7 @@ async def send_delivery_failed_webhook_activity(
                     response.status_code,
                     attempt,
                 )
+                metrics.WEBHOOK_SENT_TOTAL.labels(outcome="sent").inc()
                 return {
                     "sent": True,
                     "status_code": response.status_code,
@@ -1135,6 +1208,7 @@ async def send_delivery_failed_webhook_activity(
         last_error,
         last_status,
     )
+    metrics.WEBHOOK_SENT_TOTAL.labels(outcome="failed").inc()
     return {
         "sent": False,
         "status_code": last_status,

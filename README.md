@@ -1,6 +1,6 @@
 # eKI API -- KI-gestuetzte Sicherheitspruefung fuer Drehbuecher
 
-**Version:** 0.8.0 (Meilenstein M08 abgeschlossen)
+**Version:** 0.9.0 (Meilenstein M09 abgeschlossen)
 **Auftraggeber:** Filmakademie Baden-Wuerttemberg
 **Auftragnehmer:** StefanAI -- Research & Development
 
@@ -375,6 +375,48 @@ Ergebnisse landen in `tests/reports/m07_benchmark_<timestamp>.json` mit
 
 Details und Abnahme-Belege in `docs/M07_ACCEPTANCE_EVIDENCE.md`.
 
+## Observability & SLOs (M09)
+
+### Metriken
+
+API und Worker exportieren dieselben Prometheus-Metrikfamilien aus `core/metrics.py`
+(Prefix `eki_`): HTTP-Raten/-Latenzen je Route-Template, Job-Laufzeiten und
+Terminalzustaende, LLM-Latenz/-Fehler/-Queue-Wait je Provider und Operation,
+Push/Pull-Zustellversuche, One-Shot-Abrufe, Buffer-Loeschungen (Delete-on-Delivery-Nachweis),
+Webhook-Ergebnisse, KB-Bestand, Sanitizer-Treffer und `eki_build_info`.
+
+| Prozess | Endpoint | Schutz |
+|---|---|---|
+| API | `GET /metrics` | API-Key (Bearer) |
+| Worker | `:9090/` (Port `PROMETHEUS_PORT`) | nur im internen Docker-Netz, nie auf den Host gemappt |
+
+### Tracing und Log-Korrelation
+
+- `OTEL_ENABLED=true` aktiviert OpenTelemetry fuer FastAPI, SQLAlchemy, httpx und Temporal
+  (`core/tracing.py`); Export per OTLP/HTTP an `OTEL_EXPORTER_OTLP_ENDPOINT` (z.B. Jaeger).
+- Der Interceptor `core/temporal_context.py` traegt die `request_id` des HTTP-Requests als
+  Temporal-Header in den Workflow und in jede Activity. Jede Worker-Log-Zeile enthaelt
+  `request_id`, `job_id`, `workflow_id`, `activity`, `attempt`.
+
+### Stack starten
+
+```bash
+# Prometheus + Alertmanager + Grafana (3 provisionierte Dashboards) + Jaeger
+printf '%s' 'eki_...' > secrets/prometheus_api_key.txt   # Scraper-Key, siehe secrets/README.md
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+# Grafana http://localhost:3000, Jaeger http://localhost:16686
+```
+
+Alert-Regeln: `docker/observability/alerts.yml`. SLO-Definitionen, Error-Budgets und
+Alert-Mapping: `docs/M09_SLO.md`. Dashboards werden aus
+`scripts/observability/build_dashboards.py` generiert.
+
+### KB-TTL-Cleanup
+
+Der Worker legt beim Start idempotent den Temporal-Schedule `eki-kb-cleanup`
+(`KB_CLEANUP_CRON`, Default taeglich 03:00 UTC) an, der abgelaufene KB-Dokumente loescht
+und `eki_kb_documents` aktualisiert.
+
 ## Prompt-Management
 
 Alle LLM-Prompts werden zentral in `config/prompts/prompts.yaml` verwaltet:
@@ -441,6 +483,10 @@ eKI_API/
 │   ├── models.py                 # Pydantic Schemas + Szenenmodell + Confidence
 │   ├── db_models.py              # SQLAlchemy Models
 │   ├── exceptions.py             # Custom Exceptions
+│   ├── version.py                # Single Source of Truth fuer die Version
+│   ├── metrics.py                # Prometheus-Registry API + Worker (M09)
+│   ├── tracing.py                # OpenTelemetry-Setup opt-in (M09)
+│   ├── temporal_context.py       # request_id-Propagation in Activities (M09)
 │   └── prompt_sanitizer.py       # Prompt Injection Protection
 ├── parsers/                      # Drehbuch-Parser
 │   ├── base.py                   # Async ParserBase + Factory
@@ -458,7 +504,8 @@ eKI_API/
 │   └── security_service.py       # Security Service
 ├── workflows/                    # Temporal Workflows
 │   ├── security_check.py         # FDX/PDF Workflow-Router (M03)
-│   └── activities.py             # 8 Activities inkl. LLM-Risikoanalyse (M03)
+│   ├── maintenance.py            # KB-TTL-Cleanup als Temporal-Schedule (M09)
+│   └── activities.py             # 11 Activities inkl. LLM-Risikoanalyse (M03-M08)
 ├── worker/
 │   └── main.py                   # Temporal Worker (8 Activities registriert)
 ├── llm/                          # LLM Provider Abstraktion
@@ -565,7 +612,7 @@ MISTRAL_API_KEY=your-key
 | M06 | LLM-Adapter (Mistral Cloud) & KB-Grundlage | Abgeschlossen | Mistral Cloud Structured Output (Schema-validiert, Retry), pgvector-KB (kb_documents + kb_embeddings), Ollama-Embeddings (mxbai-embed-large), KB-Endpoints /v1/kb/*, 6 Placeholder-SOPs, idempotenter Seeder, Feature-Flag KB_RETRIEVAL_ENABLED (Default OFF), PromptManager-Bugfix, 40 zusaetzliche Tests |
 | M07 | Grossdokument-Optimierung | Abgeschlossen | Opt-in Parallelisierung von PDF-Strukturierung und Risikoanalyse, prozessweiter Ollama-Concurrency-Cap, konfigurierbare Limits/Timeouts, 300-Seiten-Fixture + Benchmark-Runner mit `docker stats`-Snapshot, 16 zusaetzliche Tests |
 | M08 | Security/Privacy & Delete-on-Delivery | Abgeschlossen | 6h-Retry-Fenster (`schedule_to_close_timeout`), `cleanup_buffer_activity` im Failure-Branch, opt-in `security.delivery.failed`-Webhook (Anhang 1), `cleanup_buffer_activity`, zentrale Logging-Konfiguration mit `SensitiveContentFilter`, Request-ID-Middleware, OpenAPI-`webhooks`-Block, 34 zusaetzliche Tests |
-| M09 | Observability & SLOs | Ausstehend | |
+| M09 | Observability & SLOs | Abgeschlossen | `core/metrics.py` (20+ Metrikfamilien, API + Worker), HTTP-Metrik-Middleware, OpenTelemetry-Tracing opt-in (`core/tracing.py`), request_id/job_id-Korrelation via Temporal-Interceptor, Observability-Compose-Overlay (Prometheus, Alertmanager, Grafana, Jaeger), 11 Alert-Regeln, 3 provisionierte Dashboards, SLO-Dokument, KB-TTL-Schedule, 40 zusaetzliche Tests |
 | M10 | Outbound-Adapter Hardening | Ausstehend | |
 | M11 | Lokaler LLM-Adapter & Paritaetstests | Ausstehend | |
 | M12 | UAT-Paket & Uebergabe | Ausstehend | |

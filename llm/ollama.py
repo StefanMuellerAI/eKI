@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from core.exceptions import LLMException
+from core.metrics import LLM_QUEUE_WAIT, observe_llm_call
 from core.prompt_sanitizer import PromptSanitizer
 from llm.base import BaseLLMProvider
 
@@ -102,6 +103,7 @@ async def _ollama_slot() -> AsyncIterator[None]:
     capacity, interval_ms = _get_throttle_config()
     sem = _get_or_create_semaphore(capacity)
 
+    queued_at = time.monotonic()
     await sem.acquire()
     try:
         if interval_ms > 0:
@@ -111,6 +113,7 @@ async def _ollama_slot() -> AsyncIterator[None]:
                 if wait > 0:
                     await asyncio.sleep(wait)
                 _OLLAMA_LAST_CALL_MONOTONIC = time.monotonic()
+        LLM_QUEUE_WAIT.labels(provider="ollama").observe(time.monotonic() - queued_at)
         yield
     finally:
         sem.release()
@@ -198,7 +201,7 @@ class OllamaProvider(BaseLLMProvider):
         payload["options"].update(kwargs)
 
         try:
-            async with _ollama_slot():
+            async with _ollama_slot(), observe_llm_call(self.provider_name, "generate"):
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
                     response = await client.post(
                         f"{self.base_url}/api/generate",
@@ -248,7 +251,7 @@ class OllamaProvider(BaseLLMProvider):
         payload["options"].update(kwargs)
 
         try:
-            async with _ollama_slot():
+            async with _ollama_slot(), observe_llm_call(self.provider_name, "generate_chat"):
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
                     response = await client.post(
                         f"{self.base_url}/api/chat",
@@ -317,7 +320,10 @@ class OllamaProvider(BaseLLMProvider):
         payload["options"].update(kwargs)
 
         try:
-            async with _ollama_slot():
+            async with (
+                _ollama_slot(),
+                observe_llm_call(self.provider_name, "generate_structured"),
+            ):
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
                     response = await client.post(
                         f"{self.base_url}/api/chat",
@@ -401,13 +407,14 @@ class OllamaProvider(BaseLLMProvider):
         payload = {"model": self.embedding_model, "prompt": clean_text}
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    f"{self.base_url}/api/embeddings",
-                    json=payload,
-                )
-                response.raise_for_status()
-                result = response.json()
+            async with observe_llm_call(self.provider_name, "embed"):
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    response = await client.post(
+                        f"{self.base_url}/api/embeddings",
+                        json=payload,
+                    )
+                    response.raise_for_status()
+                    result = response.json()
         except httpx.HTTPError as e:
             logger.error(f"Ollama embeddings API error: {e}")
             raise LLMException(

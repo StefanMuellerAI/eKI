@@ -35,6 +35,7 @@ from api.dependencies import (
     verify_api_key,
 )
 from api.rate_limiting import rate_limit_combined
+from core import metrics
 from core.db_models import ApiKeyModel, JobMetadata, ReportMetadata
 from core.exceptions import ServiceUnavailableException
 from core.models import (
@@ -506,10 +507,12 @@ async def get_report(
         is_retrieved = state_result.scalar_one_or_none()
 
         if is_retrieved is None:
+            metrics.REPORT_RETRIEVALS_TOTAL.labels(outcome="not_found").inc()
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Report not found or access denied",
             )
+        metrics.REPORT_RETRIEVALS_TOTAL.labels(outcome="gone").inc()
         raise HTTPException(
             status_code=status.HTTP_410_GONE,
             detail="Report already retrieved. URL is no longer valid.",
@@ -529,8 +532,11 @@ async def get_report(
 
         # Delete from Redis after successful retrieval (One-Shot)
         await buffer.delete(report_ref_key)
+        metrics.BUFFER_DELETES_TOTAL.labels(source="pull").inc()
+        metrics.REPORT_RETRIEVALS_TOTAL.labels(outcome="success").inc()
     except Exception:
         # Report expired from Redis (TTL), return what we can from metadata
+        metrics.REPORT_RETRIEVALS_TOTAL.labels(outcome="expired").inc()
         report_data = {
             "report_id": str(report_id),
             "project_id": "expired",

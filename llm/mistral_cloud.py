@@ -19,6 +19,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError as JSONSchemaValidationError
 
 from core.exceptions import LLMException
+from core.metrics import observe_llm_call
 from core.prompt_sanitizer import PromptSanitizer
 from llm.base import BaseLLMProvider
 
@@ -79,18 +80,19 @@ class MistralCloudProvider(BaseLLMProvider):
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    json=payload,
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                )
-                response.raise_for_status()
-                result = response.json()
-                return result["choices"][0]["message"]["content"]
+            async with observe_llm_call(self.provider_name, "generate"):
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    response = await client.post(
+                        f"{self.base_url}/chat/completions",
+                        json=payload,
+                        headers={
+                            "Authorization": f"Bearer {self.api_key}",
+                            "Content-Type": "application/json",
+                        },
+                    )
+                    response.raise_for_status()
+                    result = response.json()
+                    return result["choices"][0]["message"]["content"]
 
         except httpx.HTTPError as e:
             logger.error(f"Mistral Cloud API error: {e}")
@@ -215,17 +217,18 @@ class MistralCloudProvider(BaseLLMProvider):
                 payload[k] = v
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    json=payload,
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                )
-                response.raise_for_status()
-                result = response.json()
+            async with observe_llm_call(self.provider_name, "generate_structured"):
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    response = await client.post(
+                        f"{self.base_url}/chat/completions",
+                        json=payload,
+                        headers={
+                            "Authorization": f"Bearer {self.api_key}",
+                            "Content-Type": "application/json",
+                        },
+                    )
+                    response.raise_for_status()
+                    result = response.json()
         except httpx.HTTPError as e:
             logger.error(f"Mistral Cloud structured API error: {e}")
             raise LLMException(

@@ -1,0 +1,90 @@
+# Observability overlay (M09): Prometheus, Alertmanager, Grafana, Jaeger.
+#
+# Usage (dev):   docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+# Usage (prod):  docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#                               -f docker-compose.observability.yml up -d
+#
+# Only Grafana (3000) and Jaeger UI (16686) are published to the host. Prometheus
+# scrapes the API via the API-key protected /metrics endpoint (credentials file
+# mounted from ./secrets/prometheus_api_key.txt) and the worker via its internal
+# exporter port (9090, never published).
+
+services:
+  api:
+    environment:
+      - OTEL_ENABLED=${OTEL_ENABLED:-true}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+
+  worker:
+    environment:
+      - OTEL_ENABLED=${OTEL_ENABLED:-true}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+      - PROMETHEUS_PORT=9090
+    expose:
+      - "9090"
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: eki-prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./docker/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ./secrets/prometheus_api_key.txt:/etc/prometheus/api_key.txt:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - api
+    networks:
+      - eki-network
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: eki-alertmanager
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+    volumes:
+      - ./docker/observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    networks:
+      - eki-network
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: eki-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-CHANGE_ME}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+    volumes:
+      - ./docker/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - eki-network
+    restart: unless-stopped
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.60
+    container_name: eki-jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"
+    networks:
+      - eki-network
+    restart: unless-stopped
+
+volumes:
+  prometheus_data:
+  alertmanager_data:
+  grafana_data:

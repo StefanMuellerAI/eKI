@@ -219,9 +219,19 @@ class Settings(BaseSettings):
             "to keep the context window under control on large screenplays."
         ),
     )
+    # M09: KB-TTL-Cleanup als Temporal-Schedule (taeglich 03:00 UTC).
+    kb_cleanup_enabled: bool = Field(
+        default=True, description="Create the daily KB TTL cleanup schedule"
+    )
+    kb_cleanup_cron: str = Field(
+        default="0 3 * * *", description="Cron expression for KB TTL cleanup"
+    )
 
     # Observability
-    otel_enabled: bool = Field(default=True, description="Enable OpenTelemetry")
+    otel_enabled: bool = Field(
+        default=False,
+        description="Enable OpenTelemetry tracing (needs an OTLP collector at otel_exporter_otlp_endpoint)",
+    )
     otel_service_name: str = Field(default="eki-api", description="Service name for traces")
     otel_exporter_otlp_endpoint: str = Field(
         default="http://localhost:4318", description="OTLP exporter endpoint"

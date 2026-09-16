@@ -32,7 +32,7 @@ dependencies = [
     "hiredis>=2.3.2",
 
     # Temporal Workflow Engine
-    "temporalio>=1.5.0",
+    "temporalio[opentelemetry]>=1.5.0",
 
     # HTTP Client
     "httpx>=0.26.0",
@@ -50,6 +50,8 @@ dependencies = [
     "opentelemetry-sdk>=1.22.0",
     "opentelemetry-instrumentation-fastapi>=0.43b0",
     "opentelemetry-instrumentation-sqlalchemy>=0.43b0",
+    "opentelemetry-instrumentation-httpx>=0.43b0",
+    "opentelemetry-exporter-otlp-proto-http>=1.22.0",
     "opentelemetry-exporter-prometheus>=0.43b0",
 
     # Logging
@@ -125,6 +127,10 @@ addopts = "-ra -q --strict-markers --cov=api --cov=core --cov=services --cov=wor
 testpaths = ["tests"]
 asyncio_mode = "auto"
 pythonpath = ["."]
+markers = [
+    "temporal: needs the Temporal time-skipping test server (downloaded on first use)",
+    "ocr: needs a local tesseract binary",
+]
 
 [tool.coverage.run]
 source = ["api", "core", "services", "workflows", "worker", "parsers", "llm"]

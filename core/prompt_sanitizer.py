@@ -7,6 +7,17 @@ from re import Pattern
 logger = logging.getLogger(__name__)
 
 
+def _count_sanitizer_hit(action: str) -> None:
+    """Increment the M09 sanitizer metric; never let metrics break sanitizing."""
+    try:
+        from core.metrics import PROMPT_SANITIZER_HITS_TOTAL
+
+        PROMPT_SANITIZER_HITS_TOTAL.labels(action=action).inc()
+    except Exception:  # nosec B110
+        # Metrics are best-effort; the security decision must not depend on them.
+        pass
+
+
 class PromptSanitizer:
     """Sanitize and validate prompts to prevent injection attacks."""
 
@@ -115,7 +126,9 @@ class PromptSanitizer:
         # Check safety
         if not cls.is_safe(clean_prompt):
             if raise_on_unsafe:
+                _count_sanitizer_hit("blocked")
                 raise ValueError("Prompt contains potentially dangerous content")
+            _count_sanitizer_hit("allowed")
             logger.warning("Unsafe prompt detected but allowed (raise_on_unsafe=False)")
 
         return clean_prompt
