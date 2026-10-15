@@ -107,10 +107,16 @@ async def structure_scene_with_llm(
             system_prompt=system_prompt,
             temperature=temperature,
         )
-        return result
     except (LLMException, Exception) as exc:
         logger.warning("LLM scene structuring failed: %s", exc)
         return _fallback_scene_data()
+    if not isinstance(result, dict):
+        logger.warning(
+            "LLM scene structuring returned %s instead of an object; using fallback",
+            type(result).__name__,
+        )
+        return _fallback_scene_data()
+    return result
 
 
 async def extract_title_from_preamble(
@@ -129,10 +135,15 @@ async def extract_title_from_preamble(
             system_prompt=system_prompt,
             temperature=temperature,
         )
-        return result.get("title")
     except (LLMException, Exception) as exc:
         logger.warning("LLM preamble extraction failed: %s", exc)
         return None
+    title = result.get("title") if isinstance(result, dict) else None
+    # ParsedScript.title is ``str | None``: anything else would fail validation
+    # of the whole script, so non-string / blank titles are dropped.
+    if not isinstance(title, str) or not title.strip():
+        return None
+    return title.strip()
 
 
 def _fallback_scene_data() -> dict[str, Any]:
@@ -147,41 +158,76 @@ def _fallback_scene_data() -> dict[str, Any]:
     }
 
 
-def llm_result_to_parsed_scene_fields(result: dict[str, Any]) -> dict[str, Any]:
+def _str_or_none(value: Any) -> str | None:
+    """Return *value* stripped if it is a non-blank string, else ``None``."""
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _enum_value(value: Any) -> str:
+    """Upper-cased enum candidate; non-strings map to ``UNKNOWN``."""
+    return value.upper().strip() if isinstance(value, str) else "UNKNOWN"
+
+
+def llm_result_to_parsed_scene_fields(result: Any) -> dict[str, Any]:
     """Convert an LLM structured output dict into fields compatible with ParsedScene.
 
-    Normalises enums and builds ``DialogueLine`` objects.
+    Normalises enums and builds ``DialogueLine`` objects.  The LLM output is
+    untrusted: every field is type-checked and coerced (non-string text ->
+    ``"UNKNOWN"``/``""``, ``characters`` -> de-duplicated ``list[str]``,
+    incomplete dialogue entries dropped) so a single malformed answer can
+    never make ``ParsedScene`` validation fail.  A non-dict *result* is
+    treated like an empty answer.
     """
-    # Normalise enums (LLM may return slightly different casing)
-    loc_type_raw = (result.get("location_type") or "UNKNOWN").upper().strip()
+    if not isinstance(result, dict):
+        logger.warning(
+            "LLM scene result is %s, not an object; using UNKNOWN fields",
+            type(result).__name__,
+        )
+        result = {}
+
     try:
-        loc_type = LocationType(loc_type_raw)
+        loc_type = LocationType(_enum_value(result.get("location_type")))
     except ValueError:
         loc_type = LocationType.UNKNOWN
 
-    tod_raw = (result.get("time_of_day") or "UNKNOWN").upper().strip()
     try:
-        tod = TimeOfDay(tod_raw)
+        tod = TimeOfDay(_enum_value(result.get("time_of_day")))
     except ValueError:
         tod = TimeOfDay.UNKNOWN
 
-    # Build dialogue lines
-    dialogue_lines: list[DialogueLine] = []
-    for d in result.get("dialogue") or []:
-        if isinstance(d, dict) and d.get("character") and d.get("text"):
-            dialogue_lines.append(
-                DialogueLine(
-                    character=d["character"],
-                    parenthetical=d.get("parenthetical"),
-                    text=d["text"],
-                )
-            )
+    raw_characters = result.get("characters")
+    characters: list[str] = []
+    if isinstance(raw_characters, list):
+        for name in raw_characters:
+            clean = _str_or_none(name)
+            if clean is not None and clean not in characters:
+                characters.append(clean)
 
+    dialogue_lines: list[DialogueLine] = []
+    raw_dialogue = result.get("dialogue")
+    for d in raw_dialogue if isinstance(raw_dialogue, list) else []:
+        if not isinstance(d, dict):
+            continue
+        speaker = _str_or_none(d.get("character"))
+        text = d.get("text")
+        if speaker is None or not isinstance(text, str) or not text.strip():
+            continue
+        dialogue_lines.append(
+            DialogueLine(
+                character=speaker,
+                parenthetical=_str_or_none(d.get("parenthetical")),
+                text=text,
+            )
+        )
+
+    action_text = result.get("action_text")
     return {
-        "location": result.get("location") or "UNKNOWN",
+        "location": _str_or_none(result.get("location")) or "UNKNOWN",
         "location_type": loc_type,
         "time_of_day": tod,
-        "characters": result.get("characters") or [],
-        "action_text": result.get("action_text") or "",
+        "characters": characters,
+        "action_text": action_text if isinstance(action_text, str) else "",
         "dialogue": dialogue_lines,
     }

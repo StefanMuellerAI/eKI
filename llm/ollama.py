@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import math
 import re
 import time
 from collections.abc import AsyncIterator
@@ -14,7 +15,7 @@ import httpx
 from core.exceptions import LLMException
 from core.metrics import LLM_QUEUE_WAIT, observe_llm_call
 from core.prompt_sanitizer import PromptSanitizer
-from llm.base import BaseLLMProvider
+from llm.base import BaseLLMProvider, decode_json_body, malformed_response, require_field
 
 logger = logging.getLogger(__name__)
 
@@ -208,8 +209,17 @@ class OllamaProvider(BaseLLMProvider):
                         json=payload,
                     )
                     response.raise_for_status()
-                    result = response.json()
-                    return result["response"]
+                    result = decode_json_body(
+                        response, provider=self.provider_name, label=self._label
+                    )
+                    text: str = require_field(
+                        result,
+                        ("response",),
+                        provider=self.provider_name,
+                        label=self._label,
+                        expected=str,
+                    )
+                    return text
 
         except httpx.HTTPError as e:
             logger.error(f"Ollama API error: {e}")
@@ -277,8 +287,17 @@ class OllamaProvider(BaseLLMProvider):
                         json=payload,
                     )
                     response.raise_for_status()
-                    result = response.json()
-                    return result["message"]["content"]
+                    result = decode_json_body(
+                        response, provider=self.provider_name, label=self._label
+                    )
+                    reply: str = require_field(
+                        result,
+                        ("message", "content"),
+                        provider=self.provider_name,
+                        label=self._label,
+                        expected=str,
+                    )
+                    return reply
 
         except httpx.HTTPError as e:
             logger.error(f"Ollama Chat API error: {e}")
@@ -349,7 +368,13 @@ class OllamaProvider(BaseLLMProvider):
                         json=payload,
                     )
                     response.raise_for_status()
-                    result = response.json()
+                    result = decode_json_body(
+                        response, provider=self.provider_name, label=self._label
+                    )
+                    if not isinstance(result, dict):
+                        raise malformed_response(
+                            self.provider_name, self._label, "response is not a JSON object"
+                        )
         except httpx.HTTPError as e:
             logger.error(f"Ollama Chat API error: {e}")
             raise LLMException(
@@ -357,7 +382,17 @@ class OllamaProvider(BaseLLMProvider):
                 details={"provider": self.provider_name, "base_url": self.base_url},
             )
 
-        response_text = (result.get("message", {}).get("content") or "").strip()
+        # A missing/null message or content is treated like an empty answer and
+        # reported as invalid JSON below (callers already handle that case).
+        message = result.get("message")
+        raw_content = message.get("content") if isinstance(message, dict) else None
+        if raw_content is not None and not isinstance(raw_content, str):
+            raise malformed_response(
+                self.provider_name,
+                self._label,
+                f"field 'message.content' has type {type(raw_content).__name__}",
+            )
+        response_text = (raw_content or "").strip()
 
         # Safety net: some thinking-capable models embed <think>...</think>
         # blocks in their content despite think=False. Strip them before
@@ -375,13 +410,22 @@ class OllamaProvider(BaseLLMProvider):
         response_text = response_text.strip()
 
         try:
-            return json.loads(response_text)
+            parsed = json.loads(response_text)
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON response: {e}\nResponse: {response_text}")
             raise LLMException(
                 "Invalid JSON response from Ollama",
                 details={"response": response_text, "error": str(e)},
             )
+        if not isinstance(parsed, dict):
+            # All structured callers use object schemas and call ``.get`` on the
+            # result; a bare array/scalar would only fail later and less clearly.
+            raise malformed_response(
+                self.provider_name,
+                self._label,
+                f"structured output is a JSON {type(parsed).__name__}, expected an object",
+            )
+        return parsed
 
     @staticmethod
     def _strip_thinking_tags(text: str) -> str:
@@ -433,7 +477,9 @@ class OllamaProvider(BaseLLMProvider):
                         json=payload,
                     )
                     response.raise_for_status()
-                    result = response.json()
+                    result = decode_json_body(
+                        response, provider=self.provider_name, label=self._label
+                    )
         except httpx.HTTPError as e:
             logger.error(f"Ollama embeddings API error: {e}")
             raise LLMException(
@@ -441,13 +487,22 @@ class OllamaProvider(BaseLLMProvider):
                 details={"provider": self.provider_name, "model": self.embedding_model},
             )
 
-        vector = result.get("embedding")
+        vector = result.get("embedding") if isinstance(result, dict) else None
         if not isinstance(vector, list) or not vector:
             raise LLMException(
                 "Ollama returned an empty or malformed embedding",
                 details={"provider": self.provider_name, "model": self.embedding_model},
             )
-        return [float(v) for v in vector]
+        try:
+            floats = [float(v) for v in vector]
+        except (TypeError, ValueError):
+            floats = []
+        if len(floats) != len(vector) or not all(math.isfinite(v) for v in floats):
+            raise LLMException(
+                "Ollama returned an empty or malformed embedding (non-numeric values)",
+                details={"provider": self.provider_name, "model": self.embedding_model},
+            )
+        return floats
 
     async def health_check(self) -> bool:
         """Check Ollama availability."""
@@ -502,3 +557,8 @@ class OllamaProvider(BaseLLMProvider):
     def provider_name(self) -> str:
         """Get provider name."""
         return "ollama"
+
+    @property
+    def _label(self) -> str:
+        """Human-readable provider label for malformed-response messages."""
+        return "Ollama" if self.provider_name == "ollama" else f"Ollama ({self.provider_name})"

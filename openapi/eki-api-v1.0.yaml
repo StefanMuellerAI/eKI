@@ -9,10 +9,24 @@ info:
     KI-gestützt auf Sicherheitsrisiken analysiert und strukturierte Reports zurückliefert.
 
     ## Kernprinzipien
-    - **Design-First:** Diese OpenAPI-Spezifikation ist die Single Source of Truth
-    - **Processing-Only:** Keine persistente Speicherung von Drehbüchern/Reports (nur Audit-Metadaten)
-    - **Write-Through:** Ergebnisse werden sofort an eProjekt zurückgespielt
+    - **Design-First:** Diese OpenAPI-Spezifikation ist die Single Source of Truth. Die zur Laufzeit
+      unter `/openapi.json` (nur bei `DEBUG=true`) ausgelieferte Spec wird von FastAPI generiert und ist
+      nicht verbindlich; `tests/test_m12_openapi_contract.py` prüft Routen, Enums und Version gegen diese Datei.
+    - **Processing-Only:** Keine persistente Speicherung von Drehbüchern/Reports (nur Audit-Metadaten);
+      Inhalte liegen nur transient und verschlüsselt im Buffer (TTL `BUFFER_TTL_SECONDS`, Standard 6 h).
+      Details und Ausnahmen: `docs/DATENSCHUTZ.md`.
+    - **Write-Through:** Im Push-Modus wird das Ergebnis sofort an eProjekt zurückgespielt, im Pull-Modus
+      einmalig per One-Shot-GET abgeholt; danach wird der Inhalt gelöscht.
     - **Minimalinvasiv:** Integration nur über REST, keine direkten DB-Zugriffe
+
+    ## Bekannte Einschränkungen (Release 1.0.0)
+    - `POST /v1/security/check` (synchron) ist ein M01-Stub ohne echte Analyse; produktiv nur `check:async`.
+    - `callback_url` wird validiert, aber nicht verwendet; Push-Ziel ist immer
+      `{EPRO_BASE_URL}/eki/scl/set-risk-assessment/{project_id}` (Server-Konfiguration).
+    - `priority` wird gespeichert, beeinflusst die Abarbeitung aber nicht.
+    - Verarbeitungsfehler (Parsing, Risikoanalyse nach Retries, Blockade durch den
+      Prompt-Injection-Filter) beenden den Job mit `failed` und inhaltsfreier `error_message`
+      (fail-closed) – `failed` bedeutet „keine automatische Bewertung", nie „kein Risiko".
 
     ## Meilenstein-Status
     - M01: Projektgerüst & OpenAPI ✓
@@ -30,7 +44,11 @@ info:
 
     ## Fehlerformat
     Alle Fehlerantworten nutzen `ErrorResponse` mit den Feldern `error`, `message`,
-    `details[]`, `request_id`, `timestamp`. Jede Antwort trägt den Header `X-Request-ID`.
+    `details[]`, `request_id`, `timestamp`. Jede Antwort trägt den Header `X-Request-ID`
+    (vom Client übernommen oder serverseitig erzeugt); `request_id` im Fehler-Body ist immer
+    gesetzt und entspricht diesem Header. Unbehandelte Serverfehler liefern ebenfalls
+    `ErrorResponse`: 500 `InternalServerError` bzw. 503 (`ServiceUnavailable` /
+    `ServiceUnavailableException`), wenn PostgreSQL, Redis oder Temporal nicht erreichbar sind.
 
   contact:
     name: Filmakademie Baden-Württemberg
@@ -94,7 +112,10 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '503':
-          description: Service is not ready
+          description: >-
+            Service is not ready (`ReadinessResponse` with `status=not_ready`). If PostgreSQL itself
+            is down, the API-key lookup fails first and the body is an `ErrorResponse`
+            (`error=ServiceUnavailable`) instead.
           content:
             application/json:
               schema:
@@ -104,10 +125,13 @@ paths:
     post:
       tags:
         - Security
-      summary: Synchronous security check
+      summary: Synchronous security check (M01 stub)
       description: >-
-        Perform a synchronous security check for scripts ≤1 MB or ≤50 scenes.
-        Accepts JSON (base64-encoded script_content) or multipart/form-data file upload (.fdx, .pdf).
+        **M01 stub -- no real analysis.** The request is authenticated and validated, but the
+        script is neither parsed nor sent to the LLM: the response always contains one `info`
+        finding with `category=stub` and `metadata.stub=true`. Productive checks use
+        `POST /v1/security/check:async`. Accepts JSON (base64-encoded script_content) or
+        multipart/form-data file upload (.fdx, .pdf).
       operationId: securityCheckSync
       security:
         - BearerAuth: []
@@ -134,8 +158,12 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '413':
-          description: File exceeds maximum size (10 MB)
+          description: >-
+            Multipart file exceeds `MAX_UPLOAD_SIZE_BYTES` (default 10 MB). An oversized JSON
+            `script_content` is rejected with 422 instead.
           content:
             application/json:
               schema:
@@ -146,6 +174,8 @@ paths:
           $ref: '#/components/responses/RateLimitExceeded'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /v1/security/check:async:
     post:
@@ -155,8 +185,12 @@ paths:
       description: >-
         Start an asynchronous security check via Temporal workflow.
         Accepts JSON (base64-encoded script_content) or multipart/form-data file upload (.fdx, .pdf).
-        Script content is AES-encrypted in Redis; only a reference key is passed to the workflow.
-        Supports idempotency keys and configurable delivery mode (pull/push).
+        The script content, intermediate results and per-scene findings are Fernet-encrypted (AES)
+        in Redis; the workflow only receives reference keys plus metadata (see
+        `docs/DATENSCHUTZ.md`). Supports idempotency keys (scoped to the API key's user) and the
+        delivery modes `pull` (one-shot GET) and `push` (POST to
+        `{EPRO_BASE_URL}/eki/scl/set-risk-assessment/{project_id}`). `callback_url` is validated
+        but not used; `priority` is stored but does not influence scheduling.
       operationId: securityCheckAsync
       security:
         - BearerAuth: []
@@ -183,8 +217,12 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '413':
-          description: File exceeds maximum size (10 MB)
+          description: >-
+            Multipart file exceeds `MAX_UPLOAD_SIZE_BYTES` (default 10 MB). An oversized JSON
+            `script_content` is rejected with 422 instead.
           content:
             application/json:
               schema:
@@ -196,11 +234,7 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
-          description: Workflow engine temporarily unavailable
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /v1/security/jobs/{job_id}:
     get:
@@ -237,6 +271,8 @@ paths:
           $ref: '#/components/responses/RateLimitExceeded'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /v1/security/reports/{report_id}:
     get:
@@ -247,6 +283,10 @@ paths:
         Retrieve a security report (JSON + PDF). The URL is invalidated after
         the first successful retrieval (one-shot pull mode). Subsequent requests
         return 410 Gone. Ownership is verified against the authenticated API key.
+        If the encrypted report is no longer in the buffer (TTL expired, already pushed to ePro,
+        unreadable), the GET answers 410 ("Report is no longer available ...") without a report,
+        without `X-One-Shot` and without marking the report as delivered. If the buffer (Redis)
+        is unreachable, the GET answers 503 and the report stays retrievable.
       operationId: getReport
       security:
         - BearerAuth: []
@@ -278,7 +318,10 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '410':
-          description: Report already retrieved (URL invalidated)
+          description: >-
+            `ErrorResponse` with `error=Gone`: report already retrieved ("Report already
+            retrieved. URL is no longer valid.") or no longer in the buffer ("Report is no longer
+            available (expired or already delivered). URL is no longer valid.")
           content:
             application/json:
               schema:
@@ -287,6 +330,8 @@ paths:
           $ref: '#/components/responses/RateLimitExceeded'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   # -------------------------------------------------------------------------
   # M06: Knowledge Base endpoints
@@ -298,9 +343,12 @@ paths:
       summary: Upload a KB document
       description: >-
         Upload a safety document (.pdf, .md, .txt) into the project knowledge
-        base. The document is chunked, embedded, and stored Fernet-encrypted.
-        Idempotent via SHA-256 content hash: re-uploading the same content
-        returns 409 Conflict.
+        base. The document is chunked and embedded; the original text is stored
+        Fernet-encrypted, the chunk texts and vectors in plaintext (pgvector cannot
+        search ciphertext). Idempotent via SHA-256 content hash per tenant: re-uploading
+        the same content (also concurrently) returns 409 Conflict. Embeddings require an Ollama-based provider
+        (`ollama` / `local_mistral`); with `mistral_cloud` the upload fails.
+        All `/v1/kb/*` endpoints accept any valid API key (no admin key required).
       operationId: uploadKbDocument
       security:
         - BearerAuth: []
@@ -342,7 +390,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '409':
-          description: Duplicate content (identical SHA-256 already in KB)
+          description: Duplicate content (identical SHA-256 already in the tenant's KB)
           content:
             application/json:
               schema:
@@ -351,6 +399,8 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '429':
           $ref: '#/components/responses/RateLimitExceeded'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
     get:
       tags:
@@ -387,6 +437,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '429':
           $ref: '#/components/responses/RateLimitExceeded'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
     delete:
       tags:
@@ -417,6 +469,8 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '429':
           $ref: '#/components/responses/RateLimitExceeded'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /v1/kb/documents/{doc_id}:
     get:
@@ -444,6 +498,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
     delete:
       tags:
@@ -470,6 +526,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   # -------------------------------------------------------------------------
   # M10: Operations endpoints (admin API key)
@@ -496,6 +554,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/RateLimitExceeded'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /v1/ops/jobs:
     get:
@@ -551,6 +611,8 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '429':
           $ref: '#/components/responses/RateLimitExceeded'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /v1/ops/dead-letters:
     get:
@@ -559,8 +621,11 @@ paths:
       summary: List delivery dead letters
       description: >-
         Definitively failed deliveries: 6h retry window exhausted, 4xx hard fail,
-        or pull report not retrieved within TTL. Content-free by design; replay is
-        not offered because the report was deleted on failure (Delete-on-Delivery).
+        pull report not retrieved within TTL, report no longer in the buffer at push time
+        (`report_expired`) or a project_id unusable in the push URL (`invalid_project_id`).
+        Processing failures (job failed before a report existed) create no dead letter.
+        Content-free by design; replay is not offered because the report was deleted on
+        failure (Delete-on-Delivery).
       operationId: opsListDeadLetters
       security:
         - BearerAuth: []
@@ -593,6 +658,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/RateLimitExceeded'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /v1/ops/dead-letters/{dead_letter_id}:
     get:
@@ -622,6 +689,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /v1/ops/dead-letters/{dead_letter_id}:acknowledge:
     post:
@@ -665,6 +734,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
 # -----------------------------------------------------------------------------
 # M08: Outgoing webhooks (eKI -> eProjekt)
@@ -683,10 +754,14 @@ webhooks:
       description: >-
         Wird von der eKI an die in `EPRO_WEBHOOK_URL` konfigurierte
         Empfaenger-URL gepostet, wenn die Zustellung eines Security-Reports
-        endgueltig fehlgeschlagen ist -- entweder nach Erschoepfung des
-        6-Stunden-Retry-Fensters oder bei einem nicht-retrybaren 4xx-Hard-Fail.
+        endgueltig fehlgeschlagen ist -- nach Erschoepfung des
+        6-Stunden-Retry-Fensters (Push), bei einem nicht-retrybaren 4xx-Hard-Fail
+        (Push), wenn ein Pull-Report nicht innerhalb der Buffer-TTL abgeholt wurde --
+        oder wenn die Verarbeitung selbst gescheitert ist (Parsing, Risikoanalyse,
+        Prompt-Injection-Filter), sodass nie ein Report entsteht.
         Enthaelt ausschliesslich Metadaten; KEINE Reportinhalte und KEINE
-        Drehbuchtexte. Pflichtenheft Anhang 1 + Abnahmetest 4.
+        Drehbuchtexte. Ist `EPRO_AUTH_TOKEN` gesetzt, wird er als
+        `Authorization: Bearer` mitgesendet. Pflichtenheft Anhang 1 + Abnahmetest 4.
       operationId: securityDeliveryFailedWebhook
       requestBody:
         required: true
@@ -700,9 +775,13 @@ webhooks:
             Empfaenger hat den Webhook akzeptiert. Die eKI macht keine
             weiteren Zustellversuche fuer diesen Webhook.
         '4XX':
-          description: Empfaenger lehnt Webhook ab (kein eKI-Retry)
+          description: >-
+            Empfaenger lehnt Webhook ab. Die eKI behandelt jede Nicht-2xx-Antwort gleich:
+            insgesamt bis zu 3 Versuche (Pause 1 s, 2 s), danach Aufgabe
+            (Dead Letter mit `webhook_sent=false`).
         '5XX':
-          description: Empfaenger-Fehler (eKI versucht bis zu 3x intern)
+          description: >-
+            Empfaenger-Fehler; wie bei 4XX insgesamt bis zu 3 Versuche, dann Aufgabe.
 
 components:
   securitySchemes:
@@ -745,8 +824,11 @@ components:
       enum: [pending, running, delivering, completed, failed, cancelled]
       description: >-
         Status of an async security check job. `delivering` (M10) = report generated,
-        outbound push to ePro in progress; `completed` is reached only after a 2xx from ePro
-        (push) or when the report is ready for one-shot retrieval (pull).
+        outbound push to ePro in progress (in pull mode only briefly, until the report is
+        ready); `completed` is reached only after a 2xx from ePro (push) or when the report is
+        ready for one-shot retrieval (pull). `failed` = no automated assessment available
+        (processing or delivery failure, content-free `error_message`); `cancelled` = the
+        workflow was cancelled by an operator.
 
     DeliveryStatus:
       type: string
@@ -778,7 +860,10 @@ components:
       properties:
         script_content:
           type: string
-          description: Base64-encoded script content (FDX as UTF-8 text, PDF as binary)
+          description: >-
+            Base64-encoded script content (FDX as UTF-8 text, PDF as binary). The limit applies
+            to the base64 string, i.e. files up to approx. 7.5 MB; larger files via multipart
+            (up to `MAX_UPLOAD_SIZE_BYTES`, default 10 MB).
           minLength: 1
           maxLength: 10485760
         script_format:
@@ -790,38 +875,47 @@ components:
           maxLength: 100
           pattern: '^[a-zA-Z0-9_-]+$'
         script_id:
-          type: integer
-          nullable: true
+          type: [integer, 'null']
           description: >-
             eProjekt document ID of the script/treatment being analyzed.
             Passed back to ePro on push delivery so ePro can correlate the
             assessment with the correct document version. Use -1 if unknown.
+            32-bit signed integer; values outside that range are rejected with 422.
         callback_url:
-          type: string
+          type: [string, 'null']
           format: uri
-          nullable: true
           description: >-
-            Optional HTTPS callback URL for push delivery results.
-            Must be on allowlisted eProjekt domains (epro.filmakademie.de,
-            staging.epro.filmakademie.de). Private/internal IPs are blocked.
+            Validated but currently **unused** (reserved). If present it must be an HTTPS URL on
+            an allowlisted eProjekt domain (epro.filmakademie.de, staging.epro.filmakademie.de);
+            private/internal IPs are rejected with 422. The push target is not taken from this
+            field: it is always `{EPRO_BASE_URL}/eki/scl/set-risk-assessment/{project_id}`
+            (server configuration).
         delivery:
           type: string
           enum: [pull, push]
           default: pull
           description: >-
-            Delivery mode: "pull" (One-Shot GET via /reports/{id}) or
-            "push" (POST to ePro callback URL)
+            Delivery mode: "pull" (one-shot GET via /v1/security/reports/{id}, report kept
+            encrypted for at most `BUFFER_TTL_SECONDS`, default 6 h) or "push" (multipart POST
+            to `{EPRO_BASE_URL}/eki/scl/set-risk-assessment/{project_id}` with `script_id`,
+            `status`, `assessment`, `file`; retried up to 6 h). Case-insensitive, surrounding
+            whitespace is ignored, an empty value means "pull"; any other value is rejected
+            with 422.
         idempotency_key:
-          type: string
-          nullable: true
+          type: [string, 'null']
           maxLength: 255
           description: >-
-            Optional idempotency key to prevent duplicate jobs.
-            If a job with the same key already exists, the existing job is returned.
+            Optional idempotency key to prevent duplicate jobs, scoped to the user of the API
+            key. If a job with the same key already exists, the existing job is returned
+            (202 with the existing `job_id`). An empty string counts as no key; control
+            characters are rejected with 422.
         metadata:
           type: object
           additionalProperties: true
-          description: Additional metadata for audit trail (max 50 keys, values ≤1000 chars)
+          description: >-
+            Additional metadata (max 50 keys, values ≤1000 chars, string/number/boolean/null).
+            Not persisted in PostgreSQL, but carried in the workflow input (Temporal history);
+            do not put script content or personal data here.
 
     AsyncSecurityCheckRequest:
       allOf:
@@ -833,7 +927,9 @@ components:
               minimum: 1
               maximum: 10
               default: 5
-              description: Job priority (1=highest, 10=lowest)
+              description: >-
+                Job priority (1=highest, 10=lowest). Validated and stored, but currently not
+                used for scheduling.
 
     MultipartSecurityCheckRequest:
       type: object
@@ -846,20 +942,22 @@ components:
           description: Script file upload (.fdx or .pdf, max 10 MB). PDF files are validated by magic bytes.
         project_id:
           type: string
-          description: eProjekt project ID
+          description: >-
+            eProjekt project ID, validated like the JSON field (`^[a-zA-Z0-9_-]+$`, max 100
+            chars). Optional for multipart (stored as `unknown` if omitted). All multipart
+            fields follow the JSON rules; a text field sent as a file part is rejected with 422.
         script_format:
           $ref: '#/components/schemas/ScriptFormat'
         script_id:
-          type: integer
-          nullable: true
-          description: eProjekt document ID
+          type: [integer, 'null']
+          description: eProjekt document ID (32-bit signed integer)
         delivery:
           type: string
           enum: [pull, push]
           default: pull
+          description: Delivery mode, see `SecurityCheckRequest.delivery`
         idempotency_key:
-          type: string
-          nullable: true
+          type: [string, 'null']
           maxLength: 255
 
     MultipartAsyncSecurityCheckRequest:
@@ -872,6 +970,7 @@ components:
               minimum: 1
               maximum: 10
               default: 5
+              description: Job priority; stored, currently not used for scheduling
 
     # --- Response Schemas ---
 
@@ -953,8 +1052,7 @@ components:
           type: string
           description: Unique finding ID
         scene_number:
-          type: string
-          nullable: true
+          type: [string, 'null']
           description: Scene number where risk was found
         risk_level:
           $ref: '#/components/schemas/RiskLevel'
@@ -996,8 +1094,7 @@ components:
           maximum: 1
           description: Confidence score of the finding (1.0 = FDX/certain, lower for PDF/LLM)
         line_reference:
-          type: string
-          nullable: true
+          type: [string, 'null']
           description: Specific line or dialogue reference in the script
         evidence:
           type: string
@@ -1072,9 +1169,14 @@ components:
         processing_time_seconds:
           type: number
           format: float
+          description: >-
+            Seconds from job creation until the report was generated (sync stub: fixed value).
         metadata:
           type: object
           additionalProperties: true
+          description: >-
+            `engine_version` (= API version) and `taxonomy_version`; for the sync stub
+            `stub=true`.
 
     SyncSecurityCheckResponse:
       type: object
@@ -1108,8 +1210,7 @@ components:
           type: string
           description: URL to check job status (e.g. /v1/security/jobs/{job_id})
         estimated_completion_seconds:
-          type: integer
-          nullable: true
+          type: [integer, 'null']
 
     JobStatusResponse:
       type: object
@@ -1131,17 +1232,14 @@ components:
           type: string
           format: date-time
         progress_percentage:
-          type: integer
+          type: [integer, 'null']
           minimum: 0
           maximum: 100
-          nullable: true
         report_id:
-          type: string
+          type: [string, 'null']
           format: uuid
-          nullable: true
         error_message:
-          type: string
-          nullable: true
+          type: [string, 'null']
         metadata:
           $ref: '#/components/schemas/JobDeliveryMetadata'
 
@@ -1158,16 +1256,18 @@ components:
         delivery_attempts:
           type: integer
           minimum: 0
-          description: Push attempts so far (0 in pull mode)
+          description: >-
+            Delivery attempts so far. Push: number of the last POST attempt to ePro. Pull: 0
+            until the report is ready, then 1.
         delivery_last_status_code:
-          type: integer
-          nullable: true
-          description: HTTP status of the last push attempt
+          type: [integer, 'null']
+          description: HTTP status of the last push attempt (always null in pull mode)
         delivered_at:
-          type: string
+          type: [string, 'null']
           format: date-time
-          nullable: true
-          description: Push 2xx timestamp or one-shot retrieval timestamp
+          description: >-
+            Push: timestamp of the 2xx from ePro. Pull: first set when the report is ready,
+            overwritten with the one-shot retrieval time (then `delivery_status=delivered`).
 
     ReportResponse:
       type: object
@@ -1178,8 +1278,7 @@ components:
         report:
           $ref: '#/components/schemas/SecurityReport'
         pdf_base64:
-          type: string
-          nullable: true
+          type: [string, 'null']
           description: >-
             Base64-encoded PDF report (human-readable) with Executive Summary,
             scene findings, and action-item checklist. Null if PDF generation failed.
@@ -1201,16 +1300,16 @@ components:
           $ref: '#/components/schemas/ScriptFormat'
         status:
           $ref: '#/components/schemas/JobStatus'
-        progress_percentage: { type: integer, nullable: true }
+        progress_percentage: { type: [integer, 'null'] }
         delivery_mode: { type: string, enum: [pull, push] }
         delivery_status:
           $ref: '#/components/schemas/DeliveryStatus'
         delivery_attempts: { type: integer, minimum: 0 }
-        delivery_last_status_code: { type: integer, nullable: true }
-        delivery_last_attempt_at: { type: string, format: date-time, nullable: true }
-        delivered_at: { type: string, format: date-time, nullable: true }
-        report_id: { type: string, format: uuid, nullable: true }
-        error_message: { type: string, nullable: true }
+        delivery_last_status_code: { type: [integer, 'null'] }
+        delivery_last_attempt_at: { type: [string, 'null'], format: date-time }
+        delivered_at: { type: [string, 'null'], format: date-time }
+        report_id: { type: [string, 'null'], format: uuid }
+        error_message: { type: [string, 'null'] }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -1232,21 +1331,21 @@ components:
       properties:
         id: { type: string, format: uuid }
         job_id: { type: string, format: uuid }
-        report_id: { type: string, format: uuid, nullable: true }
+        report_id: { type: [string, 'null'], format: uuid }
         project_id: { type: string }
         user_id: { type: string }
         delivery_mode: { type: string, enum: [pull, push] }
         reason:
           type: string
-          enum: [retry_window_exhausted, hard_4xx, pull_ttl_expired, delivery_failed]
+          enum: [retry_window_exhausted, hard_4xx, pull_ttl_expired, delivery_failed, report_expired, invalid_project_id]
         attempts: { type: integer, minimum: 0 }
-        last_status_code: { type: integer, nullable: true }
-        last_error_type: { type: string, nullable: true }
+        last_status_code: { type: [integer, 'null'] }
+        last_error_type: { type: [string, 'null'] }
         webhook_sent: { type: boolean }
         created_at: { type: string, format: date-time }
-        acknowledged_at: { type: string, format: date-time, nullable: true }
-        acknowledged_by: { type: string, nullable: true }
-        note: { type: string, nullable: true, maxLength: 1000 }
+        acknowledged_at: { type: [string, 'null'], format: date-time }
+        acknowledged_by: { type: [string, 'null'] }
+        note: { type: [string, 'null'], maxLength: 1000 }
 
     DeadLetterListResponse:
       type: object
@@ -1265,8 +1364,7 @@ components:
       type: object
       properties:
         note:
-          type: string
-          nullable: true
+          type: [string, 'null']
           maxLength: 1000
           description: Operator note (ticket number, action taken). No report content.
 
@@ -1291,13 +1389,11 @@ components:
         - message
       properties:
         field:
-          type: string
-          nullable: true
+          type: [string, 'null']
         message:
           type: string
         error_code:
-          type: string
-          nullable: true
+          type: [string, 'null']
 
     ErrorResponse:
       type: object
@@ -1315,8 +1411,11 @@ components:
           items:
             $ref: '#/components/schemas/ErrorDetail'
         request_id:
-          type: string
-          nullable: true
+          type: [string, 'null']
+          description: >-
+            Correlation ID; always set by the server (taken from the request's `X-Request-ID`
+            or generated) and identical to the `X-Request-ID` response header. Quote it in
+            support requests.
         timestamp:
           type: string
           format: date-time
@@ -1409,10 +1508,13 @@ components:
         reason:
           type: string
           description: >-
-            Maschinenlesbarer Grund der Zustellungs-Aufgabe:
-            "retry_window_exhausted" (6h Push-Retry erschoepft), "hard_4xx"
-            (nicht-retrybarer ePro-Fehler), "pull_ttl_expired" (Report im
-            Pull-Modus nicht innerhalb der TTL abgeholt), "delivery_failed".
+            Maschinenlesbarer Grund. Zustellung: "retry_window_exhausted" (6h
+            Push-Retry erschoepft), "hard_4xx" (nicht-retrybarer ePro-Fehler),
+            "pull_ttl_expired" (Report im Pull-Modus nicht innerhalb der TTL abgeholt),
+            "report_expired" (Report beim Push nicht mehr im Buffer, z. B. nach einem
+            One-Shot-GET), "invalid_project_id", "delivery_failed". Verarbeitung (kein
+            Report entstanden, `attempts`=0): "prompt_blocked", "parsing_failed",
+            "processing_failed".
         attempts:
           type: integer
           minimum: 0
@@ -1428,14 +1530,19 @@ components:
 
   responses:
     Forbidden:
-      description: Forbidden (e.g. admin API key required for /v1/ops/*, or X-Actor-User-Id mismatch)
+      description: >-
+        Forbidden: `X-Actor-User-Id` does not match the user of the API key
+        (`/v1/security/check`, `/v1/security/check:async`), or an admin API key is required
+        (`/v1/ops/*`)
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
 
     BadRequest:
-      description: Bad request (missing fields, invalid file type, empty file)
+      description: >-
+        Bad request: body is not valid JSON (syntax, empty, not UTF-8, form-urlencoded),
+        multipart without `file`, empty file, unsupported file type, invalid PDF
       content:
         application/json:
           schema:
@@ -1456,21 +1563,41 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
 
     ValidationError:
-      description: Validation error (invalid base64, bad project_id format, SSRF blocked, etc.)
+      description: >-
+        Validation error (JSON body not an object, invalid base64, bad project_id format,
+        invalid delivery/script_format/script_id/idempotency_key, callback_url not allowed, etc.)
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
 
     RateLimitExceeded:
-      description: Rate limit exceeded (IP-based 60/min or API-key-based 1000/h)
+      description: >-
+        Rate limit exceeded (defaults: 60 requests/min per source IP across all endpoints,
+        1000 requests/h per API key). Honour the `Retry-After` header.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
 
     InternalError:
-      description: Internal server error
+      description: Internal server error (`error=InternalServerError`, `request_id` set)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    ServiceUnavailable:
+      description: >-
+        A backend dependency (PostgreSQL, Redis or Temporal) is temporarily unavailable.
+        `error` is `ServiceUnavailable` or `ServiceUnavailableException`; `request_id` is set.
+        Retry with backoff. Note for submissions: the job may already have been created before
+        the failure; a retry with the same `idempotency_key` then returns that job (status
+        `failed` if Temporal was unreachable, permanently `pending` if Redis was unreachable)
+        -- resubmit with a new key in that case.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:

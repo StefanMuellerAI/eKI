@@ -1,3 +1,8 @@
+> **Historischer Nachweis** (Stand 06.02.2026). Beschreibt den damaligen Stand und wird nicht
+> fortgeschrieben; Zeilennummern beziehen sich auf den damaligen Code. Aktueller Stand:
+> [DATENSCHUTZ.md](DATENSCHUTZ.md), [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md),
+> [CONFIGURATION.md](CONFIGURATION.md).
+
 # Security Audit Report - eKI API
 
 - Audit date: 2026-02-06
@@ -18,10 +23,10 @@ The API already has meaningful controls (hashed API keys, ownership checks, SSRF
 
 ### 1) [HIGH] Rate-limit bypass via untrusted `X-Forwarded-For`
 
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/api/rate_limiting.py:28`
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/api/rate_limiting.py:29`
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/api/rate_limiting.py:35`
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/api/rate_limiting.py:87`
+- Evidence: `api/rate_limiting.py:28`
+- Evidence: `api/rate_limiting.py:29`
+- Evidence: `api/rate_limiting.py:35`
+- Evidence: `api/rate_limiting.py:87`
 
 **Issue**
 Client IP is taken directly from `X-Forwarded-For`, which is user-controlled unless a trusted reverse proxy sanitizes it. Attackers can rotate fake IPs to evade the per-IP limiter. Limits are also hardcoded (60/min, 1000/hour) instead of using config values.
@@ -36,8 +41,8 @@ Bypass of anti-abuse controls and easier request flooding.
 
 ### 2) [HIGH] `/metrics` is publicly exposed without auth/network guard
 
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/api/main.py:130`
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/api/main.py:131`
+- Evidence: `api/main.py:130`
+- Evidence: `api/main.py:131`
 
 **Issue**
 Prometheus metrics are mounted on `/metrics` with no authentication or IP restriction.
@@ -52,15 +57,15 @@ Information disclosure (service internals, endpoint behavior), plus potential sc
 
 ### 3) [HIGH] Insecure deployment defaults (hardcoded credentials + exposed infra ports)
 
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/api/config.py:32`
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/api/config.py:56`
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/docker-compose.yml:9`
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/docker-compose.yml:11`
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/docker-compose.yml:27`
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/docker-compose.yml:43`
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/docker-compose.yml:68`
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/docker-compose.yml:92`
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/docker-compose.prod.yml:2`
+- Evidence: `api/config.py:32`
+- Evidence: `api/config.py:56`
+- Evidence: `docker-compose.yml:9`
+- Evidence: `docker-compose.yml:11`
+- Evidence: `docker-compose.yml:27`
+- Evidence: `docker-compose.yml:43`
+- Evidence: `docker-compose.yml:68`
+- Evidence: `docker-compose.yml:92`
+- Evidence: `docker-compose.prod.yml:2`
 
 **Issue**
 Repository defaults include predictable DB password / secret placeholders, and base Compose publishes PostgreSQL/Redis/Temporal/UI/Ollama ports to host. Production overlay adds secrets but does not remove inherited port exposure from base file.
@@ -75,10 +80,10 @@ Elevated risk of infrastructure compromise and credential misuse in misconfigure
 
 ### 4) [MEDIUM] Missing rate limiting on report/job lookup endpoints
 
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/api/routers/security.py:132`
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/api/routers/security.py:179`
-- Reference (protected endpoints): `/Users/davinci_kollektiv/Documents/eKI/eki-api/api/routers/security.py:35`
-- Reference (protected endpoints): `/Users/davinci_kollektiv/Documents/eKI/eki-api/api/routers/security.py:97`
+- Evidence: `api/routers/security.py:132`
+- Evidence: `api/routers/security.py:179`
+- Reference (protected endpoints): `api/routers/security.py:35`
+- Reference (protected endpoints): `api/routers/security.py:97`
 
 **Issue**
 `GET /v1/security/jobs/{job_id}` and `GET /v1/security/reports/{report_id}` require auth but do not apply `rate_limit_combined`.
@@ -91,9 +96,9 @@ Apply the same limiter dependency to GET lookup endpoints (or an endpoint-specif
 
 ### 5) [MEDIUM] One-shot retrieval is vulnerable to race condition
 
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/api/routers/security.py:214`
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/api/routers/security.py:222`
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/api/routers/security.py:224`
+- Evidence: `api/routers/security.py:214`
+- Evidence: `api/routers/security.py:222`
+- Evidence: `api/routers/security.py:224`
 
 **Issue**
 `is_retrieved` is checked and then updated in separate steps without row lock/atomic conditional update.
@@ -106,10 +111,10 @@ Use atomic update (e.g., `UPDATE ... SET is_retrieved=true ... WHERE report_id=?
 
 ### 6) [MEDIUM] SQL injection risk in API-key helper script
 
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/scripts/create_api_key.py:21`
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/scripts/create_api_key.py:61`
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/scripts/create_api_key.py:73`
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/scripts/create_api_key.py:76`
+- Evidence: `scripts/create_api_key.py:21`
+- Evidence: `scripts/create_api_key.py:61`
+- Evidence: `scripts/create_api_key.py:73`
+- Evidence: `scripts/create_api_key.py:76`
 
 **Issue**
 User-provided fields are interpolated directly into generated SQL text.
@@ -122,10 +127,10 @@ Replace raw SQL string generation with parameterized DB insert via SQLAlchemy.
 
 ### 7) [LOW] Prompt-injection detection is fail-open
 
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/core/prompt_sanitizer.py:96`
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/core/prompt_sanitizer.py:119`
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/llm/mistral_cloud.py:39`
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/llm/ollama.py:36`
+- Evidence: `core/prompt_sanitizer.py:96`
+- Evidence: `core/prompt_sanitizer.py:119`
+- Evidence: `llm/mistral_cloud.py:39`
+- Evidence: `llm/ollama.py:36`
 
 **Issue**
 Dangerous patterns are detected but accepted (`raise_on_unsafe=False`).
@@ -138,8 +143,8 @@ Switch to fail-closed for untrusted inputs (`raise_on_unsafe=True`) and add poli
 
 ### 8) [LOW] Readiness endpoint leaks dependency status anonymously
 
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/api/routers/health.py:37`
-- Evidence: `/Users/davinci_kollektiv/Documents/eKI/eki-api/api/routers/health.py:59`
+- Evidence: `api/routers/health.py:37`
+- Evidence: `api/routers/health.py:59`
 
 **Issue**
 `/ready` is unauthenticated and returns service-level dependency state.
@@ -152,10 +157,10 @@ Keep `/health` public; restrict `/ready` to internal network or authenticated op
 
 ## Positive Controls Observed
 
-- API keys are stored as SHA-256 hashes (not plaintext): `/Users/davinci_kollektiv/Documents/eKI/eki-api/api/dependencies.py:82`
-- Key status/expiry is validated: `/Users/davinci_kollektiv/Documents/eKI/eki-api/api/dependencies.py:88`
-- Ownership checks prevent classic IDOR on jobs/reports: `/Users/davinci_kollektiv/Documents/eKI/eki-api/api/routers/security.py:153`, `/Users/davinci_kollektiv/Documents/eKI/eki-api/api/routers/security.py:201`
-- Callback URL validation enforces domain allowlist for SSRF control: `/Users/davinci_kollektiv/Documents/eKI/eki-api/core/models.py:126`
+- API keys are stored as SHA-256 hashes (not plaintext): `api/dependencies.py:82`
+- Key status/expiry is validated: `api/dependencies.py:88`
+- Ownership checks prevent classic IDOR on jobs/reports: `api/routers/security.py:153`, `api/routers/security.py:201`
+- Callback URL validation enforces domain allowlist for SSRF control: `core/models.py:126`
 
 ## Validation Notes
 

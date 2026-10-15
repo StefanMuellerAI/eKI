@@ -1,3 +1,7 @@
+> **Historischer Nachweis** (Stand 16.09.2026, M09). Beschreibt den damaligen Stand und wird
+> nicht fortgeschrieben. Aktueller Stand: [M09_SLO.md](M09_SLO.md),
+> [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md).
+
 # M09 Acceptance Evidence – Observability & SLOs
 
 Belegsammlung für die Trello-Karte „M09 – Observability & SLOs".

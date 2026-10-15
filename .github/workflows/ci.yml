@@ -21,10 +21,10 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install dependencies
+      - name: Install dependencies (pinned by requirements-dev.lock)
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -c requirements-dev.lock -e ".[dev]"
 
       - name: Run Ruff linter
         run: ruff check .
@@ -49,10 +49,10 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install dependencies
+      - name: Install dependencies (pinned by requirements-dev.lock)
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -c requirements-dev.lock -e ".[dev]"
 
       - name: Run Bandit security scan (fails on medium+ severity)
         run: |
@@ -111,17 +111,37 @@ jobs:
       - name: Install system dependencies (tesseract for OCR tests)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq tesseract-ocr tesseract-ocr-deu tesseract-ocr-eng
 
-      - name: Install dependencies
+      - name: Install dependencies (pinned by requirements-dev.lock)
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -c requirements-dev.lock -e ".[dev]"
 
-      - name: Run tests with coverage
+      - name: Migrations (upgrade, drift check, downgrade, re-upgrade)
         env:
           DATABASE_URL: postgresql+asyncpg://eki_user:eki_password@localhost:5432/eki_test
-          REDIS_URL: redis://localhost:6379/0
           ENV: test
-        run: pytest --cov --cov-report=xml --cov-report=html --cov-fail-under=80
+        run: |
+          alembic upgrade head
+          alembic check
+          alembic downgrade base
+          alembic upgrade head
+
+      - name: Run tests (SQLite in-memory, fast unit mode)
+        env:
+          ENV: test
+        run: pytest --no-cov -q
+
+      - name: Run tests with coverage (PostgreSQL + pgvector, real Redis)
+        env:
+          DATABASE_URL: postgresql+asyncpg://eki_user:eki_password@localhost:5432/eki_test
+          # Opt-in for tests/conftest.py: whole suite + tests/test_pg_integration.py
+          # against the real dialect (the DB is wiped at session start).
+          TEST_POSTGRES_URL: postgresql+asyncpg://eki_user:eki_password@localhost:5432/eki_test
+          REDIS_URL: redis://localhost:6379/0
+          # Real Redis for tests/test_e2e_pipeline.py (db 4 is flushed by the test).
+          TEST_REDIS_URL: redis://localhost:6379/4
+          ENV: test
+        run: pytest --cov --cov-report=xml --cov-report=html --cov-fail-under=95
 
       - name: Upload coverage to artifacts
         uses: actions/upload-artifact@v4
@@ -179,6 +199,27 @@ jobs:
           mkdir -p secrets && touch secrets/prometheus_api_key.txt
           docker compose -f docker-compose.yml -f docker-compose.observability.yml config -q
 
+      - name: Prod overlay publishes only the API and bind-mounts no source code
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml config --format json > /tmp/prod.json
+          python3 - <<'EOF'
+          import json
+          services = json.load(open("/tmp/prod.json"))["services"]
+          published = {n: [p.get("published") for p in s.get("ports", [])] for n, s in services.items()}
+          extra = {n: p for n, p in published.items() if p and n != "api"}
+          assert not extra, f"infra ports published in prod: {extra}"
+          assert published["api"] == ["8000"], published["api"]
+          code_dirs = {"api", "core", "services", "workflows", "db", "llm", "parsers", "config", "scripts"}
+          mounts = {
+              n: [v["source"] for v in s.get("volumes", []) if v.get("type") == "bind"
+                  and v["source"].rstrip("/").rsplit("/", 1)[-1] in code_dirs]
+              for n, s in services.items()
+          }
+          leaked = {n: m for n, m in mounts.items() if m}
+          assert not leaked, f"source bind mounts in prod: {leaked}"
+          print("prod overlay OK:", published)
+          EOF
+
   docker-build:
     name: Docker Build
     runs-on: ubuntu-latest
@@ -230,6 +271,11 @@ jobs:
 
       - name: Check API health
         run: curl -f http://localhost:8000/health
+
+      - name: Apply DB migrations inside the API image (as in production)
+        run: |
+          docker compose exec -T api alembic upgrade head
+          docker compose exec -T api alembic check
 
       - name: Check API readiness
         run: curl -f http://localhost:8000/ready || true

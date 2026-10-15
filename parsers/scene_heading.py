@@ -64,6 +64,15 @@ _LOC_PREFIXES: list[tuple[str, LocationType]] = [
     ("E.", LocationType.EXT),
 ]
 
+# German combined designation written with a dash or spaced slash, e.g.
+# "INNEN-AUSSEN. GARTEN" or "INNEN - AUSSEN GARTEN".  Must be checked before
+# the plain INNEN/AUSSEN prefixes, which would otherwise win and leave
+# "- AUSSEN. GARTEN" as the location.
+_INT_EXT_DE_RE = re.compile(
+    r"^(?:INNEN\s*[-–—/]\s*AUSSEN|AUSSEN\s*[-–—/]\s*INNEN)(?![A-ZÄÖÜ])\.?",
+    re.IGNORECASE,
+)
+
 # Separator between location and time-of-day (dash variants)
 _SEP_RE = re.compile(r"\s*[-–—]\s*")
 
@@ -89,11 +98,16 @@ def parse_scene_heading(heading: str) -> HeadingComponents:
     # 1. Determine location type by prefix
     loc_type = LocationType.UNKNOWN
     remainder = text
-    for prefix, lt in _LOC_PREFIXES:
-        if upper.startswith(prefix):
-            loc_type = lt
-            remainder = text[len(prefix) :].strip()
-            break
+    combined = _INT_EXT_DE_RE.match(text)
+    if combined:
+        loc_type = LocationType.INT_EXT
+        remainder = text[combined.end() :].strip()
+    else:
+        for prefix, lt in _LOC_PREFIXES:
+            if upper.startswith(prefix):
+                loc_type = lt
+                remainder = text[len(prefix) :].strip()
+                break
 
     # 2. Split remainder on last separator to get location and time-of-day
     parts = _SEP_RE.split(remainder)

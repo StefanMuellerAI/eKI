@@ -2,8 +2,11 @@
 
 | Feld | Wert |
 |---|---|
-| Release / Tag | v1.0.0 (`core/version.py`) |
+| Release / Tag | `v<Release-Tag>` = `core/version.py`: ______ (empfohlen: Patch-Release mit den Korrekturen vom 15.10.2026, `HANDOVER.md` §1.1) |
+| Git-Commit | |
 | Image-Digest API / Worker | `ghcr.io/…/eki-api@sha256:…` / `ghcr.io/…/eki-worker@sha256:…` |
+| DB-Migrationsstand (`docker compose exec api alembic current`) | erwartet `b8d0f2a4c6e3 (head)` |
+| Docker / Docker Compose | ≥ 24 / ≥ 2.24 |
 | Umgebung | ☐ lokal ☐ Stage ☐ Produktion |
 | Datum / Uhrzeit | |
 | Durchführende (eKI) | |
@@ -15,6 +18,10 @@
 
 ## 1. Automatisierte Nachweise
 
+Nur Läufe auf dem oben eingetragenen Stand (Head `b8d0f2a4c6e3`; die Zustellphase funktioniert
+auf PostgreSQL erst ab `a7c9e1f3b5d2`) zählen; ältere Läufe der Tests 2–7 sind zu wiederholen
+(`UAT_TESTPLAN.md`).
+
 | Test | Status | Protokoll-Datei | Bemerkung |
 |---|---|---|---|
 | AT2 Push-Fluss | ☐ bestanden ☐ nicht bestanden | `tests/reports/uat_….md` | |
@@ -24,7 +31,8 @@
 | AT5 Idempotenz | ☐ ☐ | | |
 | AT6 Großdokument | ☐ ☐ | `tests/reports/m07_benchmark_….json` | Seiten: __ · Dauer: __ min · Limit 120 min |
 | AT7 Log-Hygiene | ☐ ☐ | | Marker: __ · Treffer: __ |
-| Unit-/Contract-Suite | ☐ ☐ | `pytest` Zusammenfassung: __ passed | Coverage: __ % (Gate 80 %) |
+| Unit-/Contract-Suite (SQLite) | ☐ ☐ | `pytest --no-cov` Zusammenfassung: __ passed | |
+| Suite gegen PostgreSQL (`TEST_POSTGRES_URL`, `docs/TESTING_GUIDE.md`) | ☐ ☐ | `pytest` Zusammenfassung: __ passed | Coverage: __ % (Gate 95 %) |
 | OpenAPI | ☐ ☐ | `spectral lint` 0 Errors | |
 
 ## 2. Manuelle Nachweise
@@ -65,6 +73,7 @@
 | Betriebsdoku übergeben | ☐ | `OPERATIONS_GUIDE.md`, Runbooks |
 | Postman-Collection übergeben | ☐ | v1.0 + Environment |
 | Schulung durchgeführt | ☐ | `TRAINING.md`, Teilnehmerliste |
+| Datenschutz-Entscheidungen (`DATENSCHUTZ.md` §8) | ☐ | Entscheidungsvermerk (Fixtures/Images, Löschfristen, Temporal-Retention, AVV) |
 
 ## 4. Abweichungen / offene Punkte
 

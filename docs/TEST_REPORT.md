@@ -1,3 +1,6 @@
+> **Historischer Nachweis** (Stand des damaligen Meilensteins). Beschreibt den damaligen Stand und wird
+> nicht fortgeschrieben. Aktueller Stand: `docs/COVERAGE_REPORT.md` und `docs/TESTING_GUIDE.md`.
+
 # eKI API - Vollständiger Test-Report
 
 **Datum**: 2026-01-30  

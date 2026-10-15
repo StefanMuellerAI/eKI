@@ -1,3 +1,8 @@
+> **Veraltet** – Stand 30.01.2026 (M01), wird nicht fortgeschrieben; „Production ready" bezieht
+> sich auf den damaligen Stand. Maßgeblich sind [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md),
+> [CONFIGURATION.md](CONFIGURATION.md), [DATENSCHUTZ.md](DATENSCHUTZ.md) und
+> [UAT/GO_LIVE_CHECKLIST.md](UAT/GO_LIVE_CHECKLIST.md).
+
 # 🔒 Security Implementation Complete
 
 **Date**: 2026-01-30  

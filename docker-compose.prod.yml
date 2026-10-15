@@ -8,22 +8,33 @@
 # Principles (Pflichtenheft 4.1 / 5 / Security-Audit Finding 3):
 # * only the API port is published; every infra service stays on the internal network
 # * released images from GHCR instead of local builds; set EKI_IMAGE_TAG (default: latest)
-# * no source bind mounts
+# * no source bind mounts (`!reset` -- a plain `[]` would be merged with the base file
+#   and keep them, see Compose "merge" rules; needs Docker Compose >= 2.24)
 # * Gunicorn supervises the Uvicorn worker (Pflichtenheft 4.1 "Uvicorn + Gunicorn")
 # * local inference only: LLM_PROVIDER=local_mistral, cloud providers are rejected at startup
 # * all secrets via .env.local / *_FILE (secrets/), see secrets/README.md
 
+# Docker's json-file driver does not rotate by default; the API access log
+# contains client IPs (see docs/DATENSCHUTZ.md), so cap size and age.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 services:
   postgres:
+    logging: *default-logging
     # POSTGRES_PASSWORD comes from .env.local (env_file in base compose)
-    ports: []
+    ports: !reset []
     deploy:
       resources:
         limits:
           memory: 2g
 
   redis:
-    ports: []
+    logging: *default-logging
+    ports: !reset []
     # Persist the encrypted buffer across restarts (delivery retries up to 6h)
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "1gb", "--maxmemory-policy", "noeviction"]
     deploy:
@@ -32,14 +43,17 @@ services:
           memory: 1500m
 
   temporal:
-    ports: []
+    logging: *default-logging
+    ports: !reset []
 
   temporal-ui:
+    logging: *default-logging
     # Operator UI stays internal; reach it via SSH tunnel if needed.
-    ports: []
+    ports: !reset []
 
   ollama:
-    ports: []
+    logging: *default-logging
+    ports: !reset []
     # NVIDIA GPU (Pflichtenheft 8: >= 24 GB VRAM recommended). Requires nvidia-container-toolkit.
     deploy:
       resources:
@@ -53,6 +67,7 @@ services:
       - OLLAMA_NUM_PARALLEL=1
 
   api:
+    logging: *default-logging
     # `build:` from the base file stays declared; run `docker compose ... pull`
     # before `up -d --no-build` so the released image is used, not a local build.
     image: ghcr.io/${GHCR_OWNER:-stefanmuellerai}/eki-api:${EKI_IMAGE_TAG:-latest}
@@ -78,7 +93,7 @@ services:
       - DEBUG=false
       - LLM_PROVIDER=${LLM_PROVIDER:-local_mistral}
       - LOG_FORMAT=json
-    volumes: []
+    volumes: !reset []
     deploy:
       resources:
         limits:
@@ -86,13 +101,14 @@ services:
           cpus: "2"
 
   worker:
+    logging: *default-logging
     image: ghcr.io/${GHCR_OWNER:-stefanmuellerai}/eki-worker:${EKI_IMAGE_TAG:-latest}
     environment:
       - ENV=production
       - DEBUG=false
       - LLM_PROVIDER=${LLM_PROVIDER:-local_mistral}
       - LOG_FORMAT=json
-    volumes: []
+    volumes: !reset []
     deploy:
       resources:
         limits:

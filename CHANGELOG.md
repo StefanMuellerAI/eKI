@@ -4,6 +4,75 @@ Alle wesentlichen Änderungen der eKI API. Format nach [Keep a Changelog](https:
 Versionierung nach [SemVer](https://semver.org/lang/de/). Ein Minor-Release pro Pflichtenheft-Meilenstein
 (M0x → 0.x.0), `1.0.0` mit dem UAT-Paket (M12). Die Versionsquelle ist `core/version.py`.
 
+## [Unreleased] – Stabilisierung zur Übergabe
+
+Ergebnis eines Test- und Doku-Reviews vor der Übergabe: 1277 neue Tests (465 → 1742), Coverage
+80,78 % → 98,59 %, die Suite läuft jetzt auch gegen echtes PostgreSQL. Mehrere Fehler traten nur
+dort bzw. bei einer frischen Installation auf und waren für die bisherige SQLite-Suite unsichtbar.
+**Empfehlung:** als Patch-Release (z. B. `1.0.1`) veröffentlichen und die Abnahmetests AT2–AT7 auf
+diesem Stand wiederholen. Neue DB-Revision (head): `b8d0f2a4c6e3`.
+
+### Behoben – kritisch
+- **Frische Installation lief nicht:** `sqlalchemy` ohne `[asyncio]`-Extra; SQLAlchemy ≥ 2.1 installiert
+  `greenlet` nicht mehr → jeder DB-Zugriff brach ab. Jetzt `sqlalchemy[asyncio]`.
+- **`alembic upgrade head` brach ab:** SQLAlchemy 2.1 löst `postgresql://` auf psycopg (v3) auf, installiert
+  ist psycopg2. `db/migrations/env.py` nutzt jetzt explizit `+psycopg2`.
+- **Asynchrone Jobs scheiterten in der Zustellphase:** `job_metadata.status` war `VARCHAR(9)`, `DELIVERING` hat
+  10 Zeichen (PostgreSQL: „value too long"). Migration `a7c9e1f3b5d2` (`VARCHAR(20)`).
+- **Risikoanalyse „fail-open":** jeder LLM-Fehler (Ollama nicht erreichbar, Timeout, Prompt-Filter) wurde
+  verschluckt, die Szene bekam 0 Befunde und der Report wirkte risikofrei. Jetzt werden transiente Fehler
+  wiederholt und lassen den Job danach sichtbar scheitern; ein Filter-Treffer beendet den Job mit
+  „Szene <nr>: vom Prompt-Injection-Filter blockiert – manuelle Prüfung erforderlich".
+- **Prompt-Injection-Filter blockte normalen Drehbuchtext** („User:innen" in einem echten Fixture-Drehbuch,
+  „act as if", „---", „==="). Muster präzisiert, Chat-Template-Tokens ergänzt; ein Regressionstest jagt jede
+  Fixture-Szene durch den Filter.
+- **Lange Szenen wurden ab 10 000 Prompt-Zeichen still abgeschnitten**; jetzt Analyse in überlappenden
+  Abschnitten.
+- **Inhalte gingen vor der Analyse verloren:** FDX ohne Szenenüberschrift ergab 0 Szenen, Text vor der ersten
+  Überschrift und `<DualDialogue>` wurden verworfen; OCR-Seiten liefen unter Last in den Timeout
+  (`OMP_THREAD_LIMIT=1` in beiden Images und im Code).
+- **Produktions-Overlay band den Quellcode vom Host ein und veröffentlichte die Temporal-UI:**
+  `volumes: []`/`ports: []` werden von Compose gemergt; jetzt `!reset []` (Docker Compose ≥ 2.24).
+- **Produktions-Validator akzeptierte die Platzhalter aus `.env.example`**; Platzhalter werden abgelehnt.
+- **Pfad-Traversal:** Multipart-`project_id` wurde nicht validiert und landete in der ePro-Push-URL.
+
+### Behoben
+- **API-Eingaben:** über 15 Fälle führten zu 500/503 statt 4xx (kaputtes JSON → 400, Nicht-Objekt → 422,
+  `delivery` nur `pull|push`, Multipart wie JSON validiert, `script_id` int32, Steuerzeichen im
+  Idempotency-Key, Multibyte-Zeichen an Byte 1000, Ops-`offset`); Starlette-404/405 im Fehler-Envelope.
+- **`GET /reports/{id}` nach Pufferablauf/Push** liefert 410 statt eines erfundenen Reports mit 0 Befunden.
+- **Idempotenz:** scheitert der Jobstart (Redis/Temporal), wird der Key freigegeben – vorher bekam der
+  Retry nach dem 503 dauerhaft den toten Job.
+- **Rate-Limit pro Key** ließ sich über die Schreibweise des `Authorization`-Headers umgehen.
+- **Datenschutz:** Findings (mit Drehbuchzitaten) laufen nicht mehr durch die Temporal-History; nach
+  Verarbeitungsfehlern wird der Puffer geleert (blieb bis zu 6 h); der Filter loggt keine Textvorschau mehr.
+- **ePro:** Fehler-Webhook auch bei Verarbeitungsfehlern (`prompt_blocked`, `parsing_failed`,
+  `processing_failed`); Abbruch setzt `cancelled`; Pull-Reports gelten erst nach dem Abruf als zugestellt.
+- **Betrieb:** Metrik „completed" wurde seit M10 nie erfasst (SLO-Erfolgsquote 0); DB-Fehler bei
+  Statusupdates wurden verschluckt (Jobs hingen in RUNNING); Parsing-Fehler nicht mehr wiederholt; echte
+  Verarbeitungszeit statt fest 1,0 s; Engines im `finally` freigegeben; Log-Rotation im Prod-Overlay.
+- **KB:** Dedupe pro Mandant auch im Schema (Migration `b8d0f2a4c6e3`; vorher 503 für den zweiten Mandanten),
+  paralleler Duplikat-Upload → 409.
+- **Robustheit gegen LLM-Ausgaben:** fehlerhafte Felder degradieren eine Szene statt den Parse abzubrechen;
+  kaputte 2xx-Antworten → `LLMException`; `validate_finding` toleriert ungültige Werte.
+- **Reports:** Werte im PDF-Markup escaped (ein `<` ließ das PDF still wegfallen), exotische Ziffern in
+  Szenennummern, echte Engine-Version statt fest `0.6.0`.
+- Zeitzonenbewusste UTC-Zeitstempel (abgelaufene API-Keys blieben auf Hosts mit TZ ≠ UTC gültig); API nutzt
+  `TEMPORAL_NAMESPACE`; Fehlerantworten tragen immer `request_id`; unbehandelte Fehler korrekt als 503/500
+  gezählt; PDF-Splitter erkennt „1. INT.", „12.1", „I/E.", „INNEN-AUSSEN".
+
+### Hinzugefügt
+- Tests: E2E-Pipeline (`test_e2e_pipeline.py`), PostgreSQL-Integration inkl. Migrationszyklus
+  (`test_pg_integration.py`), Edge-Cases (`test_edge_*.py`), Unit-Lücken (`test_cov_*.py`), Regressionen.
+  `TEST_POSTGRES_URL` / `TEST_REDIS_URL` schalten echten Dialekt bzw. echtes Redis zu.
+- CI: Migrationszyklus (upgrade → check → downgrade → upgrade), SQLite- **und** PostgreSQL-Lauf, `alembic`
+  im Docker-Image, Prüfung des Prod-Overlays (nur API-Port, keine Code-Mounts); Coverage-Gate 80 → 95 %.
+- Lockfiles `requirements.lock` / `requirements-dev.lock` (Python 3.11) als Constraints in Dockerfiles und CI.
+- Doku: `docs/CONFIGURATION.md` (alle Einstellungen), `docs/DATENSCHUTZ.md` (Datenbestand, Fristen,
+  offene Entscheidungen), neu geschriebene `TESTING_GUIDE`, `OPERATIONS_GUIDE` (Runbooks, Backup/Restore,
+  Migrationen, Troubleshooting), `LLM_INTEGRATION`, `COVERAGE_REPORT`; OpenAPI an das Verhalten angeglichen;
+  historische und veraltete Dokumente mit Hinweisbanner.
+
 ## [1.0.0] – 2026-09-16 – M12 UAT-Paket & Übergabe
 
 ### Hinzugefügt

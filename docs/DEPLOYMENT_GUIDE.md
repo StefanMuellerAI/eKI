@@ -1,3 +1,9 @@
+> **Veraltet** – Stand Januar/März 2026 (vor M06–M12), wird nicht mehr gepflegt. Maßgeblich sind
+> [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md), [CONFIGURATION.md](CONFIGURATION.md) und
+> [UAT/GO_LIVE_CHECKLIST.md](UAT/GO_LIVE_CHECKLIST.md). Befehle, Compose-Aufrufe und
+> Provider-Empfehlungen in diesem Dokument nicht für Produktion verwenden (Produktion: nur
+> `LLM_PROVIDER=local_mistral`, GHCR-Images über `docker-compose.prod.yml`).
+
 # eKI API - Secure Production Deployment Guide
 
 This guide covers deploying the eKI API with all security fixes implemented.

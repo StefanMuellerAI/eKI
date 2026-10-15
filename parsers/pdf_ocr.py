@@ -21,11 +21,18 @@ confidence scoring can discount it (``parsers/pdf.py``).
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Tesseract's OpenMP threads contend badly under load (one page went from ~1 s
+# to beyond OCR_PAGE_TIMEOUT_SECONDS, so scanned pages were silently skipped).
+# Single-threaded OCR per page is faster overall; the Docker images set this
+# too -- this guard covers bare-metal deployments. An explicit value wins.
+os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 
 # Threshold below which a page counts as "no text layer" (kept from M03).
 MIN_TEXT_CHARS_PER_PAGE = 10

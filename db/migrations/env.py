@@ -17,10 +17,13 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Set SQLAlchemy URL from settings
-# Escape '%' as '%%' because configparser treats '%' as interpolation syntax
+# Set SQLAlchemy URL from settings.
+# Migrations run synchronously, so swap asyncpg for psycopg2 explicitly: since
+# SQLAlchemy 2.1 a bare ``postgresql://`` resolves to psycopg (v3), which is not
+# installed.  Escape '%' as '%%' because configparser treats '%' as
+# interpolation syntax.
 settings = get_settings()
-db_url = str(settings.database_url).replace("+asyncpg", "").replace("%", "%%")
+db_url = str(settings.database_url).replace("+asyncpg", "+psycopg2").replace("%", "%%")
 config.set_main_option("sqlalchemy.url", db_url)
 
 # add your model's MetaData object here

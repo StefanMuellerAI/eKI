@@ -5,6 +5,7 @@ configuration and provides lookup, validation, and scoring methods.
 """
 
 import logging
+import math
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -104,14 +105,17 @@ class TaxonomyManager:
                 result.append({"code": code, **m})
         return result
 
-    def resolve_measure_codes(self, codes: list[str]) -> list[dict[str, Any]]:
+    def resolve_measure_codes(self, codes: list[Any]) -> list[dict[str, Any]]:
         """Resolve a list of measure codes into full measure objects.
 
-        Unknown codes are silently skipped.
+        Unknown codes and ``None`` entries are silently skipped; non-string
+        codes (e.g. ``5`` from an LLM) are looked up via ``str()``.
         """
         resolved = []
         for code in codes:
-            m = self.get_measure(code)
+            if code is None or isinstance(code, (dict, list, tuple)):
+                continue
+            m = self.get_measure(str(code))
             if m:
                 resolved.append(m)
         return resolved
@@ -179,8 +183,8 @@ class TaxonomyManager:
         - Resolves measure_codes to full measure objects
         - Calculates severity from likelihood x impact
         """
-        risk_class = (finding.get("risk_class") or "").upper()
-        category = (finding.get("category") or "").upper()
+        risk_class = str(finding.get("risk_class") or "").upper()
+        category = str(finding.get("category") or "").upper()
 
         # Validate class and auto-fill rule_id/category
         if self.is_valid_class(risk_class):
@@ -196,15 +200,17 @@ class TaxonomyManager:
         finding["risk_class"] = risk_class
 
         # Calculate severity from likelihood x impact
-        likelihood = int(finding.get("likelihood") or 1)
-        impact = int(finding.get("impact") or 1)
-        finding["likelihood"] = max(1, min(5, likelihood))
-        finding["impact"] = max(1, min(5, impact))
+        finding["likelihood"] = _coerce_score(finding.get("likelihood"), "likelihood")
+        finding["impact"] = _coerce_score(finding.get("impact"), "impact")
         finding["risk_level"] = self.calculate_severity(finding["likelihood"], finding["impact"])
 
-        # Resolve measures
-        raw_codes = finding.pop("measure_codes", []) or []
-        resolved = self.resolve_measure_codes(raw_codes)
+        # Resolve measures (a bare string is one code, not a sequence of letters)
+        raw_codes = finding.pop("measure_codes", None)
+        if isinstance(raw_codes, str):
+            raw_codes = [raw_codes]
+        elif not isinstance(raw_codes, (list, tuple)):
+            raw_codes = []
+        resolved = self.resolve_measure_codes(list(raw_codes))
         # Also add auto-suggested measures based on class
         if risk_class and self.is_valid_class(risk_class) and not resolved:
             resolved = self.get_measures_for_class(risk_class)
@@ -217,6 +223,37 @@ class TaxonomyManager:
         finding.setdefault("exposure_duration", "")
 
         return finding
+
+
+def _coerce_score(value: Any, field: str) -> int:
+    """Turn an LLM-supplied likelihood/impact into an int in 1..5.
+
+    Missing/zero values keep the historical default of 1.  Numeric strings
+    ("3", "4.0") are parsed, finite numbers are truncated and clamped, +/-inf
+    is clamped.  Anything else (words such as "high", NaN, lists) falls back to
+    1 with a warning -- raising here used to drop *all* findings of the scene.
+    """
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return 1
+        try:
+            value = float(text)
+        except ValueError:
+            logger.warning("Finding %s is not numeric; using 1", field)
+            return 1
+    if not value:  # None, 0, 0.0, False
+        return 1
+    if isinstance(value, (int, float)):
+        if math.isnan(value):
+            logger.warning("Finding %s is NaN; using 1", field)
+            return 1
+        if math.isinf(value):
+            logger.warning("Finding %s is infinite; clamping", field)
+            return 5 if value > 0 else 1
+        return max(1, min(5, int(value)))
+    logger.warning("Finding %s has unusable type %s; using 1", field, type(value).__name__)
+    return 1
 
 
 @lru_cache

@@ -6,10 +6,11 @@ and only opaque reference keys are passed to Temporal workflows.
 """
 
 import base64
+import json
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import redis.asyncio as aioredis
@@ -39,7 +40,7 @@ from api.dependencies import (
 from api.rate_limiting import rate_limit_combined
 from core import metrics
 from core.db_models import ApiKeyModel, JobMetadata, ReportMetadata
-from core.exceptions import ServiceUnavailableException
+from core.exceptions import NotFoundException, ServiceUnavailableException
 from core.models import (
     AsyncSecurityCheckRequest,
     AsyncSecurityCheckResponse,
@@ -51,6 +52,8 @@ from core.models import (
     SecurityCheckRequest,
     SecurityReport,
     SyncSecurityCheckResponse,
+    UploadAsyncSecurityCheckRequest,
+    UploadSecurityCheckRequest,
 )
 from services.secure_buffer import SecureBuffer
 from workflows.security_check import SecurityCheckWorkflow
@@ -145,23 +148,53 @@ async def _resolve_request(request: Request, *, is_async: bool = False) -> Resol
     return await _resolve_json(request, is_async=is_async)
 
 
-async def _resolve_json(request: Request, *, is_async: bool = False) -> ResolvedRequest:
-    body = await request.json()
-    model_cls = AsyncSecurityCheckRequest if is_async else SecurityCheckRequest
-    try:
-        req = model_cls(**body)
-    except ValidationError as exc:
-        raise _validation_error_to_http(exc) from exc
-    priority = req.priority if isinstance(req, AsyncSecurityCheckRequest) else 5
+def _to_resolved(req: SecurityCheckRequest) -> ResolvedRequest:
     return ResolvedRequest(
         b64_content=req.script_content,
         script_format=req.script_format,
         project_id=req.project_id,
         metadata=req.metadata,
-        priority=priority,
+        priority=getattr(req, "priority", 5),
         delivery=req.delivery,
         idempotency_key=req.idempotency_key,
         script_id=req.script_id,
+    )
+
+
+async def _resolve_json(request: Request, *, is_async: bool = False) -> ResolvedRequest:
+    raw = await request.body()
+    try:
+        body = json.loads(raw)
+    except (ValueError, RecursionError) as exc:
+        # ValueError covers JSONDecodeError (syntax, empty body, form data) and
+        # UnicodeDecodeError; RecursionError a pathologically nested document.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Request body must be valid JSON (or multipart/form-data with a 'file' field)",
+        ) from exc
+    if not isinstance(body, dict):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Request validation failed: body: JSON object expected, got {type(body).__name__}"
+            ),
+        )
+    model_cls = AsyncSecurityCheckRequest if is_async else SecurityCheckRequest
+    try:
+        req = model_cls(**body)
+    except ValidationError as exc:
+        raise _validation_error_to_http(exc) from exc
+    return _to_resolved(req)
+
+
+def _form_text(form: Any, name: str) -> str | None:
+    """Return a text form field, ``None`` if absent; a file part is a client error."""
+    value = form.get(name)
+    if value is None or isinstance(value, str):
+        return value
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=f"Request validation failed: {name}: must be a text field, not a file",
     )
 
 
@@ -204,27 +237,31 @@ async def _resolve_multipart(request: Request, *, is_async: bool = False) -> Res
             detail="Uploaded file does not appear to be a valid PDF",
         )
 
-    b64 = base64.b64encode(raw).decode("ascii")
-    project_id = str(form.get("project_id", ""))
-    sf = str(form.get("script_format", ""))
-    if sf:
-        fmt = ScriptFormat(sf)
+    # Every form field goes through the same Pydantic rules as the JSON body
+    # (project_id pattern, delivery enum, idempotency_key, script_id range) and
+    # the content sniffing runs against the *final* script_format, so an
+    # explicit ``script_format=pdf`` cannot bypass the %PDF check.
+    fields: dict[str, Any] = {
+        "script_content": base64.b64encode(raw).decode("ascii"),
+        "script_format": _form_text(form, "script_format") or fmt.value,
+        # Optional for multipart (documented contract); same placeholder the
+        # router has always stored for a missing project.
+        "project_id": _form_text(form, "project_id") or "unknown",
+    }
+    for name in ("script_id", "delivery", "idempotency_key"):
+        value = _form_text(form, name)
+        if value not in (None, ""):
+            fields[name] = value
+    if is_async:
+        raw_priority = _form_text(form, "priority")
+        fields["priority"] = _validate_priority(5 if raw_priority is None else raw_priority)
 
-    raw_script_id = form.get("script_id")
-    script_id = int(raw_script_id) if raw_script_id not in (None, "") else None
-
-    priority = _validate_priority(form.get("priority", 5)) if is_async else 5
-
-    return ResolvedRequest(
-        b64_content=b64,
-        script_format=fmt,
-        project_id=project_id,
-        metadata={},
-        priority=priority,
-        delivery=str(form.get("delivery", "pull")),
-        idempotency_key=str(form.get("idempotency_key", "")) or None,
-        script_id=script_id,
-    )
+    model_cls = UploadAsyncSecurityCheckRequest if is_async else UploadSecurityCheckRequest
+    try:
+        req = model_cls(**fields)
+    except ValidationError as exc:
+        raise _validation_error_to_http(exc) from exc
+    return _to_resolved(req)
 
 
 async def _find_idempotent_job(
@@ -389,7 +426,15 @@ async def security_check_async(
         raise
 
     # Store script content encrypted in Redis -- NOT in Temporal
-    ref_key = await buffer.store({"script_content": resolved.b64_content})
+    try:
+        ref_key = await buffer.store({"script_content": resolved.b64_content})
+    except Exception as exc:
+        logger.error("Buffering script for job %s failed: %s", job_id, type(exc).__name__)
+        await _fail_unstarted_job(db, job_id, "Secure buffer temporarily unavailable.")
+        raise ServiceUnavailableException(
+            "Security check could not be started. The secure buffer is temporarily unavailable.",
+            details={"job_id": str(job_id)},
+        ) from exc
 
     # Temporal receives only metadata + ref_key.  Die M07-Konfiguration wird
     # beim Workflow-Start in job_data eingefroren, damit der Workflow rein
@@ -422,8 +467,6 @@ async def security_check_async(
             task_queue=settings.temporal_task_queue,
             execution_timeout=timedelta(seconds=settings.temporal_workflow_execution_timeout),
         )
-    except ServiceUnavailableException:
-        raise
     except Exception as exc:
         logger.error(f"Failed to start workflow for job {job_id}: {exc}", exc_info=True)
         # M10: no orphaned script content in Redis when the workflow never starts.
@@ -432,15 +475,7 @@ async def security_check_async(
             metrics.BUFFER_DELETES_TOTAL.labels(source="cleanup").inc()
         except Exception:
             logger.warning("Buffer cleanup after failed workflow start failed (TTL will reap)")
-        await db.execute(
-            update(JobMetadata)
-            .where(JobMetadata.job_id == job_id)
-            .values(
-                status=JobStatus.FAILED,
-                error_message="Workflow engine temporarily unavailable.",
-            )
-        )
-        await db.commit()
+        await _fail_unstarted_job(db, job_id, "Workflow engine temporarily unavailable.")
         raise ServiceUnavailableException(
             "Security check could not be started. The workflow engine is temporarily unavailable.",
             details={"job_id": str(job_id)},
@@ -455,9 +490,31 @@ async def security_check_async(
     )
 
 
+async def _fail_unstarted_job(db: AsyncSession, job_id: uuid.UUID, message: str) -> None:
+    """Mark a job that never started as FAILED and release its idempotency key.
+
+    Without releasing the key, a client retrying after the 503 with the same
+    Idempotency-Key got this dead job back forever instead of a new one.  The
+    row itself stays for operators.
+    """
+    try:
+        await db.execute(
+            update(JobMetadata)
+            .where(JobMetadata.job_id == job_id)
+            .values(status=JobStatus.FAILED, error_message=message, idempotency_key=None)
+        )
+        await db.commit()
+    except Exception as exc:
+        logger.error("Could not mark unstarted job %s as failed: %s", job_id, type(exc).__name__)
+
+
 # ---------------------------------------------------------------------------
-# Job status & report endpoints (unchanged from M01)
+# Job status & report endpoints
 # ---------------------------------------------------------------------------
+
+_REPORT_UNAVAILABLE = (
+    "Report is no longer available (expired or already delivered). URL is no longer valid."
+)
 
 
 @router.get(
@@ -522,10 +579,14 @@ async def get_report(
 ) -> ReportResponse:
     """One-Shot report retrieval: fetch from Redis, return JSON + PDF, then delete.
 
-    After the first successful 2xx response, the report URL is invalidated.
+    * 200 + ``X-One-Shot: true``: report delivered; the URL is invalidated.
+    * 410: already retrieved, or the encrypted report is no longer in the
+      buffer (TTL expired / already pushed / unreadable).  In the latter case
+      nothing is marked as delivered and no placeholder report is returned.
+    * 404: unknown report or owned by another API key.
     """
     # Atomically enforce one-shot retrieval
-    retrieved_at = datetime.utcnow()
+    retrieved_at = datetime.now(UTC)
     update_stmt = (
         update(ReportMetadata)
         .where(
@@ -560,6 +621,54 @@ async def get_report(
             detail="Report already retrieved. URL is no longer valid.",
         )
 
+    report_ref_key = row[0]
+
+    # Read the buffer *before* committing the claim: if the report is gone
+    # (TTL expired, already pushed, unreadable) nothing was delivered, so the
+    # claim is rolled back -- no fabricated report, no ``delivered`` bookkeeping,
+    # and the pull-TTL watch still sees the report as not retrieved.
+    buffer = _get_buffer(redis_client)
+    try:
+        if not report_ref_key:
+            raise NotFoundException("Report has no buffer reference")
+        report_package = await buffer.retrieve(report_ref_key)
+    except NotFoundException:
+        await db.rollback()
+        metrics.REPORT_RETRIEVALS_TOTAL.labels(outcome="expired").inc()
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail=_REPORT_UNAVAILABLE,
+        ) from None
+    except Exception:
+        # Redis outage etc.: keep the report retrievable, surface 503 via the
+        # global handler instead of masking it.
+        await db.rollback()
+        raise
+
+    # Build the response before committing the claim: a stored report that does
+    # not fit the response model is a server fault and must stay retrievable.
+    report_data = report_package.get("report", report_package)
+    try:
+        response = ReportResponse(
+            report=SecurityReport(
+                report_id=report_data.get("report_id", str(report_id)),
+                project_id=report_data.get("project_id", ""),
+                script_format=report_data.get("script_format", "fdx"),
+                created_at=report_data.get("created_at", retrieved_at),
+                risk_summary=report_data.get("risk_summary", {}),
+                total_findings=report_data.get("total_findings", 0),
+                findings=report_data.get("findings", []),
+                processing_time_seconds=report_data.get("processing_time_seconds", 0),
+                metadata=report_data.get("metadata", {}),
+            ),
+            pdf_base64=report_package.get("pdf_base64"),
+            message="Report retrieved successfully. URL is now invalidated.",
+        )
+    except ValidationError as exc:
+        await db.rollback()
+        # Not a client error: re-raise as a plain exception -> 500 envelope.
+        raise RuntimeError(f"Stored report {report_id} does not match ReportResponse") from exc
+
     # M10: delivery bookkeeping for pull mode -- the one-shot GET *is* the delivery.
     await db.execute(
         update(JobMetadata)
@@ -567,54 +676,17 @@ async def get_report(
         .values(delivery_status="delivered", delivered_at=retrieved_at)
     )
     await db.commit()
-    report_ref_key = row[0]
 
     # Pflichtenheft Anhang 1: X-One-Shot signals that this URL is now invalid.
     http_response.headers["X-One-Shot"] = "true"
 
-    # Fetch report from Redis SecureBuffer
-    buffer = _get_buffer(redis_client)
-    pdf_base64 = None
-
+    # Delete from Redis after successful retrieval (One-Shot); the TTL is the
+    # safety net if this fails.
     try:
-        report_package = await buffer.retrieve(report_ref_key)
-        report_data = report_package.get("report", report_package)
-        pdf_base64 = report_package.get("pdf_base64")
-
-        # Delete from Redis after successful retrieval (One-Shot)
         await buffer.delete(report_ref_key)
         metrics.BUFFER_DELETES_TOTAL.labels(source="pull").inc()
-        metrics.REPORT_RETRIEVALS_TOTAL.labels(outcome="success").inc()
     except Exception:
-        # Report expired from Redis (TTL), return what we can from metadata
-        metrics.REPORT_RETRIEVALS_TOTAL.labels(outcome="expired").inc()
-        report_data = {
-            "report_id": str(report_id),
-            "project_id": "expired",
-            "script_format": "fdx",
-            "created_at": retrieved_at.isoformat(),
-            "risk_summary": {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0},
-            "total_findings": 0,
-            "findings": [],
-            "processing_time_seconds": 0,
-            "metadata": {"error": "Report expired from buffer"},
-        }
+        logger.warning("Buffer delete after report retrieval failed (TTL will reap)")
+    metrics.REPORT_RETRIEVALS_TOTAL.labels(outcome="success").inc()
 
-    # Build SecurityReport from the data
-    report_obj = SecurityReport(
-        report_id=report_data.get("report_id", str(report_id)),
-        project_id=report_data.get("project_id", ""),
-        script_format=report_data.get("script_format", "fdx"),
-        created_at=report_data.get("created_at", retrieved_at),
-        risk_summary=report_data.get("risk_summary", {}),
-        total_findings=report_data.get("total_findings", 0),
-        findings=report_data.get("findings", []),
-        processing_time_seconds=report_data.get("processing_time_seconds", 0),
-        metadata=report_data.get("metadata", {}),
-    )
-
-    return ReportResponse(
-        report=report_obj,
-        pdf_base64=pdf_base64,
-        message="Report retrieved successfully. URL is now invalidated.",
-    )
+    return response

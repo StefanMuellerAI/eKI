@@ -4,7 +4,7 @@
     "description": "Vollstaendige Postman-Sammlung fuer die eKI API v1.0.0 (Pflichtenheft-Abnahme). Ordner 1-8 wie bisher; neu: 9. Operations (M10, Admin-Key) und 10. Abnahmetests (M12). Variablen ueber die mitgelieferte Environment-Datei eKI-API.postman_environment.json setzen.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
     "_exporter_id": "eki-api",
-    "version": "0.5.0"
+    "version": "1.0.0"
   },
   "auth": {
     "type": "bearer",

@@ -1,7 +1,9 @@
 # M06 — LLM-Adapter (Mistral Cloud) & Knowledge Base Guide
 
-**Status:** Implementiert (additive Erweiterung von M05)
+**Status:** Implementiert (additive Erweiterung von M05); Stand dieses Leitfadens: Oktober 2026 (Release 1.0.0)
 **Default-Verhalten:** Knowledge-Base-Retrieval ist standardmäßig AUS. Der Risk-Flow ist byte-identisch mit M05 bis das Feature-Flag aktiviert wird.
+
+Alle Einstellungen: [`CONFIGURATION.md`](CONFIGURATION.md); Datenhaltung der KB: [`DATENSCHUTZ.md`](DATENSCHUTZ.md) §3.2.
 
 ---
 
@@ -51,15 +53,25 @@ Wenn das Flag `KB_RETRIEVAL_ENABLED=false` ist, wird der Suchpfad nicht einmal i
 # Neue Python-Dependencies aus pyproject.toml
 uv pip install -e . --python .venv/bin/python   # oder pip install -e .
 
-# Embedding-Modell in Ollama herunterladen
+# Embedding-Modell in Ollama herunterladen (Standard)
 docker compose exec ollama ollama pull mxbai-embed-large
 ```
+
+**Embedding-Modell vor dem ersten Befüllen festlegen.** Standard ist `mxbai-embed-large`
+(`OLLAMA_EMBEDDING_MODEL=mxbai-embed-large`, `OLLAMA_EMBEDDING_MAX_CHARS=1000`; das Modell
+verarbeitet nur ca. 512 Token, längere Chunks werden für den Vektor gekürzt). Alternative ist
+`bge-m3` (8192 Token): `ollama pull bge-m3` und **beide** Werte setzen,
+`OLLAMA_EMBEDDING_MODEL=bge-m3` und `OLLAMA_EMBEDDING_MAX_CHARS=30000`. Beide liefern die von
+der Spalte `kb_embeddings.vector` verlangten 1024 Dimensionen. Vektoren verschiedener Modelle
+sind nicht vergleichbar: Ein späterer Wechsel erfordert, die KB zu leeren und alle Dokumente neu
+einzuspielen (§5).
 
 ### 3.2 Migration ausführen
 
 ```bash
 docker compose exec api alembic upgrade head
-# Erwartete neue Revision: e8f1c2d3a401
+docker compose exec api alembic current
+# M06 hat die Revision e8f1c2d3a401 eingeführt; aktueller Head: b8d0f2a4c6e3
 ```
 
 Die Migration legt zwei Tabellen an (`kb_documents`, `kb_embeddings`) und einen `ivfflat`-Index. Bestehende Tabellen werden nicht verändert.
@@ -70,6 +82,7 @@ In `.env.local`:
 
 ```
 OLLAMA_EMBEDDING_MODEL=mxbai-embed-large
+OLLAMA_EMBEDDING_MAX_CHARS=1000     # bei bge-m3: 30000
 KB_RETRIEVAL_ENABLED=false          # Default: AUS
 KB_DEFAULT_TENANT_ID=00000000-0000-0000-0000-000000000001
 KB_TOP_K=3
@@ -80,8 +93,14 @@ KB_MAX_CHUNK_CHARS_IN_PROMPT=600
 
 ## 4. Test-KB befüllen (Bernd-Stand-in)
 
+`scripts/seed_kb.py` läuft auf einem Rechner mit Python ≥ 3.11 und `requests`
+(`pip install requests`) und spricht die API über HTTP an (`EKI_API_URL`, Standard
+`http://localhost:8000`). Die KB-Endpunkte akzeptieren jeden gültigen API-Key; empfohlen ist der
+Ops-Admin-Key, damit `uploaded_by` eindeutig ist.
+
 ```bash
 # API-Key in env setzen
+export EKI_API_URL="http://localhost:8000"
 export EKI_API_KEY="eki_<dein_key>"
 
 # Sechs Placeholder-Dokumente uploaden (idempotent)
@@ -111,6 +130,10 @@ Die Placeholder decken die wichtigsten Risikokategorien ab:
 
 ## 5. Echte Inhalte einspielen (Bernd liefert)
 
+Der Inhalt von `config/kb_seed/real/` ist git-ignoriert. Trotzdem die Dokumente nach dem
+Einspielen dort entfernen: Die Dockerfiles kopieren `config/` in die Images, ein lokaler
+Image-Build würde sie mitnehmen.
+
 ```bash
 # Bernds Dokumente in config/kb_seed/real/ ablegen (.pdf / .md / .txt)
 cp ~/Downloads/Stunt-Leitfaden-FABW-2025.pdf config/kb_seed/real/
@@ -138,12 +161,14 @@ Vor M06 wurde der System-Prompt im `PromptManager.get()` nicht mit `.format(**kw
 ## 7. KB-Retrieval einschalten (nur nach Validierung)
 
 ```bash
-# .env.local: KB_RETRIEVAL_ENABLED=true setzen
-docker compose restart api worker
+# .env.local: KB_RETRIEVAL_ENABLED=true setzen (Editor oder portabel:
+#   sed -i.bak 's/^KB_RETRIEVAL_ENABLED=.*/KB_RETRIEVAL_ENABLED=true/' .env.local)
+# Container neu erzeugen -- "docker compose restart" liest .env.local NICHT neu ein:
+docker compose up -d --force-recreate api worker
 
 # Vergleichslauf:
 # 1. Drehbuch mit KB_RETRIEVAL_ENABLED=false durchschicken -> Findings A
-# 2. KB_RETRIEVAL_ENABLED=true setzen, restart, gleiches Drehbuch -> Findings B
+# 2. KB_RETRIEVAL_ENABLED=true setzen, Container neu erzeugen, gleiches Drehbuch -> Findings B
 # 3. Vergleichen: KB-Treffer erscheinen in den Empfehlungen
 ```
 
@@ -153,14 +178,17 @@ Worker-Logs zeigen bei aktivem Flag: `KB retrieval: 3 hits used for scene contex
 
 ## 8. Mistral Cloud als zweite Inferenz-Quelle
 
-Für den Stage-Sign-off (Pflichtenheft Abnahmetest 8) und für Qualitätsvergleiche ist Mistral Cloud nun produktionsreif:
+Für den Stage-Sign-off (Pflichtenheft Abnahmetest 8) und für Qualitätsvergleiche steht Mistral Cloud
+zur Verfügung – **nicht in Produktion** (Pflichtenheft §4.3; der Start-Validator lehnt
+`mistral_cloud` bei `ENV=production` ab, solange `LLM_ALLOW_EXTERNAL_PROVIDERS` nicht `true` ist).
+Vorher Datenschutz klären (AVV, [`DATENSCHUTZ.md`](DATENSCHUTZ.md) §5).
 
 ```bash
 # In .env.local:
 LLM_PROVIDER=mistral_cloud
 MISTRAL_API_KEY=sk-...
 
-docker compose restart api worker
+docker compose up -d --force-recreate api worker
 ```
 
 Der neue Adapter nutzt:
@@ -169,7 +197,16 @@ Der neue Adapter nutzt:
 - Post-Hoc Schema-Validierung mit `jsonschema` (Draft 2020-12)
 - Genau einen Self-Correcting-Retry bei Schema-Verletzung (mit der vorigen Antwort + Fehlertext im Prompt)
 
-Ollama bleibt der Default-Provider, der Provider wird per `LLM_PROVIDER` umgeschaltet.
+Der Provider wird per `LLM_PROVIDER` umgeschaltet. Der Code-Default ist `mistral_cloud`;
+`.env.example` und das Produktions-Overlay setzen `local_mistral`, daher immer explizit setzen.
+
+**Mit `mistral_cloud` ist die Knowledge Base nicht nutzbar:** Der Provider hat kein `embed()`.
+Ein Upload (`POST /v1/kb/documents`, auch `scripts/seed_kb.py`) schlägt mit HTTP 500 fehl, und
+die Retrieval-Stufe der Risikoanalyse liefert stillschweigend keinen KB-Kontext (`(none)`). Eine
+eigene Einstellung für einen separaten Embedding-Provider gibt es nicht (der Hinweis auf
+`EMBEDDING_PROVIDER` im Docstring von `llm/base.py` ist gegenstandslos); Embeddings kommen immer
+vom konfigurierten Ollama-basierten Provider (`ollama` oder `local_mistral`). Für AT8 mit Mistral
+Cloud daher `KB_RETRIEVAL_ENABLED=false` lassen.
 
 ---
 
@@ -177,13 +214,13 @@ Ollama bleibt der Default-Provider, der Provider wird per `LLM_PROVIDER` umgesch
 
 | Maßnahme | Stelle |
 |---|---|
-| Originaltext Fernet-verschlüsselt | `KnowledgeBaseService.ingest` |
+| Originaltext Fernet-verschlüsselt (Chunk-Texte und Vektoren in `kb_embeddings` dagegen im Klartext, da pgvector nicht auf Chiffraten sucht) | `KnowledgeBaseService.ingest` |
 | Tenant-Filter auf jeder Query | `kb.search`, `kb.list_documents`, `kb.delete_document` |
-| API-Key-Authentifizierung | `verify_api_key` Dependency in allen `/v1/kb/*` Routen |
+| API-Key-Authentifizierung – jeder gültige Key, **kein** Admin-Key erforderlich (auch der ePro-Service-Key darf hochladen und löschen) | `verify_api_key` Dependency in allen `/v1/kb/*` Routen |
 | Rate-Limiting (IP + Key) | `rate_limit_combined` Dependency |
-| TTL pro Dokument | `expires_at`-Spalte + `cleanup_expired()` Hook (Cron-Skript optional) |
+| TTL pro Dokument (`ttl_hours`, Standard 720 h = 30 Tage, max. 8760 h) | `expires_at`-Spalte; automatische Löschung durch den Temporal-Schedule `eki-kb-cleanup` (seit M09, täglich `KB_CLEANUP_CRON` = `0 3 * * *` UTC, abschaltbar mit `KB_CLEANUP_ENABLED=false`) |
 | Quellen-Tagging | `tags` JSONB + `source`-Spalte (UPLOAD/SHARE/URL/PLACEHOLDER) |
-| Dedup via SHA-256 | `content_hash` unique index — verhindert doppeltes Ingest |
+| Dedup via SHA-256 pro Mandant (seit Migration `b8d0f2a4c6e3`; vorher global eindeutig) | Unique-Constraint `(tenant_id, content_hash)` — derselbe Text im selben Mandanten ergibt 409, auch bei gleichzeitigem Upload |
 | Prompt-Sanitizer auf Embed-Input | `OllamaProvider.embed` |
 
 ---
@@ -192,11 +229,14 @@ Ollama bleibt der Default-Provider, der Provider wird per `LLM_PROVIDER` umgesch
 
 Falls die KB Probleme verursacht:
 
-1. `KB_RETRIEVAL_ENABLED=false` in `.env.local` → Risk-Flow ist sofort wieder bytewise wie M05
-2. KB-Endpoints aus Router nehmen: Zeile `app.include_router(knowledge_base.router, ...)` in `api/main.py` auskommentieren
-3. Migration zurückrollen: `docker compose exec api alembic downgrade d4b7e9f23a01`
+1. `KB_RETRIEVAL_ENABLED=false` in `.env.local`, dann `docker compose up -d --force-recreate api worker` → Risk-Flow ist für neue Jobs wieder bytewise wie M05
+2. KB-Endpoints aus Router nehmen: Zeile `app.include_router(knowledge_base.router, ...)` in `api/main.py` auskommentieren (Code-Änderung, neues Image)
+3. ~~Migration zurückrollen~~: **Heute nicht mehr anwenden.** Seit M06 sind weitere
+   Migrationen hinzugekommen (`f1a2b3c4d5e6` (M10), `a7c9e1f3b5d2`, `b8d0f2a4c6e3`);
+   `alembic downgrade d4b7e9f23a01` würde auch diese zurückrollen (Dead Letters,
+   Zustell-Buchhaltung, Statusspalte, KB-Dedupe). Schritt 1 genügt.
 
-Alle drei Schritte sind unabhängig voneinander wirksam.
+Die Schritte 1 und 2 sind unabhängig voneinander wirksam.
 
 ---
 
@@ -208,16 +248,21 @@ pytest tests/test_kb_service.py tests/test_kb_endpoints.py \
        tests/test_mistral_cloud_structured.py tests/test_prompt_manager_fix.py \
        tests/test_risk_with_kb.py tests/test_seed_kb.py -v
 
-# Erwartetes Ergebnis: 40 passed
+# Erwartetes Ergebnis: 40 passed (Stand Oktober 2026)
 ```
 
-Die KB-Endpoint-Tests mocken den `KnowledgeBaseService`, weil pgvector in der SQLite-In-Memory-Test-DB nicht verfügbar ist. Integrationstests gegen die echte Postgres+pgvector-Instanz laufen über `tests/run_pdf_full_pipeline.py` mit aktivem `KB_RETRIEVAL_ENABLED`.
+Die KB-Endpoint-Tests mocken den `KnowledgeBaseService`, weil pgvector in der SQLite-In-Memory-Test-DB
+nicht verfügbar ist. Gegen eine echte PostgreSQL+pgvector-Instanz laufen die KB-Tests in
+`tests/test_pg_integration.py` (nur mit `TEST_POSTGRES_URL`, siehe [`TESTING_GUIDE.md`](TESTING_GUIDE.md)).
+Ein Lauf gegen den kompletten Stack mit aktivem `KB_RETRIEVAL_ENABLED` ist mit
+`tests/run_pdf_full_pipeline.py` möglich.
 
 ---
 
 ## 12. Bekannte Grenzen
 
-- Embeddings nur über Ollama (1024 dim, `mxbai-embed-large`). Mistral-Cloud-Embeddings sind bewusst nicht aktiv, weil §4.3 Pflichtenheft „ohne externe Cloud" für die Prod-Datenverarbeitung fordert.
+- Embeddings nur über Ollama (1024 dim, Standard `mxbai-embed-large`, optional `bge-m3`). Mistral-Cloud-Embeddings sind bewusst nicht aktiv, weil §4.3 Pflichtenheft „ohne externe Cloud" für die Prod-Datenverarbeitung fordert; mit `LLM_PROVIDER=mistral_cloud` ist die KB daher nicht nutzbar (§8).
 - Kein OCR für gescannte KB-Dokumente. PDFs müssen Text-PDFs sein.
-- Kein automatischer TTL-Cleanup-Cron — `services.knowledge_base.cleanup_expired()` ist als Hook vorhanden, ein Trigger-Skript folgt bei Bedarf (M08).
+- TTL-Cleanup: seit M09 automatisch per Temporal-Schedule `eki-kb-cleanup` (§9). Der Schedule wird beim Worker-Start nur angelegt, wenn er noch nicht existiert – eine spätere Änderung von `KB_CLEANUP_CRON` wirkt erst, nachdem der bestehende Schedule in Temporal gelöscht wurde.
 - Single-Tenant — `tenant_id` ist Spalte/Filter, aber `kb_default_tenant_id` ist fix in den Settings.
+- Kein Admin-Gate auf `/v1/kb/*` (§9) – Entscheidung offen (`DATENSCHUTZ.md` §8).

@@ -12,13 +12,15 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements (core/version.py is read by setuptools for the dynamic version)
-COPY pyproject.toml ./
+# Copy requirements (core/version.py is read by setuptools for the dynamic version).
+# requirements.lock pins every transitive dependency so image builds are
+# reproducible (unpinned builds once pulled SQLAlchemy 2.1 without greenlet).
+COPY pyproject.toml requirements.lock ./
 COPY core/version.py ./core/version.py
 
 # Install dependencies
 RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -e .
+    pip install --no-cache-dir -c requirements.lock -e .
 
 # Stage 2: Runtime
 FROM python:3.11-slim
@@ -52,6 +54,11 @@ COPY alembic.ini ./
 
 # Ensure /app is in Python path for module resolution
 ENV PYTHONPATH=/app
+# Tesseract (OCR fallback) uses OpenMP across all cores; under concurrent load
+# (parallel scenes, Ollama on the same host) the threads contend and a single
+# page blew through OCR_PAGE_TIMEOUT_SECONDS (>60 s instead of ~1 s), so
+# scanned pages were silently skipped. One thread per tesseract process.
+ENV OMP_THREAD_LIMIT=1
 
 # Create non-root user
 RUN useradd -m -u 1000 eki && chown -R eki:eki /app

@@ -1,5 +1,15 @@
 # M09 – Service Level Objectives (SLOs) der eKI API
 
+> **Revisionshinweis (15.10.2026).** Inhaltlich gilt das Dokument weiter; geändert hat sich:
+> (1) Unbehandelte Infrastrukturfehler (PostgreSQL, Redis, Temporal) werden jetzt innerhalb der
+> Middleware als `503` gerendert und so auch in `eki_http_requests_total` gezählt (vorher als
+> `500`, ohne `X-Request-ID`). (2) Die Verarbeitung ist fail-closed: Parsing-Fehler, LLM-Fehler,
+> die nach Retries bestehen bleiben, und Blockaden durch den Prompt-Injection-Filter beenden den
+> Job mit `failed`, statt die Szene still ohne Findings zu lassen; ist `EPRO_WEBHOOK_URL` gesetzt,
+> geht dafür ebenfalls der Webhook `security.delivery.failed` raus. LLM-Störungen schlagen damit
+> direkt auf S6 und `EkiJobFailureRateHigh` durch; `EkiPromptSanitizerBlockedSpike` bedeutet
+> abgebrochene Jobs. (3) Grafana-Zugangsdaten und Start-Reihenfolge siehe §5.
+
 Stand: M09. Ableitung aus Pflichtenheft v1 §3.4 (Erfolgskriterien), §5
 (Leistung, Zuverlässigkeit), §6 (Dashboards mit Kennzahlen) und §7
 (Abnahmetests). Alle Kennzahlen werden aus den Prometheus-Metriken in
@@ -92,9 +102,15 @@ Start des Stacks:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
-# Grafana: http://localhost:3000 (admin / GRAFANA_ADMIN_PASSWORD)
+# Grafana: http://localhost:3000 (GRAFANA_ADMIN_USER / GRAFANA_ADMIN_PASSWORD)
 # Jaeger:  http://localhost:16686
 ```
+
+Vor dem ersten Start muss `secrets/prometheus_api_key.txt` existieren (API-Key für den Scraper,
+siehe `secrets/README.md`); sonst legt Docker an ihrer Stelle ein Verzeichnis an. Die
+Grafana-Zugangsdaten liest Docker Compose aus der Shell bzw. einer `.env` im Projektverzeichnis,
+**nicht** aus `.env.local`; ohne Angabe gilt `admin` / `CHANGE_ME`. Das Overlay schaltet außerdem
+Tracing ein (`OTEL_ENABLED` Standard `true`).
 
 ---
 

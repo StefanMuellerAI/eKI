@@ -1,6 +1,7 @@
 """Pytest configuration and fixtures."""
 
 import hashlib
+import os
 import secrets
 from collections.abc import AsyncGenerator
 from datetime import datetime, timedelta
@@ -9,12 +10,18 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 
 from api.dependencies import get_db, get_redis, get_temporal_client
 from api.main import app
 from core.db_models import ApiKeyModel, Base
+
+# Same as the Docker images: single-threaded tesseract, otherwise OCR tests hit
+# the per-page timeout on a loaded machine (OpenMP thread contention).
+os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 
 # Minimal PDF that passes the ``%PDF`` magic-byte validator and is parseable
 # by pdfplumber. Used by API tests that need a syntactically valid PDF body.
@@ -25,6 +32,28 @@ MINIMAL_PDF_BYTES = (
     b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>>endobj\n"
     b"trailer<</Root 1 0 R>>\n%%EOF\n"
 )
+
+
+async def store_report_package(
+    redis_client: object, *, report_id: object, project_id: str, script_format: str = "fdx"
+) -> str:
+    """Put a real, encrypted report package into the SecureBuffer (as the
+    workflow does) and return its ``report_ref_key``.  ``GET /reports/{id}``
+    answers 410 when the buffered report is missing, so API tests that expect
+    a 200 need one."""
+    from api.config import get_settings
+    from services.report_generator import build_report_dict
+    from services.secure_buffer import SecureBuffer
+
+    report = build_report_dict(
+        report_id=str(report_id),
+        project_id=project_id,
+        script_format=script_format,
+        findings=[],
+        processing_time_seconds=1.0,
+    )
+    buffer = SecureBuffer(redis_client, secret_key=get_settings().api_secret_key)
+    return await buffer.store({"report": report, "pdf_base64": None})
 
 
 class MockRedis:
@@ -82,16 +111,40 @@ class MockRedis:
         pass
 
 
+# Opt-in: point the whole suite at a real PostgreSQL (+pgvector) database.
+# The database is wiped (drop_all/create_all) at session start, so never point
+# this at anything but a throwaway test database.  CI sets it; locally e.g.
+#   TEST_POSTGRES_URL=postgresql+asyncpg://eki_user:eki_password@localhost:5432/eki_test
+TEST_POSTGRES_URL = os.environ.get("TEST_POSTGRES_URL", "")
+
+requires_postgres = pytest.mark.skipif(
+    not TEST_POSTGRES_URL, reason="TEST_POSTGRES_URL not set (PostgreSQL integration test)"
+)
+
+
 @pytest.fixture(scope="session")
 async def test_engine():
     """Create test database engine.
 
-    SQLite cannot render Postgres-specific column types (JSONB, pgvector
-    ``Vector(1024)``).  We therefore exclude the M06 ``kb_*`` tables from
-    the in-memory schema; their Postgres-level correctness is covered by
-    the Alembic migration and dedicated integration tests, not by the
-    unit suite.
+    Default: SQLite in-memory.  SQLite cannot render Postgres-specific column
+    types (JSONB, pgvector ``Vector(1024)``), so the M06 ``kb_*`` tables are
+    excluded there.  SQLite also ignores ``VARCHAR(n)`` lengths, which once
+    hid a production bug -- hence the optional PostgreSQL mode
+    (``TEST_POSTGRES_URL``), which runs the same tests against the real
+    dialect with every table.
     """
+    if TEST_POSTGRES_URL:
+        # NullPool: pytest-asyncio gives each test its own event loop and
+        # asyncpg connections must not be shared across loops.
+        engine = create_async_engine(TEST_POSTGRES_URL, echo=False, poolclass=NullPool)
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.create_all)
+        yield engine
+        await engine.dispose()
+        return
+
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
         echo=False,
@@ -125,11 +178,25 @@ async def db_session(test_engine) -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-def override_get_db(db_session):
-    """Override get_db dependency."""
+def override_get_db(db_session, test_engine):
+    """Override get_db dependency.
 
-    async def _override():
-        yield db_session
+    SQLite: every request shares the test's session (the in-memory database
+    lives on that connection).  PostgreSQL: one fresh session per request,
+    because the sync ``TestClient`` runs each request on its own event loop and
+    an asyncpg connection cannot cross loops.
+    """
+    if TEST_POSTGRES_URL:
+        factory = sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+
+        async def _override():
+            async with factory() as session:
+                yield session
+
+    else:
+
+        async def _override():
+            yield db_session
 
     app.dependency_overrides[get_db] = _override
     yield

@@ -18,6 +18,25 @@ job_data deterministisch in den Workflow getragen werden:
 Zusätzlich greift der prozessweite Ollama-Semaphore in ``llm/ollama.py``,
 damit auch parallele Workflows die LLM-Last nie über
 ``ollama_max_concurrent_requests`` heben können.
+
+M13 (Release 1.0 hardening) -- replay safety
+-------------------------------------------
+Workflows that are already running must replay unchanged after a deploy.
+Every M13 change that adds/removes Temporal commands on a path that may
+already exist in recorded histories is guarded by ``workflow.patched``:
+
+* ``_PATCH_PARALLEL_DRAIN``  -- parallel loop drains in-flight activities on
+  the first failure instead of failing fast (no orphaned activities, no
+  progress update after the job was marked failed).
+* ``_PATCH_FAILURE_CLEANUP`` -- processing failures delete the uploaded
+  script and all intermediate SecureBuffer refs (cleanup_buffer activity).
+* ``_PATCH_CANCELLATION``    -- a workflow cancel marks the job ``cancelled``
+  (plus buffer cleanup) and re-raises instead of being recorded as failure.
+* ``_PATCH_FAILURE_WEBHOOK`` -- processing failures also send the content-free
+  ``security.delivery.failed`` webhook (the report can never be delivered).
+
+All other M13 changes only alter activity *arguments/results* or activity
+code, which Temporal does not compare during replay.
 """
 
 import asyncio
@@ -28,9 +47,15 @@ from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ActivityError, ApplicationError, is_cancelled_exception
 
 with workflow.unsafe.imports_passed_through():
     from workflows.activities import (
+        CONTENT_FREE_ERROR_TYPES,
+        ERROR_TYPE_BUFFER_EXPIRED,
+        ERROR_TYPE_INVALID_PROJECT_ID,
+        ERROR_TYPE_PARSING_FAILED,
+        ERROR_TYPE_PROMPT_BLOCKED,
         aggregate_report_activity,
         aggregate_script_activity,
         analyze_scene_risk_activity,
@@ -66,6 +91,15 @@ _RETRY_DELIVERY = RetryPolicy(
     maximum_interval=timedelta(minutes=10),
     backoff_coefficient=2.0,
 )
+# M13: terminal status updates (failed/cancelled) must survive a short DB
+# outage -- update_job_status now raises on DB errors instead of returning
+# {"updated": False}. ~3.5 min of retries before the update is given up.
+_RETRY_STATUS_TERMINAL = RetryPolicy(
+    maximum_attempts=8,
+    initial_interval=timedelta(seconds=2),
+    maximum_interval=timedelta(minutes=1),
+    backoff_coefficient=2.0,
+)
 # M08: ``maximum_attempts`` bewusst NICHT gesetzt. Die Begrenzung erfolgt
 # ueber das ``schedule_to_close_timeout`` von 6 Stunden im Aufrufer von
 # deliver_report_activity (Pflichtenheft Abnahmetest 4). 4xx-Hard-Fails
@@ -78,6 +112,54 @@ _DELIVERY_START_TO_CLOSE_PER_ATTEMPT = timedelta(minutes=5)
 # gilt fuer beide Lieferwege). Der Wert wird beim Workflow-Start in job_data
 # eingefroren (``buffer_ttl_seconds``); Fallback = 6h.
 _DEFAULT_PULL_TTL_SECONDS = 6 * 3600
+
+# M13 replay-safety patch ids (see module docstring).
+_PATCH_PARALLEL_DRAIN = "eki-m13-parallel-drain-on-failure"
+_PATCH_FAILURE_CLEANUP = "eki-m13-cleanup-on-processing-failure"
+_PATCH_CANCELLATION = "eki-m13-cancelled-job-status"
+_PATCH_FAILURE_WEBHOOK = "eki-m13-processing-failure-webhook"
+
+# Non-retryable delivery failures that are not an exhausted retry window.
+_DELIVERY_FAILURE_REASONS = {
+    ERROR_TYPE_BUFFER_EXPIRED: "report_expired",
+    ERROR_TYPE_INVALID_PROJECT_ID: "invalid_project_id",
+}
+_TERMINAL_STATUSES = frozenset({"failed", "cancelled"})
+
+# ``reason`` of the security.delivery.failed webhook for processing failures.
+_PROCESSING_FAILURE_REASONS = {
+    ERROR_TYPE_PROMPT_BLOCKED: "prompt_blocked",
+    ERROR_TYPE_PARSING_FAILED: "parsing_failed",
+}
+_PROCESSING_FAILURE_DEFAULT_REASON = "processing_failed"
+
+
+def _processing_failure_reason(exc: BaseException) -> str:
+    cause = exc.cause if isinstance(exc, ActivityError) else exc
+    cause_type = cause.type if isinstance(cause, ApplicationError) else None
+    return _PROCESSING_FAILURE_REASONS.get(cause_type or "", _PROCESSING_FAILURE_DEFAULT_REASON)
+
+
+def _failure_message(exc: BaseException) -> str:
+    """Content-free ``error_message`` for a failed job (M13).
+
+    Activity failures of a type from ``CONTENT_FREE_ERROR_TYPES`` carry a
+    message written for the user (e.g. "Parsing fehlgeschlagen: ...",
+    "Szene 4: vom Prompt-Injection-Filter blockiert ..."); everything else is
+    reported by activity name and exception class only, never by message.
+    """
+    cause = exc.cause if isinstance(exc, ActivityError) else exc
+    if isinstance(cause, ApplicationError) and cause.type in CONTENT_FREE_ERROR_TYPES:
+        return cause.message
+    if isinstance(exc, ActivityError):
+        if isinstance(cause, ApplicationError) and cause.type:
+            kind = cause.type
+        elif cause is not None:
+            kind = type(cause).__name__
+        else:
+            kind = "unknown"
+        return f"{exc.activity_type or 'Activity'} fehlgeschlagen ({kind})"
+    return f"Workflow-Fehler ({type(exc).__name__})"
 
 
 def _resolve_concurrency(job_data: dict[str, Any], key: str) -> int:
@@ -118,6 +200,19 @@ def _resolve_activity_timeout(job_data: dict[str, Any]) -> timedelta:
 class SecurityCheckWorkflow:
     """Routes to FDX or PDF pipeline based on script_format."""
 
+    def __init__(self) -> None:
+        # SecureBuffer refs produced so far (M13 cleanup on failure/cancel).
+        self._buffer_refs: list[str] = []
+        self._report_ref = ""
+        # True once the delivery outcome is decided; from then on the job's
+        # terminal state is owned by the delivery logic, not by cancellation.
+        self._delivery_settled = False
+
+    def _track(self, *refs: Any) -> None:
+        for ref in refs:
+            if ref and isinstance(ref, str) and ref not in self._buffer_refs:
+                self._buffer_refs.append(ref)
+
     async def _run_indexed(
         self,
         total: int,
@@ -151,16 +246,33 @@ class SecurityCheckWorkflow:
 
         sem = asyncio.Semaphore(concurrency)
         completed = 0
+        draining = False
+        failures: list[BaseException] = []
 
         async def _bounded(idx: int) -> None:
-            nonlocal completed
+            nonlocal completed, draining
             async with sem:
-                results[idx] = await factory(idx)
+                if draining:
+                    return  # M13: no new work after the first failure
+                try:
+                    results[idx] = await factory(idx)
+                except Exception as exc:
+                    # Pre-M13 histories: fail fast (siblings keep running).
+                    if not draining and not workflow.patched(_PATCH_PARALLEL_DRAIN):
+                        raise
+                    # M13: remember the failure, let in-flight siblings finish,
+                    # start nothing new -- the caller sees the first failure
+                    # only once no activity of this loop is outstanding.
+                    draining = True
+                    failures.append(exc)
+                    return
                 completed += 1
-                if progress_cb is not None:
+                if progress_cb is not None and not draining:
                     await progress_cb(completed)
 
         await asyncio.gather(*[_bounded(i) for i in range(total)])
+        if failures:
+            raise failures[0]
         return results
 
     async def _update_job(
@@ -170,7 +282,11 @@ class SecurityCheckWorkflow:
         progress: int | None = None,
         error: str | None = None,
     ) -> None:
-        """Best-effort job status update -- never fails the workflow."""
+        """Best-effort job status update -- never fails the workflow.
+
+        Only a workflow cancellation (M13) is re-raised so it is not lost.
+        Terminal statuses use the longer ``_RETRY_STATUS_TERMINAL`` policy.
+        """
         if not job_id:
             return
         payload: dict[str, Any] = {"job_id": job_id, "status": status}
@@ -183,10 +299,43 @@ class SecurityCheckWorkflow:
                 update_job_status_activity,
                 payload,
                 start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=(
+                    _RETRY_STATUS_TERMINAL if status in _TERMINAL_STATUSES else _RETRY_STANDARD
+                ),
+            )
+        except Exception as exc:
+            if (
+                not self._delivery_settled
+                and is_cancelled_exception(exc)
+                and workflow.patched(_PATCH_CANCELLATION)
+            ):
+                raise  # a cancel landing on a progress update must not be lost
+            logger.warning("Job status update failed (non-fatal): %s", type(exc).__name__)
+
+    async def _cleanup_buffers(self, job_id: str) -> None:
+        """Best-effort delete of every SecureBuffer ref this run produced (M13).
+
+        Never raises -- it must not mask the original failure; the Redis TTL
+        stays the safety net.
+        """
+        refs = list(self._buffer_refs)
+        if self._report_ref and not self._delivery_settled:
+            refs.append(self._report_ref)
+        if not refs:
+            return
+        try:
+            await workflow.execute_activity(
+                cleanup_buffer_activity,
+                {"ref_keys": refs},
+                start_to_close_timeout=timedelta(seconds=30),
                 retry_policy=_RETRY_STANDARD,
             )
         except Exception as exc:
-            logger.warning("Job status update failed (non-fatal): %s", exc)
+            logger.warning(
+                "Buffer cleanup after failure failed (non-fatal, TTL reaps): job=%s exc_type=%s",
+                job_id,
+                type(exc).__name__,
+            )
 
     @workflow.run
     async def run(self, job_data: dict[str, Any]) -> dict[str, Any]:
@@ -195,17 +344,59 @@ class SecurityCheckWorkflow:
         job_id = job_data.get("job_id", "")
         logger.info("SecurityCheckWorkflow %s started (format=%s)", workflow_id, fmt)
 
-        await self._update_job(job_id, "running", progress=0)
+        self._track(job_data.get("ref_key", ""))
 
         try:
+            await self._update_job(job_id, "running", progress=0)
             if fmt == "pdf":
                 return await self._run_pdf(job_data, workflow_id)
             else:
                 return await self._run_fdx(job_data, workflow_id)
-        except Exception as e:
-            logger.error("Workflow %s failed: %s", workflow_id, e, exc_info=True)
-            await self._update_job(job_id, "failed", error=str(e))
-            return {"status": "failed", "error": str(e), "workflow_id": workflow_id}
+        except (Exception, asyncio.CancelledError) as e:
+            if is_cancelled_exception(e) and workflow.patched(_PATCH_CANCELLATION):
+                # M13: an operator cancel is not a processing failure.
+                logger.warning("Workflow %s cancelled", workflow_id)
+                if not self._delivery_settled:
+                    await self._cleanup_buffers(job_id)
+                    await self._update_job(
+                        job_id, "cancelled", error="Job abgebrochen (Workflow-Cancel)"
+                    )
+                raise
+            if isinstance(e, asyncio.CancelledError):
+                raise
+            error = _failure_message(e)
+            logger.error("Workflow %s failed: %s", workflow_id, error, exc_info=True)
+            if workflow.patched(_PATCH_FAILURE_CLEANUP):
+                # M13: no script content may stay in the eKI after the job ended.
+                await self._cleanup_buffers(job_id)
+            await self._update_job(job_id, "failed", error=error)
+            if workflow.patched(_PATCH_FAILURE_WEBHOOK):
+                # M13: tell ePro that this report will never arrive (opt-in,
+                # the activity is a no-op without EPRO_WEBHOOK_URL).
+                await self._send_failure_webhook(
+                    job_id=job_id,
+                    report_id=str(job_data.get("report_id") or ""),
+                    reason=_processing_failure_reason(e),
+                )
+            return {"status": "failed", "error": error, "workflow_id": workflow_id}
+
+    async def _send_failure_webhook(self, *, job_id: str, report_id: str, reason: str) -> None:
+        """Best-effort security.delivery.failed webhook for a processing failure."""
+        try:
+            await workflow.execute_activity(
+                send_delivery_failed_webhook_activity,
+                # Same content-free payload as the delivery-failure branch;
+                # no delivery was attempted, hence attempts=0.
+                {"job_id": job_id, "report_id": report_id, "reason": reason, "attempts": 0},
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=_RETRY_STANDARD,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Processing-failure webhook dispatch failed (non-fatal): job=%s exc_type=%s",
+                job_id,
+                type(exc).__name__,
+            )
 
     # ------------------------------------------------------------------
     # FDX Pipeline
@@ -222,6 +413,7 @@ class SecurityCheckWorkflow:
             start_to_close_timeout=timedelta(minutes=10),
             retry_policy=_RETRY_STANDARD,
         )
+        self._track(parsed_result.get("parsed_ref_key"))
         total = parsed_result.get("total_scenes", 0)
         logger.info("FDX parsed: %d scenes", total)
         await self._update_job(job_id, "running", progress=10)
@@ -259,6 +451,7 @@ class SecurityCheckWorkflow:
             start_to_close_timeout=timedelta(minutes=5),
             retry_policy=_RETRY_STANDARD,
         )
+        self._track(text_result.get("text_ref_key"))
         logger.info("PDF text extracted: %d chars", text_result.get("text_length", 0))
 
         # Step 2: Split at INT/EXT markers
@@ -268,6 +461,7 @@ class SecurityCheckWorkflow:
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=_RETRY_STANDARD,
         )
+        self._track(split_result.get("blocks_ref_key"))
         scene_count = split_result["scene_count"]
         block_count = split_result["block_count"]
         used_page_fallback = split_result.get("used_page_fallback", False)
@@ -289,7 +483,7 @@ class SecurityCheckWorkflow:
         last_reported_pct = 8
 
         async def _structure_block(i: int) -> dict[str, Any]:
-            return await workflow.execute_activity(
+            result = await workflow.execute_activity(
                 structure_scene_llm_activity,
                 {
                     "blocks_ref_key": blocks_ref_key,
@@ -299,6 +493,8 @@ class SecurityCheckWorkflow:
                 start_to_close_timeout=activity_timeout,
                 retry_policy=_RETRY_LLM,
             )
+            self._track(result.get("scene_ref_key"))
+            return result
 
         async def _report_structure_progress(done: int) -> None:
             nonlocal last_reported_pct
@@ -353,6 +549,7 @@ class SecurityCheckWorkflow:
             start_to_close_timeout=timedelta(minutes=5),
             retry_policy=_RETRY_STANDARD,
         )
+        self._track(agg_result.get("parsed_ref_key"))
         logger.info(
             "Aggregated: %d scenes, confidence=%.2f",
             agg_result["total_scenes"],
@@ -405,12 +602,15 @@ class SecurityCheckWorkflow:
         activity_timeout = _resolve_activity_timeout(job_data)
 
         async def _analyze(i: int) -> dict[str, Any]:
-            return await workflow.execute_activity(
+            result = await workflow.execute_activity(
                 analyze_scene_risk_activity,
                 {"parsed_ref_key": parsed_ref_key, "scene_index": i},
                 start_to_close_timeout=activity_timeout,
                 retry_policy=_RETRY_LLM,
             )
+            # M13: findings travel as SecureBuffer refs (older results inline).
+            self._track(result.get("findings_ref_key"))
+            return result
 
         async def _report(done: int) -> None:
             nonlocal last_reported_pct
@@ -450,6 +650,8 @@ class SecurityCheckWorkflow:
             "project_id": job_data.get("project_id"),
             "user_id": job_data.get("user_id"),
             "script_format": job_data.get("script_format"),
+            # M13: lets aggregate_report compute the real processing time.
+            "job_id": job_data.get("job_id"),
         }
 
         report_result = await workflow.execute_activity(
@@ -461,6 +663,7 @@ class SecurityCheckWorkflow:
             start_to_close_timeout=timedelta(minutes=5),
             retry_policy=_RETRY_STANDARD,
         )
+        self._report_ref = str(report_result.get("report_ref_key") or "")
         logger.info("Report generated: %s", report_result.get("report_id"))
 
         # Delivery config includes mode, job metadata for DB updates
@@ -496,17 +699,26 @@ class SecurityCheckWorkflow:
                 delivery_result.get("attempts_used"),
             )
         except Exception as exc:
-            # Retry-Fenster (6h) erschoepft -- Pflichtenheft Abnahmetest 4.
-            # Wir loggen nur den Exception-Typ, NICHT die Nachricht, damit
-            # keine Reportinhalte ins Log gelangen koennen.
-            delivery_failure_reason = "retry_window_exhausted"
+            if is_cancelled_exception(exc) and workflow.patched(_PATCH_CANCELLATION):
+                raise  # M13: handled as cancellation in run()
+            # Retry-Fenster (6h) erschoepft -- Pflichtenheft Abnahmetest 4 --
+            # oder (M13) ein nicht wiederholbarer Fehler (Report abgelaufen,
+            # ungueltige project_id). Wir loggen nur den Exception-Typ, NICHT
+            # die Nachricht, damit keine Reportinhalte ins Log gelangen koennen.
+            cause = exc.cause if isinstance(exc, ActivityError) else None
+            cause_type = cause.type if isinstance(cause, ApplicationError) else None
+            delivery_failure_reason = _DELIVERY_FAILURE_REASONS.get(
+                cause_type or "", "retry_window_exhausted"
+            )
             delivery_attempts = -1  # echte Zahl steht in job_metadata.delivery_attempts
             logger.error(
-                "Report delivery exhausted 6h retry window: job=%s report=%s exc_type=%s",
+                "Report delivery failed definitively (%s): job=%s report=%s exc_type=%s",
+                delivery_failure_reason,
                 job_id,
                 report_id,
                 type(exc).__name__,
             )
+        self._delivery_settled = True
 
         # 4xx-Hard-Fail: Activity hat ohne Retry zurueckgegeben.
         if (
@@ -529,7 +741,8 @@ class SecurityCheckWorkflow:
                 attempts=delivery_attempts,
                 workflow_id=workflow_id,
                 total_findings=report_result.get("total_findings", 0),
-                delivery_mode="push",
+                # M13: was hard-coded "push" -> pull jobs were dead-lettered as push.
+                delivery_mode=delivery_mode,
                 last_status_code=(delivery_result or {}).get("status_code"),
             )
 

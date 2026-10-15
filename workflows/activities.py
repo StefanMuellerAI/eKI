@@ -7,18 +7,101 @@ plus metadata.  No screenplay content flows through Temporal history.
 
 import base64
 import logging
+import re
 import time
+import urllib.parse
 from datetime import UTC
 from typing import Any
 
 import redis.asyncio as aioredis
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 from api.config import get_settings
 from core import metrics
+from core.exceptions import LLMException, NotFoundException, ParsingException
 from services.secure_buffer import SecureBuffer
 
 logger = logging.getLogger(__name__)
+
+
+# ===================================================================
+# M13 - content-free, typed activity failures
+# ===================================================================
+#
+# Activities raise ``ApplicationError`` with one of these types for failures
+# whose message is guaranteed to contain NO screenplay content. The workflow
+# copies such messages verbatim into ``job_metadata.error_message``; any other
+# failure is reported only by activity name and exception class.
+
+ERROR_TYPE_PROMPT_BLOCKED = "PromptBlocked"
+ERROR_TYPE_RISK_ANALYSIS_FAILED = "RiskAnalysisFailed"
+ERROR_TYPE_PARSING_FAILED = "ParsingFailed"
+ERROR_TYPE_BUFFER_EXPIRED = "BufferExpired"
+ERROR_TYPE_INVALID_PROJECT_ID = "InvalidProjectId"
+ERROR_TYPE_JOB_STATUS_UPDATE_FAILED = "JobStatusUpdateFailed"
+ERROR_TYPE_INVALID_JOB_STATUS = "InvalidJobStatus"
+
+CONTENT_FREE_ERROR_TYPES = frozenset(
+    {
+        ERROR_TYPE_PROMPT_BLOCKED,
+        ERROR_TYPE_RISK_ANALYSIS_FAILED,
+        ERROR_TYPE_PARSING_FAILED,
+        ERROR_TYPE_BUFFER_EXPIRED,
+        ERROR_TYPE_INVALID_PROJECT_ID,
+    }
+)
+
+# Raised by every provider when PromptSanitizer rejects the prompt
+# (llm/ollama.py, llm/mistral_cloud.py: LLMException("Prompt blocked by
+# security policy", details={"reason": ...})). The bare sanitizer ValueError is
+# matched as well in case a provider ever stops wrapping it.
+_PROMPT_BLOCKED_MESSAGE = "Prompt blocked by security policy"
+_SANITIZER_VALUE_ERROR = "Prompt contains potentially dangerous content"
+
+# ePro project ids as enforced by the JSON API (SecurityCheckRequest.project_id).
+_PROJECT_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def _non_retryable(error_type: str, message: str) -> ApplicationError:
+    return ApplicationError(message, type=error_type, non_retryable=True)
+
+
+def _is_prompt_blocked(exc: BaseException) -> bool:
+    """True when *exc* is the providers' PromptSanitizer rejection."""
+    if isinstance(exc, LLMException):
+        return str(getattr(exc, "message", "") or "").startswith(_PROMPT_BLOCKED_MESSAGE)
+    return isinstance(exc, ValueError) and str(exc) == _SANITIZER_VALUE_ERROR
+
+
+async def _retrieve(buffer: SecureBuffer, ref_key: str, what: str) -> dict[str, Any]:
+    """``buffer.retrieve`` that turns an expired/missing key into a final failure.
+
+    A missing key can never reappear, so retrying is pointless (M13).
+    """
+    try:
+        return await buffer.retrieve(ref_key)
+    except NotFoundException:
+        raise _non_retryable(
+            ERROR_TYPE_BUFFER_EXPIRED,
+            f"{what} ist im SecureBuffer abgelaufen oder nicht mehr vorhanden "
+            "– Job bitte neu einreichen",
+        ) from None
+
+
+def _parsing_failed(fmt: str, exc: ParsingException) -> ApplicationError:
+    """Map a ParsingException to a content-free, non-retryable failure."""
+    details = getattr(exc, "details", None) or {}
+    if details.get("reason") == "password_protected":
+        reason = "PDF ist passwortgeschützt"
+    elif "max_size" in details:
+        reason = "Datei überschreitet die maximale Größe"
+    elif fmt == "pdf":
+        reason = "PDF ist beschädigt oder nicht lesbar"
+    else:
+        reason = "FDX-Datei ist kein gültiges Final-Draft-XML"
+    logger.warning("%s parsing failed (non-retryable): %s", fmt, type(exc).__name__)
+    return _non_retryable(ERROR_TYPE_PARSING_FAILED, f"Parsing fehlgeschlagen: {reason}")
 
 
 def _get_buffer() -> SecureBuffer:
@@ -53,14 +136,18 @@ async def parse_fdx_activity(job_data: dict[str, Any]) -> dict[str, Any]:
     buffer = _get_buffer()
 
     try:
-        raw_data = await buffer.retrieve(ref_key)
+        raw_data = await _retrieve(buffer, ref_key, "Drehbuch")
         b64_content = raw_data["script_content"]
         content_bytes = base64.b64decode(b64_content)
 
         from parsers.fdx import FDXParser
 
         parser = FDXParser()
-        parsed = await parser.parse(content_bytes)
+        try:
+            parsed = await parser.parse(content_bytes)
+        except ParsingException as exc:
+            # Deterministic: the same bytes fail on every retry (M13).
+            raise _parsing_failed("fdx", exc) from None
 
         parsed_ref = await buffer.store(parsed.model_dump(mode="json"))
         await buffer.delete(ref_key)
@@ -71,8 +158,11 @@ async def parse_fdx_activity(job_data: dict[str, Any]) -> dict[str, Any]:
             "total_characters": len(parsed.characters),
             "parsing_time_seconds": parsed.parsing_time_seconds,
         }
-    except Exception:
-        logger.exception("parse_fdx_activity failed")
+    except ApplicationError:
+        raise
+    except Exception as exc:
+        # Type only: parser/XML messages may quote fragments of the script.
+        logger.error("parse_fdx_activity failed: exc_type=%s", type(exc).__name__)
         raise
 
 
@@ -89,7 +179,7 @@ async def extract_pdf_text_activity(job_data: dict[str, Any]) -> dict[str, Any]:
 
     buffer = _get_buffer()
 
-    raw_data = await buffer.retrieve(ref_key)
+    raw_data = await _retrieve(buffer, ref_key, "Drehbuch")
     b64_content = raw_data["script_content"]
     content_bytes = base64.b64decode(b64_content)
 
@@ -98,7 +188,10 @@ async def extract_pdf_text_activity(job_data: dict[str, Any]) -> dict[str, Any]:
     from parsers.pdf import extract_pdf_text
 
     # OCR (if triggered) is CPU-bound -> keep the worker event loop responsive.
-    extraction = await asyncio.to_thread(extract_pdf_text, content_bytes)
+    try:
+        extraction = await asyncio.to_thread(extract_pdf_text, content_bytes)
+    except ParsingException as exc:
+        raise _parsing_failed("pdf", exc) from None
     full_text, page_texts = extraction.full_text, extraction.page_texts
     if extraction.ocr_pages_done:
         metrics.SCENES_PROCESSED_TOTAL.labels(stage="ocr_page").inc(len(extraction.ocr_pages_done))
@@ -128,7 +221,7 @@ async def split_scenes_activity(job_data: dict[str, Any]) -> dict[str, Any]:
 
     buffer = _get_buffer()
 
-    text_data = await buffer.retrieve(text_ref_key)
+    text_data = await _retrieve(buffer, text_ref_key, "Extrahierter PDF-Text")
     full_text = text_data["full_text"]
     page_texts = text_data.get("page_texts")
 
@@ -178,7 +271,7 @@ async def structure_scene_llm_activity(job_data: dict[str, Any]) -> dict[str, An
 
     buffer = _get_buffer()
 
-    blocks_data = await buffer.retrieve(blocks_ref_key)
+    blocks_data = await _retrieve(buffer, blocks_ref_key, "Szenenblöcke")
     blocks = blocks_data["blocks"]
 
     if block_index >= len(blocks):
@@ -266,8 +359,8 @@ async def aggregate_script_activity(job_data: dict[str, Any]) -> dict[str, Any]:
     if len(scene_ref_keys) > 200:
         logger.warning(
             "aggregate_script_activity: %d pending scene refs to clean up "
-            "(Großdokument-Pfad, M07). Wird inkrementell in dieser "
-            "Activity abgeräumt.",
+            "(Großdokument-Pfad, M07). Werden nach dem Speichern des "
+            "ParsedScript in dieser Activity abgeräumt.",
             len(scene_ref_keys),
         )
 
@@ -298,7 +391,7 @@ async def aggregate_script_activity(job_data: dict[str, Any]) -> dict[str, Any]:
         )
 
     for i, ref_key in enumerate(scene_ref_keys):
-        scene_data = await buffer.retrieve(ref_key)
+        scene_data = await _retrieve(buffer, ref_key, f"Strukturierte Szene {i + 1}")
         f = scene_data["fields"]
 
         # Normalise enums
@@ -334,7 +427,6 @@ async def aggregate_script_activity(job_data: dict[str, Any]) -> dict[str, Any]:
             parse_method=scene_data.get("parse_method", "pdf_llm"),
         )
         scenes.append(scene)
-        await buffer.delete(ref_key)
 
     # Build character index programmatically
     appearances: dict[str, list[str]] = defaultdict(list)
@@ -368,9 +460,13 @@ async def aggregate_script_activity(job_data: dict[str, Any]) -> dict[str, Any]:
 
     parsed_ref = await buffer.store(script.model_dump(mode="json"))
 
-    # Clean up blocks ref
-    if blocks_ref_key:
-        await buffer.delete(blocks_ref_key)
+    # M13: inputs are deleted only AFTER the ParsedScript is safely stored, so
+    # a Temporal retry after a late failure (e.g. a Redis blip on the store
+    # above) still finds every scene ref. Deleting inside the loop made the
+    # activity non-retryable.
+    consumed = [k for k in (*scene_ref_keys, blocks_ref_key) if k]
+    if consumed:
+        await buffer.delete(*consumed)
 
     return {
         "parsed_ref_key": parsed_ref,
@@ -396,13 +492,15 @@ def _record_job_terminal_metric(
 
     ``delivery_failed:*`` errors are counted under their own status label so
     the SLO dashboards can separate processing failures from outbound ones.
+    Cancelled jobs (M13) are counted as ``cancelled`` without a duration
+    sample -- an operator abort says nothing about processing time.
     """
     label = status
     if status == "failed" and str(error_message or "").startswith("delivery_failed"):
         label = "delivery_failed"
 
     duration: float | None = None
-    if created_at is not None:
+    if created_at is not None and status != "cancelled":
         from datetime import datetime
 
         now = datetime.now(UTC)
@@ -414,12 +512,23 @@ def _record_job_terminal_metric(
     metrics.record_job_terminal(script_format, label, duration)
 
 
+_TERMINAL_JOB_STATUSES = frozenset({"completed", "failed", "cancelled"})
+
+
 @activity.defn(name="update_job_status")
 async def update_job_status_activity(job_data: dict[str, Any]) -> dict[str, Any]:
     """Update job status and optional fields in the database.
 
     Accepts: job_id, status, and optionally error_message, progress_percentage.
+
+    M13: database errors are raised (content-free) instead of being swallowed,
+    so the workflow's RetryPolicy retries a transient outage instead of leaving
+    the job stuck in RUNNING. Invalid input fails non-retryably.
     """
+    from uuid import UUID as UUIDType
+
+    from core.models import JobStatus
+
     job_id = job_data.get("job_id", "")
     new_status = job_data.get("status", "")
     error_message = job_data.get("error_message")
@@ -428,65 +537,76 @@ async def update_job_status_activity(job_data: dict[str, Any]) -> dict[str, Any]
     if not job_id or not new_status:
         return {"updated": False, "reason": "missing job_id or status"}
 
-    logger.info("Updating job %s -> %s (progress=%s)", job_id, new_status, progress)
-
     try:
-        from uuid import UUID as UUIDType
-
-        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
-        from api.config import get_settings
-        from core.db_models import JobMetadata
-        from core.models import JobStatus
-
-        settings = get_settings()
-        engine = create_async_engine(str(settings.database_url))
-        Session = async_sessionmaker(engine, expire_on_commit=False)
-
-        values: dict[str, Any] = {"status": JobStatus(new_status)}
+        job_uuid = UUIDType(str(job_id))
+        status_value = JobStatus(new_status)
+        values: dict[str, Any] = {"status": status_value}
         if error_message is not None:
             values["error_message"] = str(error_message)[:1000]
         if progress is not None:
             values["progress_percentage"] = int(progress)
+    except (TypeError, ValueError) as exc:
+        raise _non_retryable(
+            ERROR_TYPE_INVALID_JOB_STATUS,
+            f"Ungültiges Job-Status-Update ({type(exc).__name__})",
+        ) from None
 
-        terminal = new_status in (JobStatus.COMPLETED.value, JobStatus.FAILED.value)
+    logger.info("Updating job %s -> %s (progress=%s)", job_id, new_status, progress)
 
-        async with Session() as session:
-            from sqlalchemy import select, update
+    from sqlalchemy import select, update
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-            script_format = "unknown"
-            created_at = None
-            if terminal:
-                row = (
-                    await session.execute(
-                        select(JobMetadata.script_format, JobMetadata.created_at).where(
-                            JobMetadata.job_id == UUIDType(job_id)
+    from api.config import get_settings
+    from core.db_models import JobMetadata
+
+    terminal = status_value.value in _TERMINAL_JOB_STATUSES
+    script_format = "unknown"
+    created_at = None
+
+    try:
+        settings = get_settings()
+        engine = create_async_engine(str(settings.database_url))
+        try:
+            session_factory = async_sessionmaker(engine, expire_on_commit=False)
+            async with session_factory() as session:
+                if terminal:
+                    row = (
+                        await session.execute(
+                            select(JobMetadata.script_format, JobMetadata.created_at).where(
+                                JobMetadata.job_id == job_uuid
+                            )
                         )
-                    )
-                ).first()
-                if row is not None:
-                    script_format = str(getattr(row[0], "value", row[0]) or "unknown")
-                    created_at = row[1]
+                    ).first()
+                    if row is not None:
+                        script_format = str(getattr(row[0], "value", row[0]) or "unknown")
+                        created_at = row[1]
 
-            await session.execute(
-                update(JobMetadata).where(JobMetadata.job_id == UUIDType(job_id)).values(**values)
-            )
-            await session.commit()
-
-        await engine.dispose()
-
-        if terminal:
-            _record_job_terminal_metric(
-                script_format=script_format,
-                status=new_status,
-                error_message=error_message,
-                created_at=created_at,
-            )
-        return {"updated": True}
-
+                await session.execute(
+                    update(JobMetadata).where(JobMetadata.job_id == job_uuid).values(**values)
+                )
+                await session.commit()
+        finally:
+            await engine.dispose()
     except Exception as exc:
-        logger.warning("Failed to update job status in DB: %s", exc)
-        return {"updated": False, "reason": str(exc)}
+        # Type only: driver messages can echo bound parameters.
+        logger.warning(
+            "Job status update failed (Temporal will retry): job=%s exc_type=%s",
+            job_id,
+            type(exc).__name__,
+        )
+        raise ApplicationError(
+            f"Job-Status-Update fehlgeschlagen ({type(exc).__name__})",
+            type=ERROR_TYPE_JOB_STATUS_UPDATE_FAILED,
+        ) from None
+
+    if terminal:
+        _record_job_terminal_metric(
+            script_format=script_format,
+            status=status_value.value,
+            error_message=error_message,
+            created_at=created_at,
+        )
+    return {"updated": True}
 
 
 # ===================================================================
@@ -523,21 +643,23 @@ async def _build_kb_context(*, scene_text: str, settings: Any) -> str:
         from services.knowledge_base import KnowledgeBaseService
 
         engine = create_async_engine(str(settings.database_url))
-        Session = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            Session = async_sessionmaker(engine, expire_on_commit=False)
 
-        async with Session() as session:
-            kb = KnowledgeBaseService(
-                db=session,
-                llm=get_llm_provider(settings),
-                secret_key=settings.api_secret_key,
-            )
-            hits = await kb.search(
-                query_text=scene_text,
-                tenant_id=UUIDType(settings.kb_default_tenant_id),
-                top_k=settings.kb_top_k,
-            )
-
-        await engine.dispose()
+            async with Session() as session:
+                kb = KnowledgeBaseService(
+                    db=session,
+                    llm=get_llm_provider(settings),
+                    secret_key=settings.api_secret_key,
+                )
+                hits = await kb.search(
+                    query_text=scene_text,
+                    tenant_id=UUIDType(settings.kb_default_tenant_id),
+                    top_k=settings.kb_top_k,
+                )
+        finally:
+            # M13: dispose on failure too (was skipped when kb.search raised).
+            await engine.dispose()
 
         if not hits:
             return "(none)"
@@ -634,6 +756,65 @@ _RISK_SCHEMA: dict[str, Any] = {
 }
 
 
+def _prompt_max_chars() -> int:
+    """PromptSanitizer's default ``max_length`` -- the providers truncate beyond it."""
+    import inspect
+
+    from core.prompt_sanitizer import PromptSanitizer
+
+    try:
+        default = (
+            inspect.signature(PromptSanitizer.validate_and_sanitize)
+            .parameters["max_length"]
+            .default
+        )
+        return int(default)
+    except Exception:  # pragma: no cover - signature changed; keep the known limit
+        return 10_000
+
+
+_PROMPT_MAX_CHARS = _prompt_max_chars()
+_PROMPT_SAFETY_MARGIN = 200
+_RISK_CHUNK_MAX_CHARS = 8_000
+_RISK_CHUNK_MIN_CHARS = 1_000
+_RISK_CHUNK_OVERLAP_CHARS = 500
+
+
+def _chunk_text(text: str, size: int, overlap: int) -> list[str]:
+    """Split *text* into chunks of at most *size* chars overlapping by ~*overlap*.
+
+    A cut prefers a newline, then a space, within the last quarter of the
+    chunk; the overlap starts at a word boundary where possible. Every
+    character of *text* lies in at least one chunk.
+    """
+    if len(text) <= size:
+        return [text]
+    chunks: list[str] = []
+    start = 0
+    length = len(text)
+    while True:
+        end = min(start + size, length)
+        if end < length:
+            floor = start + (size * 3) // 4
+            cut = text.rfind("\n", floor, end)
+            if cut <= floor:
+                cut = text.rfind(" ", floor, end)
+            if cut > floor:
+                end = cut
+        chunks.append(text[start:end])
+        if end >= length:
+            return chunks
+        next_start = end - overlap
+        separators = [
+            i
+            for i in (text.find(" ", next_start, end), text.find("\n", next_start, end))
+            if i != -1
+        ]
+        if separators:
+            next_start = min(separators) + 1  # still <= end: no gap between chunks
+        start = max(next_start, start + 1)
+
+
 @activity.defn(name="analyze_scene_risk")
 async def analyze_scene_risk_activity(job_data: dict[str, Any]) -> dict[str, Any]:
     """Analyze a single scene for safety risks using LLM with taxonomy context.
@@ -644,13 +825,22 @@ async def analyze_scene_risk_activity(job_data: dict[str, Any]) -> dict[str, Any
     - Calculates severity from likelihood x impact
     - Resolves measure codes to full measure objects
     - Fills in missing rule_ids from the taxonomy
+
+    M13 -- fail closed: an LLM/provider error is NOT turned into "no findings"
+    any more (that produced risk-free reports during an outage). It is raised
+    as a content-free, retryable ``RiskAnalysisFailed`` so ``_RETRY_LLM``
+    retries it and the job finally fails. A PromptSanitizer rejection can never
+    succeed and is raised as non-retryable ``PromptBlocked`` (manual review).
+
+    M13 -- the enriched findings (descriptions, evidence quotes) are stored in
+    the SecureBuffer; only ``findings_ref_key`` travels through Temporal.
     """
     parsed_ref_key = job_data.get("parsed_ref_key", "")
     scene_index = job_data.get("scene_index", 0)
     logger.info("Analyzing risks for scene %d via LLM", scene_index)
 
     buffer = _get_buffer()
-    parsed_data = await buffer.retrieve(parsed_ref_key)
+    parsed_data = await _retrieve(buffer, parsed_ref_key, "Geparstes Drehbuch")
     scenes = parsed_data.get("scenes", [])
 
     if scene_index >= len(scenes):
@@ -659,70 +849,125 @@ async def analyze_scene_risk_activity(job_data: dict[str, Any]) -> dict[str, Any
     scene = scenes[scene_index]
     scene_number = scene.get("number", str(scene_index + 1))
 
-    try:
-        from api.config import get_settings
-        from llm.factory import get_llm_provider
-        from llm.prompt_manager import get_prompt_manager
-        from services.taxonomy import get_taxonomy_manager
+    from uuid import uuid4
 
-        settings = get_settings()
-        llm = get_llm_provider(settings)
-        pm = get_prompt_manager()
-        taxonomy = get_taxonomy_manager()
+    from api.config import get_settings
+    from llm.factory import get_llm_provider
+    from llm.prompt_manager import get_prompt_manager
+    from services.taxonomy import get_taxonomy_manager
 
-        # KB retrieval (M06): strictly opt-in via KB_RETRIEVAL_ENABLED.
-        # When the flag is off, no KB code path is taken, so the risk
-        # activity behaves byte-identically to M05.
-        kb_context_str = await _build_kb_context(
-            scene_text=scene.get("text", ""),
-            settings=settings,
-        )
+    settings = get_settings()
+    llm = get_llm_provider(settings)
+    pm = get_prompt_manager()
+    taxonomy = get_taxonomy_manager()
 
+    # KB retrieval (M06): strictly opt-in via KB_RETRIEVAL_ENABLED and never
+    # fatal -- _build_kb_context returns "(none)" on any failure.
+    kb_context_str = await _build_kb_context(
+        scene_text=scene.get("text", ""),
+        settings=settings,
+    )
+
+    scene_text = scene.get("text", "")
+
+    def _render(text: str) -> tuple[str, str]:
         # Build prompt with taxonomy + (optional) KB context
-        system_prompt, user_prompt = pm.get(
+        return pm.get(
             "risk_analysis",
             "scene",
             scene_number=scene_number,
             location=scene.get("location", "UNKNOWN"),
             location_type=scene.get("location_type", "UNKNOWN"),
             time_of_day=scene.get("time_of_day", "UNKNOWN"),
-            scene_text=scene.get("text", ""),
+            scene_text=text,
             taxonomy_context=taxonomy.summary_for_prompt(),
             kb_context=kb_context_str,
         )
 
-        result = await llm.generate_structured(
-            prompt=user_prompt,
-            schema=_RISK_SCHEMA,
-            system_prompt=system_prompt,
-            temperature=0.2,
+    # M13: the providers silently truncate the user prompt at PromptSanitizer's
+    # max_length, so the tail of a very long "scene" (e.g. a script without
+    # scene headings) was never analysed. Such scenes are analysed in
+    # overlapping chunks; normal scenes keep the single, unchanged prompt.
+    chunks = [scene_text]
+    if len(_render(scene_text)[1]) > _PROMPT_MAX_CHARS:
+        overhead = len(_render("")[1])
+        chunk_chars = max(
+            _RISK_CHUNK_MIN_CHARS,
+            min(_RISK_CHUNK_MAX_CHARS, _PROMPT_MAX_CHARS - overhead - _PROMPT_SAFETY_MARGIN),
+        )
+        chunks = _chunk_text(scene_text, chunk_chars, _RISK_CHUNK_OVERLAP_CHARS)
+        # Counts and lengths only -- never content.
+        logger.info(
+            "Scene %s: %d chars analysed in %d overlapping chunks (lengths=%s)",
+            scene_number,
+            len(scene_text),
+            len(chunks),
+            [len(c) for c in chunks],
         )
 
-        findings = result.get("findings", [])
-        from uuid import uuid4
+    raw_findings: list[Any] = []
+    for chunk in chunks:
+        system_prompt, user_prompt = _render(chunk)
+        try:
+            result = await llm.generate_structured(
+                prompt=user_prompt,
+                schema=_RISK_SCHEMA,
+                system_prompt=system_prompt,
+                temperature=0.2,
+            )
+        except Exception as exc:
+            if _is_prompt_blocked(exc):
+                logger.warning(
+                    "Scene %s blocked by the prompt-injection filter (no retry)", scene_number
+                )
+                raise _non_retryable(
+                    ERROR_TYPE_PROMPT_BLOCKED,
+                    f"Szene {scene_number}: vom Prompt-Injection-Filter blockiert "
+                    "– manuelle Prüfung erforderlich",
+                ) from None
+            # Type only: provider/validation messages may echo model output.
+            logger.warning(
+                "Risk analysis LLM call failed for scene %s (will be retried): exc_type=%s",
+                scene_number,
+                type(exc).__name__,
+            )
+            raise ApplicationError(
+                f"Szene {scene_number}: Risikoanalyse fehlgeschlagen ({type(exc).__name__})",
+                type=ERROR_TYPE_RISK_ANALYSIS_FAILED,
+            ) from None
+        findings = result.get("findings", []) if isinstance(result, dict) else None
+        if not isinstance(findings, list):
+            logger.warning(
+                "Risk analysis output invalid for scene %s (will be retried): exc_type=%s",
+                scene_number,
+                type(findings).__name__,
+            )
+            raise ApplicationError(
+                f"Szene {scene_number}: ungültige Risikoanalyse-Ausgabe (kein Befund-Array)",
+                type=ERROR_TYPE_RISK_ANALYSIS_FAILED,
+            )
+        raw_findings.extend(findings)
 
+    try:
         enriched_findings = []
-        for f in findings:
-            # Validate and enrich via TaxonomyManager
+        seen: set[tuple[str, str, str]] = set()
+        for f in raw_findings:
+            # Validate and enrich via TaxonomyManager (also defaults the
+            # Pflichtenheft context fields evidence/vulnerability/...).
             f = taxonomy.validate_finding(f)
+            if len(chunks) > 1 and f.get("evidence"):
+                # Overlapping chunks may report the same quote twice.
+                key = (str(f.get("risk_class")), str(f.get("rule_id")), str(f["evidence"]))
+                if key in seen:
+                    continue
+                seen.add(key)
             f["id"] = str(uuid4())
             f["scene_number"] = scene_number
             f["line_reference"] = None
             if "confidence" not in f or not f["confidence"]:
                 f["confidence"] = 0.8
 
-            # Ensure Pflichtenheft context fields have defaults
-            if "evidence" not in f:
-                f["evidence"] = ""
-            if "vulnerability" not in f:
-                f["vulnerability"] = ""
-            if "complexity" not in f:
-                f["complexity"] = ""
-            if "exposure_duration" not in f:
-                f["exposure_duration"] = ""
-
             # Convert measures to serializable dicts
-            measures = f.get("measures", [])
             f["measures"] = [
                 {
                     "code": m.get("code", ""),
@@ -730,29 +975,79 @@ async def analyze_scene_risk_activity(job_data: dict[str, Any]) -> dict[str, Any
                     "responsible": m.get("responsible", ""),
                     "due": m.get("due", ""),
                 }
-                for m in measures
+                for m in f.get("measures", [])
             ]
             enriched_findings.append(f)
-
-        logger.info(
-            "Scene %s: %d findings (taxonomy-enriched)", scene_number, len(enriched_findings)
-        )
-        metrics.SCENES_PROCESSED_TOTAL.labels(stage="risk").inc()
-        for f in enriched_findings:
-            metrics.FINDINGS_TOTAL.labels(severity=str(f.get("risk_level", "unknown"))).inc()
-        return {
-            "scene_index": scene_index,
-            "scene_number": scene_number,
-            "findings": enriched_findings,
-        }
-
     except Exception as exc:
-        logger.warning("Risk analysis failed for scene %s: %s", scene_number, exc)
-        return {
-            "scene_index": scene_index,
-            "scene_number": scene_number,
-            "findings": [],
-        }
+        # Malformed model output: retrying may yield a valid answer.
+        logger.warning(
+            "Risk analysis output invalid for scene %s (will be retried): exc_type=%s",
+            scene_number,
+            type(exc).__name__,
+        )
+        raise ApplicationError(
+            f"Szene {scene_number}: ungültige Risikoanalyse-Ausgabe ({type(exc).__name__})",
+            type=ERROR_TYPE_RISK_ANALYSIS_FAILED,
+        ) from None
+
+    logger.info("Scene %s: %d findings (taxonomy-enriched)", scene_number, len(enriched_findings))
+    metrics.SCENES_PROCESSED_TOTAL.labels(stage="risk").inc()
+    for f in enriched_findings:
+        metrics.FINDINGS_TOTAL.labels(severity=str(f.get("risk_level", "unknown"))).inc()
+
+    response: dict[str, Any] = {
+        "scene_index": scene_index,
+        "scene_number": scene_number,
+        "finding_count": len(enriched_findings),
+    }
+    if enriched_findings:
+        response["findings_ref_key"] = await buffer.store({"findings": enriched_findings})
+    else:
+        response["findings"] = []
+    return response
+
+
+async def _job_created_at(job_id: str) -> Any:
+    """Return ``JobMetadata.created_at`` (best-effort; None if unknown)."""
+    from uuid import UUID as UUIDType
+
+    from sqlalchemy import select
+
+    from core.db_models import JobMetadata
+
+    try:
+        job_uuid = UUIDType(str(job_id))
+    except (TypeError, ValueError):
+        return None
+    try:
+        engine, session_factory = _session_factory()
+    except Exception as exc:
+        logger.warning("Job lookup unavailable: exc_type=%s", type(exc).__name__)
+        return None
+    try:
+        async with session_factory() as session:
+            return (
+                await session.execute(
+                    select(JobMetadata.created_at).where(JobMetadata.job_id == job_uuid)
+                )
+            ).scalar_one_or_none()
+    except Exception as exc:
+        logger.warning("Job lookup failed: exc_type=%s", type(exc).__name__)
+        return None
+    finally:
+        await engine.dispose()
+
+
+def _elapsed_since(created_at: Any) -> float:
+    from datetime import datetime
+
+    start = created_at if created_at.tzinfo else created_at.replace(tzinfo=UTC)
+    return max(0.0, (datetime.now(UTC) - start).total_seconds())
+
+
+# Used when the job's start time is unknown (e.g. workflows started before
+# M13 do not pass job_id to aggregate_report).
+_LEGACY_PROCESSING_TIME_SECONDS = 1.0
 
 
 @activity.defn(name="aggregate_report")
@@ -762,6 +1057,8 @@ async def aggregate_report_activity(
     """Aggregate per-scene findings into a complete SecurityReport with PDF.
 
     Builds a full report dict, generates a PDF, and stores both in Redis.
+    Accepts per-scene results with ``findings_ref_key`` (M13) and the legacy
+    inline ``findings`` list (histories recorded before M13).
     """
     all_findings = job_data.get("all_findings", [])
     parsed_ref_key = job_data.get("parsed_ref_key", "")
@@ -770,10 +1067,25 @@ async def aggregate_report_activity(
     buffer = _get_buffer()
 
     # Flatten findings from all scenes
-    flat_findings = []
+    flat_findings: list[dict[str, Any]] = []
+    finding_refs: list[str] = []
     for scene_result in all_findings:
-        for finding in scene_result.get("findings", []):
-            flat_findings.append(finding)
+        ref = scene_result.get("findings_ref_key")
+        if ref:
+            stored = await _retrieve(
+                buffer, ref, f"Befunde zu Szene {scene_result.get('scene_number', '?')}"
+            )
+            flat_findings.extend(stored.get("findings", []))
+            finding_refs.append(ref)
+        else:
+            flat_findings.extend(scene_result.get("findings", []))
+
+    processing_time = _LEGACY_PROCESSING_TIME_SECONDS
+    job_id = job_metadata.get("job_id")
+    if job_id:
+        created_at = await _job_created_at(str(job_id))
+        if created_at is not None:
+            processing_time = round(_elapsed_since(created_at), 3)
 
     # Build report using the report generator
     from services.report_generator import build_report_dict, generate_pdf_base64
@@ -781,9 +1093,9 @@ async def aggregate_report_activity(
     report = build_report_dict(
         report_id=job_metadata.get("report_id", ""),
         project_id=job_metadata.get("project_id", ""),
-        script_format=job_metadata.get("script_format", "fdx"),
+        script_format=job_metadata.get("script_format") or "fdx",
         findings=flat_findings,
-        processing_time_seconds=1.0,
+        processing_time_seconds=processing_time,
     )
 
     # Generate PDF
@@ -791,7 +1103,7 @@ async def aggregate_report_activity(
         pdf_b64 = generate_pdf_base64(report)
         logger.info("PDF report generated (%d chars base64)", len(pdf_b64))
     except Exception as exc:
-        logger.warning("PDF generation failed: %s", exc)
+        logger.warning("PDF generation failed: exc_type=%s", type(exc).__name__)
         pdf_b64 = None
 
     # Store report + PDF in Redis for retrieval
@@ -801,9 +1113,10 @@ async def aggregate_report_activity(
     }
     report_ref = await buffer.store(report_package)
 
-    # Clean up parsed data
-    if parsed_ref_key:
-        await buffer.delete(parsed_ref_key)
+    # Clean up the inputs only after the report is stored (retry-safe).
+    consumed = [k for k in (parsed_ref_key, *finding_refs) if k]
+    if consumed:
+        await buffer.delete(*consumed)
 
     return {
         "report_ref_key": report_ref,
@@ -903,9 +1216,15 @@ async def _mark_delivering(
                     )
 
             if job_id:
+                # M13: a retry after a successful delivery (lost activity
+                # completion) must not move a COMPLETED job back to DELIVERING;
+                # _record_attempt relies on this to count completion once.
                 await session.execute(
                     update(JobMetadata)
-                    .where(JobMetadata.job_id == UUIDType(job_id))
+                    .where(
+                        JobMetadata.job_id == UUIDType(job_id),
+                        JobMetadata.status != JobStatus.COMPLETED,
+                    )
                     .values(
                         status=JobStatus.DELIVERING,
                         delivery_status="delivering",
@@ -925,11 +1244,19 @@ async def _record_attempt(
     delivered: bool,
     delivery_mode: str,
 ) -> None:
-    """Persist one delivery attempt (count, last status code, timestamps)."""
+    """Persist one delivery attempt (count, last status code, timestamps).
+
+    M13:
+    * ``delivered_at`` is set for push only. In pull mode the report is merely
+      *ready*; the one-shot GET (api/routers/security.py) sets ``delivered_at``.
+    * The first transition to COMPLETED emits the terminal job metric
+      (``eki_jobs_total{status="completed"}`` + duration) exactly once, also
+      across Temporal retries of ``deliver_report``.
+    """
     from datetime import UTC, datetime
     from uuid import UUID as UUIDType
 
-    from sqlalchemy import update
+    from sqlalchemy import select, update
 
     from core.db_models import JobMetadata
     from core.models import JobStatus
@@ -947,20 +1274,72 @@ async def _record_attempt(
         values.update(
             status=JobStatus.COMPLETED,
             progress_percentage=100,
-            delivered_at=now,
             # Pull: the report is *ready*; "delivered" is set by the one-shot GET.
             delivery_status="delivered" if delivery_mode == "push" else "pending",
         )
+        if delivery_mode == "push":
+            values["delivered_at"] = now
 
+    first_completion: tuple[str, Any] | None = None
     engine, session_factory = _session_factory()
     try:
         async with session_factory() as session:
+            if delivered:
+                row = (
+                    await session.execute(
+                        select(
+                            JobMetadata.status, JobMetadata.script_format, JobMetadata.created_at
+                        ).where(JobMetadata.job_id == UUIDType(job_id))
+                    )
+                ).first()
+                if row is not None and str(getattr(row[0], "value", row[0])) != "completed":
+                    first_completion = (str(getattr(row[1], "value", row[1]) or "unknown"), row[2])
             await session.execute(
                 update(JobMetadata).where(JobMetadata.job_id == UUIDType(job_id)).values(**values)
             )
             await session.commit()
     finally:
         await engine.dispose()
+
+    if first_completion is not None:
+        _record_job_terminal_metric(
+            script_format=first_completion[0],
+            status="completed",
+            error_message=None,
+            created_at=first_completion[1],
+        )
+
+
+async def _job_delivery_attempts(job_id: str) -> int | None:
+    """Return ``JobMetadata.delivery_attempts`` (best-effort; None if unknown)."""
+    from uuid import UUID as UUIDType
+
+    from sqlalchemy import select
+
+    from core.db_models import JobMetadata
+
+    try:
+        job_uuid = UUIDType(str(job_id))
+    except (TypeError, ValueError):
+        return None
+    try:
+        engine, session_factory = _session_factory()
+    except Exception as exc:
+        logger.warning("Job lookup unavailable: exc_type=%s", type(exc).__name__)
+        return None
+    try:
+        async with session_factory() as session:
+            value = (
+                await session.execute(
+                    select(JobMetadata.delivery_attempts).where(JobMetadata.job_id == job_uuid)
+                )
+            ).scalar_one_or_none()
+    except Exception as exc:
+        logger.warning("Job lookup failed: exc_type=%s", type(exc).__name__)
+        return None
+    finally:
+        await engine.dispose()
+    return int(value) if value else None
 
 
 @activity.defn(name="deliver_report")
@@ -991,6 +1370,16 @@ async def deliver_report_activity(
     attempt = _current_attempt()
 
     logger.info("Delivering report %s (mode=%s, attempt=%d)", report_id, delivery_mode, attempt)
+
+    if delivery_mode == "push" and not _PROJECT_ID_RE.fullmatch(str(project_id or "")):
+        # M13 defence in depth: project_id is interpolated into the ePro push
+        # URL; anything but [a-zA-Z0-9_-]+ (e.g. "../admin") could redirect the
+        # authenticated POST. Never retried; the failure branch cleans up.
+        logger.error("Push aborted: invalid project_id format (job=%s)", job_id)
+        raise _non_retryable(
+            ERROR_TYPE_INVALID_PROJECT_ID,
+            "Ungültige project_id für die ePro-Zustellung – Push abgebrochen",
+        )
 
     buffer = _get_buffer()
 
@@ -1038,7 +1427,7 @@ async def deliver_report_activity(
         from services.report_generator import compute_epro_status, generate_assessment_text
 
         settings = get_settings()
-        report_package = await buffer.retrieve(report_ref_key)
+        report_package = await _retrieve(buffer, report_ref_key, "Report")
         report = report_package.get("report", {})
         pdf_b64 = report_package.get("pdf_base64", "")
 
@@ -1048,7 +1437,10 @@ async def deliver_report_activity(
         if script_id is None:
             script_id = -1
 
-        push_url = f"{settings.epro_base_url}/eki/scl/set-risk-assessment/{project_id}"
+        push_url = (
+            f"{settings.epro_base_url}/eki/scl/set-risk-assessment/"
+            f"{urllib.parse.quote(str(project_id), safe='')}"
+        )
 
         form_data = {
             "script_id": str(int(script_id)),
@@ -1426,6 +1818,13 @@ async def send_delivery_failed_webhook_activity(
         )
         metrics.WEBHOOK_SENT_TOTAL.labels(outcome="disabled").inc()
         return {"sent": False, "reason": "no_webhook_url"}
+
+    if attempts <= 0 and job_id:
+        # M13: the workflow cannot see how many attempts an exhausted 6h retry
+        # window made (it passes 0); the per-attempt bookkeeping in
+        # job_metadata.delivery_attempts has the real number.
+        attempts = await _job_delivery_attempts(str(job_id)) or attempts
+        body["attempts"] = attempts
 
     headers: dict[str, str] = {"Content-Type": "application/json"}
     if settings.epro_auth_token:

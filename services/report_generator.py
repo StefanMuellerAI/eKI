@@ -24,6 +24,8 @@ from reportlab.platypus import (
     TableStyle,
 )
 
+from core.version import __version__
+
 logger = logging.getLogger(__name__)
 
 # Severity colors for the PDF
@@ -63,7 +65,7 @@ def build_report_dict(
         "findings": findings,
         "processing_time_seconds": processing_time_seconds,
         "metadata": {
-            "engine_version": "0.6.0",
+            "engine_version": __version__,
             "taxonomy_version": "1.0",
         },
     }
@@ -112,9 +114,9 @@ def generate_pdf_report(report: dict[str, Any]) -> bytes:
     elements.append(Paragraph("eKI Sicherheitsbericht", title_style))
     elements.append(
         Paragraph(
-            f"Projekt: {report.get('project_id', 'N/A')} | "
-            f"Format: {report.get('script_format', 'N/A').upper()} | "
-            f"Erstellt: {report.get('created_at', '')[:19]}",
+            f"Projekt: {_escape_html(report.get('project_id', 'N/A'))} | "
+            f"Format: {_escape_html(str(report.get('script_format', 'N/A')).upper())} | "
+            f"Erstellt: {_escape_html(str(report.get('created_at', ''))[:19])}",
             body_style,
         )
     )
@@ -127,12 +129,12 @@ def generate_pdf_report(report: dict[str, Any]) -> bytes:
     total = report.get("total_findings", 0)
     elements.append(
         Paragraph(
-            f"<b>{total} Sicherheitsrisiken</b> identifiziert in der Analyse. "
-            f"Davon <b>{risk_summary.get('critical', 0)} kritisch</b>, "
-            f"<b>{risk_summary.get('high', 0)} hoch</b>, "
-            f"{risk_summary.get('medium', 0)} mittel, "
-            f"{risk_summary.get('low', 0)} niedrig, "
-            f"{risk_summary.get('info', 0)} informativ.",
+            f"<b>{_escape_html(total)} Sicherheitsrisiken</b> identifiziert in der Analyse. "
+            f"Davon <b>{_escape_html(risk_summary.get('critical', 0))} kritisch</b>, "
+            f"<b>{_escape_html(risk_summary.get('high', 0))} hoch</b>, "
+            f"{_escape_html(risk_summary.get('medium', 0))} mittel, "
+            f"{_escape_html(risk_summary.get('low', 0))} niedrig, "
+            f"{_escape_html(risk_summary.get('info', 0))} informativ.",
             body_style,
         )
     )
@@ -173,21 +175,27 @@ def generate_pdf_report(report: dict[str, Any]) -> bytes:
         scene = f.get("scene_number") or "?"
         by_scene[scene].append(f)
 
-    for scene_num in sorted(by_scene.keys(), key=lambda x: int(x) if x.isdigit() else 999):
+    for scene_num in sorted(by_scene.keys(), key=_scene_sort_key):
         scene_findings = by_scene[scene_num]
         elements.append(
-            Paragraph(f"<b>Szene {scene_num}</b> ({len(scene_findings)} Befunde)", body_style)
+            Paragraph(
+                f"<b>Szene {_escape_html(scene_num)}</b> ({len(scene_findings)} Befunde)",
+                body_style,
+            )
         )
 
+        # Every interpolated value is escaped: scene numbers come verbatim from
+        # the uploaded FDX, class/rule ids from the LLM, project ids from the
+        # client -- unescaped '<' made reportlab raise and the PDF was dropped.
         for f in scene_findings:
-            severity = f.get("risk_level", "info").upper()
-            risk_class = f.get("risk_class", "")
-            rule_id = f.get("rule_id", "")
+            severity = _escape_html(str(f.get("risk_level") or "info").upper())
+            risk_class = _escape_html(f.get("risk_class", ""))
+            rule_id = _escape_html(f.get("rule_id", ""))
             desc = _escape_html(f.get("description", ""))
             rec = _escape_html(f.get("recommendation", ""))
             evidence = _escape_html(f.get("evidence", ""))
-            likelihood = f.get("likelihood", 0)
-            impact = f.get("impact", 0)
+            likelihood = _escape_html(f.get("likelihood", 0))
+            impact = _escape_html(f.get("impact", 0))
 
             finding_text = (
                 f"<b>[{severity}]</b> {risk_class} ({rule_id}) | "
@@ -203,7 +211,11 @@ def generate_pdf_report(report: dict[str, Any]) -> bytes:
             measures = f.get("measures", [])
             if measures:
                 for m in measures:
-                    m_text = f"  &#8594; {m.get('code', '')}: {m.get('title', '')} ({m.get('responsible', '')}, {m.get('due', '')})"
+                    m_text = (
+                        f"  &#8594; {_escape_html(m.get('code', ''))}: "
+                        f"{_escape_html(m.get('title', ''))} "
+                        f"({_escape_html(m.get('responsible', ''))}, {_escape_html(m.get('due', ''))})"
+                    )
                     elements.append(Paragraph(m_text, small_style))
 
             elements.append(Spacer(1, 2 * mm))
@@ -258,8 +270,9 @@ def generate_pdf_report(report: dict[str, Any]) -> bytes:
     elements.append(Spacer(1, 10 * mm))
     elements.append(
         Paragraph(
-            f"Generiert von eKI API v{report.get('metadata', {}).get('engine_version', '0.6.0')} | "
-            f"Taxonomie v{report.get('metadata', {}).get('taxonomy_version', '1.0')} | "
+            f"Generiert von eKI API v"
+            f"{_escape_html(report.get('metadata', {}).get('engine_version', __version__))} | "
+            f"Taxonomie v{_escape_html(report.get('metadata', {}).get('taxonomy_version', '1.0'))} | "
             f"Verarbeitungszeit: {report.get('processing_time_seconds', 0):.1f}s",
             small_style,
         )
@@ -275,9 +288,23 @@ def generate_pdf_base64(report: dict[str, Any]) -> str:
     return base64.b64encode(pdf_bytes).decode("ascii")
 
 
-def _escape_html(text: str) -> str:
-    """Escape HTML special characters for reportlab Paragraphs."""
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+def _escape_html(text: Any) -> str:
+    """Escape markup characters for reportlab Paragraphs (non-str values via ``str()``)."""
+    if text is None:
+        return ""
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _scene_sort_key(scene: Any) -> tuple[int, int]:
+    """Numeric scene numbers first (ascending), then all others in first-seen order.
+
+    ``str.isdigit()`` also accepts '²' or '①', which ``int()`` rejects; scene
+    numbers come verbatim from the uploaded FDX, so use ``isdecimal()``.
+    """
+    text = str(scene)
+    if text.isdecimal():
+        return (0, int(text))
+    return (1, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -339,7 +366,7 @@ def generate_assessment_text(report: dict[str, Any]) -> str:
         scene = f.get("scene_number") or "?"
         by_scene[scene].append(f)
 
-    for scene_num in sorted(by_scene, key=lambda x: int(x) if x.isdigit() else 999):
+    for scene_num in sorted(by_scene, key=_scene_sort_key):
         scene_findings = by_scene[scene_num]
         lines.append(f"--- Scene {scene_num} ({len(scene_findings)} finding(s)) ---")
         for f in scene_findings:
@@ -369,7 +396,7 @@ def generate_assessment_text(report: dict[str, Any]) -> str:
 
     meta = report.get("metadata", {})
     lines.append(
-        f"Generated by eKI v{meta.get('engine_version', '0.6.0')} | "
+        f"Generated by eKI v{meta.get('engine_version', __version__)} | "
         f"Taxonomy v{meta.get('taxonomy_version', '1.0')} | "
         f"Processing time: {report.get('processing_time_seconds', 0):.1f}s"
     )

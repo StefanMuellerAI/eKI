@@ -21,7 +21,7 @@ from jsonschema.exceptions import ValidationError as JSONSchemaValidationError
 from core.exceptions import LLMException
 from core.metrics import observe_llm_call
 from core.prompt_sanitizer import PromptSanitizer
-from llm.base import BaseLLMProvider
+from llm.base import BaseLLMProvider, decode_json_body, require_field
 
 logger = logging.getLogger(__name__)
 
@@ -91,8 +91,7 @@ class MistralCloudProvider(BaseLLMProvider):
                         },
                     )
                     response.raise_for_status()
-                    result = response.json()
-                    return result["choices"][0]["message"]["content"]
+                    return self._message_content(response)
 
         except httpx.HTTPError as e:
             logger.error(f"Mistral Cloud API error: {e}")
@@ -228,7 +227,7 @@ class MistralCloudProvider(BaseLLMProvider):
                         },
                     )
                     response.raise_for_status()
-                    result = response.json()
+                    content = self._message_content(response)
         except httpx.HTTPError as e:
             logger.error(f"Mistral Cloud structured API error: {e}")
             raise LLMException(
@@ -236,7 +235,24 @@ class MistralCloudProvider(BaseLLMProvider):
                 details={"provider": "mistral_cloud"},
             )
 
-        return (result["choices"][0]["message"]["content"] or "").strip()
+        return content.strip()
+
+    def _message_content(self, response: httpx.Response) -> str:
+        """Extract ``choices[0].message.content`` or raise ``LLMException``.
+
+        A ``null`` content (e.g. an empty completion) is returned as ``""``;
+        a non-JSON body, missing/empty ``choices`` or a non-string content is
+        a malformed envelope.
+        """
+        result = decode_json_body(response, provider=self.provider_name, label="Mistral Cloud")
+        content: str | None = require_field(
+            result,
+            ("choices", 0, "message", "content"),
+            provider=self.provider_name,
+            label="Mistral Cloud",
+            expected=(str, type(None)),
+        )
+        return content or ""
 
     @staticmethod
     def _parse_json(text: str) -> dict[str, Any]:

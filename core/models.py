@@ -1,11 +1,13 @@
 """Pydantic models for API request/response schemas."""
 
 import base64
+import codecs
 import ipaddress
 import re
+import unicodedata
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, ClassVar, Literal
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -134,9 +136,39 @@ class ParsedScript(BaseModel):
 
 # Request Models
 
+# Only the head of an FDX upload is sniffed at the API boundary; the parser
+# validates the full document later.
+_FDX_SNIFF_BYTES = 1000
+_INT32_MIN, _INT32_MAX = -(2**31), 2**31 - 1
+
+
+def check_script_bytes(decoded: bytes, fmt: ScriptFormat) -> None:
+    """Cheap content sniffing shared by the JSON and multipart paths.
+
+    Raises ``ValueError`` (turned into a 422 by the router) when the bytes
+    obviously do not match the declared format.
+    """
+    if fmt == ScriptFormat.FDX:
+        head = decoded[:_FDX_SNIFF_BYTES]
+        if b"\x00" in head:
+            raise ValueError("FDX script contains invalid null bytes")
+        try:
+            # final=False: a multi-byte character cut at the sniff boundary is
+            # valid UTF-8, only real decoding errors are rejected.
+            codecs.getincrementaldecoder("utf-8")().decode(head, final=False)
+        except UnicodeDecodeError:
+            raise ValueError("FDX script does not appear to be valid text")
+    elif fmt == ScriptFormat.PDF:
+        if not decoded.startswith(b"%PDF"):
+            raise ValueError("File does not appear to be a valid PDF")
+
 
 class SecurityCheckRequest(BaseModel):
     """Request model for security check endpoint."""
+
+    # Limit on the *decoded* script (JSON path).  ``None`` disables it for
+    # subclasses whose size is enforced elsewhere (multipart uploads).
+    max_decoded_script_bytes: ClassVar[int | None] = 10 * 1024 * 1024
 
     script_content: str = Field(
         ...,
@@ -154,21 +186,31 @@ class SecurityCheckRequest(BaseModel):
     )
     script_id: int | None = Field(
         None,
+        ge=_INT32_MIN,
+        le=_INT32_MAX,
         description=(
             "eProjekt document ID of the script/treatment being analyzed. "
             "Passed back to ePro on push delivery so ePro can correlate the "
-            "assessment with the correct document version. Use -1 if unknown."
+            "assessment with the correct document version. Use -1 if unknown. "
+            "32-bit signed integer."
         ),
     )
     callback_url: HttpUrl | None = Field(
         None, description="Optional callback URL for async results"
     )
-    delivery: str = Field(
-        default="pull", description="Delivery mode: 'pull' (One-Shot GET) or 'push' (POST to ePro)"
+    delivery: Literal["pull", "push"] = Field(
+        default="pull",
+        description=(
+            "Delivery mode: 'pull' (One-Shot GET) or 'push' (POST to ePro). "
+            "Case-insensitive and whitespace-tolerant; blank means the default 'pull'."
+        ),
     )
     idempotency_key: str | None = Field(
         None,
-        description="Optional idempotency key to prevent duplicate jobs",
+        description=(
+            "Optional idempotency key to prevent duplicate jobs. An empty string is "
+            "treated like an absent key; control characters are rejected."
+        ),
         max_length=255,
     )
     metadata: dict[str, Any] = Field(
@@ -189,26 +231,35 @@ class SecurityCheckRequest(BaseModel):
         except base64.binascii.Error:
             raise ValueError("Invalid base64 encoding")
 
-        # Check decoded size (10MB limit)
-        max_size = 10 * 1024 * 1024
-        if len(decoded) > max_size:
+        max_size = self.max_decoded_script_bytes
+        if max_size is not None and len(decoded) > max_size:
             raise ValueError(f"Decoded script exceeds {max_size} byte limit")
 
-        # Format-specific validation
-        if fmt == ScriptFormat.FDX:
-            # FDX is XML text -- validate no null bytes and valid UTF-8
-            if b"\x00" in decoded[:1000]:
-                raise ValueError("FDX script contains invalid null bytes")
-            try:
-                decoded[:1000].decode("utf-8")
-            except UnicodeDecodeError:
-                raise ValueError("FDX script does not appear to be valid text")
-        elif fmt == ScriptFormat.PDF:
-            # PDF is binary -- just check it starts with %PDF
-            if not decoded[:5].startswith(b"%PDF"):
-                raise ValueError("File does not appear to be a valid PDF")
-
+        check_script_bytes(decoded, fmt)
         return self
+
+    @field_validator("delivery", mode="before")
+    @classmethod
+    def normalize_delivery(cls, v: Any) -> Any:
+        """Accept ``" PUSH "`` etc.; a blank value falls back to the default ``pull``."""
+        if isinstance(v, str):
+            return v.strip().lower() or "pull"
+        return v
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_idempotency_key(cls, v: str | None) -> str | None:
+        """Normalise ``""`` to ``None`` and reject control characters.
+
+        ``""`` used to be stored as a real key while being treated as "no key"
+        by the router, so a second request with ``""`` hit the unique
+        constraint (503).  NUL cannot be stored in PostgreSQL at all.
+        """
+        if v is None or v == "":
+            return None
+        if any(unicodedata.category(ch) == "Cc" for ch in v):
+            raise ValueError("idempotency_key must not contain control characters")
+        return v
 
     @field_validator("callback_url")
     @classmethod
@@ -296,6 +347,26 @@ class SecurityCheckRequest(BaseModel):
 
 class AsyncSecurityCheckRequest(SecurityCheckRequest):
     """Request model for async security check endpoint."""
+
+    priority: int = Field(default=5, ge=1, le=10, description="Job priority (1=highest, 10=lowest)")
+
+
+class UploadSecurityCheckRequest(SecurityCheckRequest):
+    """Validation model for multipart/form-data uploads (not part of the JSON schema).
+
+    Same field rules and content sniffing as the JSON body.  ``script_content``
+    is the base64 of the uploaded file; its size is enforced on the raw upload
+    (``MAX_UPLOAD_SIZE_BYTES``) by the router, so the JSON base64-length limit
+    does not apply here.
+    """
+
+    max_decoded_script_bytes: ClassVar[int | None] = None
+
+    script_content: str = Field(..., min_length=1, description="Base64 of the uploaded file")
+
+
+class UploadAsyncSecurityCheckRequest(UploadSecurityCheckRequest):
+    """Multipart counterpart of :class:`AsyncSecurityCheckRequest`."""
 
     priority: int = Field(default=5, ge=1, le=10, description="Job priority (1=highest, 10=lowest)")
 

@@ -1,3 +1,8 @@
+> **Veraltet** – Audit des M01-Stands vom 30.01.2026, wird nicht fortgeschrieben; die
+> beschriebenen Befunde und Code-Ausschnitte entsprechen nicht dem heutigen Code. Maßgeblich
+> sind [DATENSCHUTZ.md](DATENSCHUTZ.md), [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) und der
+> spätere Audit [SECURITY_AUDIT_2026-02-06.md](SECURITY_AUDIT_2026-02-06.md) (ebenfalls historisch).
+
 # 🔒 Security Audit Report - eKI API
 
 **Audit Date:** 30. Januar 2026

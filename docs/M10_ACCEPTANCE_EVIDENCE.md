@@ -1,3 +1,10 @@
+> **Historischer Nachweis** (Stand 16.09.2026, M10). Beschreibt den damaligen Stand und wird
+> nicht fortgeschrieben. Aktueller Stand: [M10_FAILOVER_RUNBOOK.md](M10_FAILOVER_RUNBOOK.md),
+> [EPRO_INTEGRATION_GUIDE.md](EPRO_INTEGRATION_GUIDE.md), [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md).
+> Seit M10 sind weitere Migrationen hinzugekommen: `a7c9e1f3b5d2` (verlängert
+> `job_metadata.status`; ohne sie scheiterte auf PostgreSQL das Setzen von `delivering`) und
+> `b8d0f2a4c6e3` (aktueller Head, KB-Dedupe pro Mandant).
+
 # M10 Acceptance Evidence – Outbound-Adapter Hardening (Push/Pull)
 
 Belegsammlung für die Trello-Karte „M10 – Outbound-Adapter Hardening".
@@ -100,7 +107,7 @@ nicht zustellbar, Worker-Ausfall mid-delivery, Redis-Ausfall, doppelte Einreichu
 ## 7. Manuelle Smoke-Prüfung
 
 ```bash
-docker compose exec api alembic upgrade head          # f1a2b3c4d5e6 (head)
+docker compose exec api alembic upgrade head          # damals f1a2b3c4d5e6 (head), heute b8d0f2a4c6e3
 docker compose exec api python scripts/create_api_key.py --insert --admin
 curl -sH "Authorization: Bearer $EKI_ADMIN_KEY" localhost:8000/v1/ops/summary | jq
 # Push gegen nicht erreichbares ePro (EPRO_BASE_URL auf Dummy setzen), Job starten,

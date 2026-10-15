@@ -85,7 +85,9 @@ async def readiness_check(
     # Check Temporal – connect and perform a real RPC health check
     try:
         settings = get_settings()
-        client = await TemporalClient.connect(settings.temporal_host)
+        client = await TemporalClient.connect(
+            settings.temporal_host, namespace=settings.temporal_namespace
+        )
         await client.service_client.check_health()
         services_status["temporal"] = True
     except Exception:

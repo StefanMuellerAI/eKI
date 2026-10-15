@@ -10,6 +10,7 @@ from fastapi import status
 
 from core.db_models import ApiKeyModel, JobMetadata, ReportMetadata
 from core.prompt_sanitizer import PromptSanitizer
+from tests.conftest import store_report_package
 
 
 class TestAuthentication:
@@ -245,11 +246,14 @@ class TestAuthorization:
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.asyncio
-    async def test_one_shot_report_retrieval(self, client, db_session, auth_headers):
+    async def test_one_shot_report_retrieval(self, client, db_session, auth_headers, mock_redis):
         """Test that reports can only be retrieved once."""
         # User 1 creates a report
         report_id = uuid4()
         job_id = uuid4()
+        ref_key = await store_report_package(
+            mock_redis, report_id=report_id, project_id="user1-project"
+        )
         report = ReportMetadata(
             report_id=report_id,
             job_id=job_id,
@@ -260,6 +264,7 @@ class TestAuthorization:
             is_retrieved=False,
             total_findings=5,
             processing_time_seconds=1.5,
+            report_ref_key=ref_key,
         )
         db_session.add(report)
         await db_session.commit()

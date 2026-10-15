@@ -1,5 +1,17 @@
 # M10 – Failover-Runbook: Outbound-Zustellung (Push/Pull)
 
+> **Revisionshinweis (15.10.2026).** Die Szenarien gelten weiter. Ergänzt bzw. korrigiert:
+> Auf PostgreSQL funktioniert der Zustand `delivering` erst ab Migration `a7c9e1f3b5d2`
+> (vorher zu kurze Statusspalte). Die Temporal-UI ist in Produktion nicht veröffentlicht
+> (Zugriff per Tunnel, `OPERATIONS_GUIDE.md`). `last_error_type` in Dead Letters wird derzeit
+> nie befüllt (§2.7). Ein Report, der nicht mehr im Buffer liegt, liefert beim Abruf 410
+> (§2.4); fehlt er beim Push, endet die Zustellung sofort mit dem neuen Grund `report_expired`
+> statt erst nach 6 h. Weitere neue Gründe: `invalid_project_id` (Push-Schutz). Jobs mit
+> `failed` **ohne** Präfix `delivery_failed:` sind keine Zustellstörung, sondern eine
+> abgebrochene Verarbeitung (fail-closed: Parsing, LLM-Fehler, Prompt-Injection-Filter); der
+> Webhook meldet sie mit `prompt_blocked`, `parsing_failed` oder `processing_failed`, ein Dead
+> Letter entsteht nicht – dafür gilt dieses Runbook nicht.
+
 Betriebsanleitung für Störungen der Zustellung an ePro. Ergänzt
 `docs/M09_SLO.md` (Alerts) und `docs/EPRO_INTEGRATION_GUIDE.md` (Kontrakt).
 
@@ -20,6 +32,8 @@ pending ──(aggregate_report ok)──▶ delivering ──(Push 2xx | One-Sh
 
 Persistiert in `job_metadata`: `delivery_status`, `delivery_attempts`,
 `delivery_last_status_code`, `delivery_last_attempt_at`, `delivered_at`.
+Im Pull-Modus steht `delivery_status` nach `delivering` wieder auf `pending`, sobald der Report
+bereitliegt, und wechselt mit dem One-Shot-GET auf `delivered`.
 Dead Letters in `delivery_dead_letters` (inhaltsarm).
 
 **Wichtig:** Nach `dead_lettered` existiert der Report nicht mehr in der eKI
@@ -39,10 +53,11 @@ Verhalten: Temporal retried automatisch (2 s → 10 min Backoff) bis 6 h.
 Kein manueller Eingriff nötig, solange ePro innerhalb des Fensters zurückkommt.
 
 Maßnahmen:
-1. ePro-Erreichbarkeit aus dem Worker-Container prüfen:
-   `docker compose exec worker python -c "import httpx;print(httpx.get('https://staging.epro.filmakademie.de/api/health',timeout=10).status_code)"`
+1. ePro-Erreichbarkeit aus dem Worker-Container prüfen (jeder HTTP-Status zeigt Erreichbarkeit,
+   eine Exception nicht):
+   `docker compose exec worker python -c "import os,httpx;print(httpx.get(os.environ['EPRO_BASE_URL'],timeout=10).status_code)"`
 2. Laufende Zustellungen einsehen: `GET /v1/ops/jobs?delivery_status=delivering` (Admin-Key).
-3. Temporal UI (`:8080`): Workflow `job_id` → Pending Activities → `deliver_report` mit Attempt-Zähler.
+3. Temporal UI (Entwicklung `:8080`, Produktion nur per Tunnel): Workflow `job_id` → Pending Activities → `deliver_report` mit Attempt-Zähler.
 4. Ist ePro > 6 h down: Dead Letters sammeln sich (Szenario 2.3); nach Wiederanlauf mit ePro-Team die betroffenen `project_id`s neu anstoßen.
 
 ### 2.2 ePro antwortet 4xx (außer 408/425/429)
@@ -76,6 +91,8 @@ Erkennung: `reason=pull_ttl_expired`, Job `failed` mit
 
 Ursache: ePro pollt den Job-Status nicht oder ignoriert `report_id`.
 Maßnahmen: ePro-Polling prüfen (Guide §3), ggf. auf `delivery=push` wechseln.
+Ruft ePro den Report danach doch noch ab, antwortet die API mit 410 („Report is no longer
+available …“); Job-Status und Dead Letter bleiben unverändert.
 
 ### 2.5 Webhook nicht zustellbar
 
@@ -93,10 +110,13 @@ kein Doppel-Push ohne `Idempotency-Key`-Wiederholung. Prüfen: `EkiWorkerDown`.
 
 ### 2.7 Redis-Ausfall
 
-Report-Inhalte liegen ausschließlich in Redis. Bei Verlust vor Zustellung
-schlägt `buffer.retrieve` fehl → Transport-Fehler → Retry; nach 6 h Dead Letter
-(`last_error_type` z. B. `ConnectionError`). Redis-Persistenz (`appendonly`)
-im Prod-Compose aktivieren; Recovery = ePro triggert neu.
+Report-Inhalte liegen ausschließlich in Redis. Ist Redis nicht erreichbar, scheitert der
+Push-Versuch → Retry bis 6 h, danach Dead Letter `retry_window_exhausted`. Sind die Daten
+verloren (Redis ohne Persistenz neu gestartet), endet die Zustellung beim nächsten Versuch
+sofort mit `report_expired`. `last_error_type` bleibt leer, die Ursache steht in den
+Worker-Logs. Redis-Persistenz (`appendonly`) ist im Prod-Compose aktiv; Recovery = ePro
+triggert neu. Ist Redis bei einem Pull-Abruf nicht erreichbar, antwortet
+`GET /v1/security/reports/{id}` mit 503; der Report bleibt abrufbar.
 
 ### 2.8 Doppelte Einreichung (Idempotenz)
 

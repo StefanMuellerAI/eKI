@@ -1,3 +1,10 @@
+> **Historischer Nachweis** (Stand 16.09.2026, M11). Beschreibt den damaligen Stand und wird
+> nicht fortgeschrieben. Aktueller Stand: [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md),
+> [M11_PARITY_REPORT.md](M11_PARITY_REPORT.md), [LLM_INTEGRATION.md](LLM_INTEGRATION.md).
+> Korrektur: „keine Host-Ports für Infra, keine Bind-Mounts" (§4) traf erst mit der Änderung vom
+> 15.10.2026 zu (`!reset` in `docker-compose.prod.yml`); vorher wurden die Listen mit der
+> Basisdatei zusammengeführt, der Quellcode des Hosts eingebunden und die Temporal-UI veröffentlicht.
+
 # M11 Acceptance Evidence – Lokaler LLM-Adapter & Paritätstests
 
 Belegsammlung für die Trello-Karte „M11 – Lokaler LLM-Adapter & Paritätstests".
@@ -50,9 +57,9 @@ Paritätsangleichung der Provider:
 
 ## 3. Paritäts-Harness
 
-- Golden-Set: 16 synthetische Szenen (23-Klassen-Taxonomie abgedeckt: Feuer, Höhe, Fahrzeuge,
-  Waffen, Wasser, Tiere, Wetter/Ermüdung, Menge, Elektrik, Enge/Staub, Gewalt/Trauma, Intimität,
-  Tod/Trauer, Diskriminierung) + 2 Negativkontrollen.
+- Golden-Set: 16 synthetische Szenen, davon 14 mit erwarteten Risikoklassen (abgedeckt: Feuer,
+  Höhe, Fahrzeuge, Waffen, Wasser, Tiere, Wetter/Ermüdung, Menge, Elektrik, Enge/Staub,
+  Gewalt/Trauma, Intimität, Tod/Trauer, Diskriminierung) und 2 Negativkontrollen.
 - Kennzahlen und Schwellen: siehe `docs/M11_PARITY_REPORT.md` §1.
 - Ausgabe JSON + Markdown nach `tests/reports/` (git-ignoriert); Exit-Code = Verdikt.
 - **Der reale Lauf benötigt die Zielhardware bzw. Stage-Cloud-Zugang** und ist im Report als

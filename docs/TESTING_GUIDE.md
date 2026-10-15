@@ -1,346 +1,373 @@
-# eKI API Testing Guide
+# eKI API – Testleitfaden
 
-This guide covers running tests for the eKI API.
-
-## 📋 Test Coverage
-
-### Test Files
-
-- **tests/test_api.py** - API endpoint tests (health, security endpoints, validation)
-- **tests/test_security.py** - Security feature tests (authentication, authorization, IDOR, input validation, prompt injection)
-- **tests/test_workflows.py** - Temporal workflow tests
-- **tests/conftest.py** - Test fixtures and configuration
-
-### Security Tests
-
-The `tests/test_security.py` file contains comprehensive security tests:
-
-#### Authentication Tests
-- Missing authorization header
-- Invalid authorization format
-- Empty token
-- Invalid API key
-- Expired API key
-- Inactive API key
-- Valid API key
-
-#### Authorization Tests (IDOR Prevention)
-- User cannot access other users' jobs
-- User can access their own jobs
-- User cannot access other users' reports
-- One-shot report retrieval enforcement
-
-#### Input Validation Tests
-- Invalid base64 rejection
-- Script size limit enforcement (10MB)
-- SSRF prevention (private IP blocking)
-- SSRF prevention (domain whitelisting)
-- SQL injection prevention in project_id
-- Metadata field limits
-
-#### Prompt Injection Tests
-- Dangerous pattern detection
-- Safe prompt acceptance
-- Prompt sanitization
-- Prompt truncation
-- System prompt locking
+Wie die eKI getestet wird, welche Testebenen es gibt, wie man sie lokal ausführt und
+was die CI prüft. Stand: Release 1.0.0. Aktuelle Zahlen: Abschnitt [Kennzahlen](#9-kennzahlen).
 
 ---
 
-## 🚀 Running Tests
+## 1. Testebenen im Überblick
 
-### Option 1: Local (Recommended)
+| Ebene | Was wird geprüft | Infrastruktur | Wo |
+|---|---|---|---|
+| Unit/Komponente (Default) | Parser, Taxonomie, Reports, Provider, API-Routen, Activities, Workflows mit Stubs | SQLite in-memory, `MockRedis`, `MockTemporalClient`, gemocktes LLM | `pytest` |
+| PostgreSQL-Modus | dieselbe Suite gegen den echten Dialekt + Migrationen, pgvector-KB, Zustell-Bookkeeping | PostgreSQL 16 + pgvector (`TEST_POSTGRES_URL`) | `pytest`, CI |
+| Temporal-Tests (Marker `temporal`) | echte Workflows auf dem Time-Skipping-Testserver (6-h-Fenster, Pull-Watch, Fehlerzweige) | Temporal-Testserver (Download beim ersten Lauf) | `pytest` |
+| E2E-Pipeline | API → Workflow → echte Activities → Redis → Zustellung, LLM nur an der Provider-Grenze ersetzt | Temporal-Testserver + echtes Redis (`TEST_REDIS_URL`) | `tests/test_e2e_pipeline.py` |
+| OCR (Marker `ocr`) | Tesseract-Fallback für Scan-Seiten | `tesseract` mit `deu`+`eng` | `tests/test_pdf_ocr.py` |
+| Vertrag | laufende App ↔ `openapi/eki-api-v1.0.yaml`; Spec-Lint | – / Node.js | `tests/test_m12_openapi_contract.py`, Spectral |
+| Abnahme gegen laufenden Stack | Abnahmetests AT2–AT7, Prod-Smoke (AT9), Parität, Großdokument | Docker-Stack, ePro-Mock | `scripts/uat/`, `scripts/smoke_prod.py`, `scripts/run_parity.py`, `tests/run_*.py` |
 
-```bash
-# 1. Create virtual environment
-python -m venv venv
-source venv/bin/activate  # or `venv\Scripts\activate` on Windows
-
-# 2. Install dependencies with dev extras
-pip install -e ".[dev]"
-
-# 3. Run tests
-pytest tests/ -v --cov
-
-# Or use the test runner script
-./scripts/run_tests.sh
-```
-
-### Option 2: Docker Container
-
-```bash
-# Build with dev dependencies
-docker build -f docker/Dockerfile -t eki-api:test \
-  --build-arg INSTALL_DEV=true .
-
-# Run tests in container
-docker run --rm eki-api:test pytest tests/ -v
-
-# Or exec into running container
-docker compose exec api bash
-pip install -e ".[dev]"
-python -m pytest tests/ -v
-```
-
-### Option 3: Quick Test Runner Script
-
-```bash
-# Run all tests with coverage
-./scripts/run_tests.sh
-
-# Run specific test file
-./scripts/run_tests.sh tests/test_security.py
-
-# Run specific test class
-./scripts/run_tests.sh tests/test_security.py::TestAuthentication
-
-# Run specific test
-./scripts/run_tests.sh tests/test_security.py::TestAuthentication::test_valid_api_key_success
-```
+pytest sammelt nur `tests/test_*.py`. Die Skripte `tests/run_*.py`,
+`tests/build_large_fixture.py` und `tests/generate_pdf_fixtures.py` sind Werkzeuge,
+keine Tests (§6.4).
 
 ---
 
-## 📊 Test Results
+## 2. Einrichtung
 
-### Expected Output
+Python 3.11 wie CI und Docker-Images (3.13 funktioniert ebenfalls). Abhängigkeiten
+immer mit der Lock-Datei als Constraint installieren:
 
-```
-============================= test session starts ==============================
-tests/test_api.py::TestHealthEndpoints::test_health_check PASSED          [  5%]
-tests/test_api.py::TestHealthEndpoints::test_readiness_check PASSED       [ 10%]
-tests/test_api.py::TestSecurityEndpoints::test_sync_check_success PASSED  [ 15%]
-...
-tests/test_security.py::TestAuthentication::test_missing_authorization_header PASSED
-tests/test_security.py::TestAuthentication::test_invalid_api_key PASSED
-tests/test_security.py::TestAuthorization::test_idor_job_access_prevention PASSED
-tests/test_security.py::TestInputValidation::test_ssrf_private_ip_blocked PASSED
-...
+```bash
+python3.11 -m venv .venv && . .venv/bin/activate
+pip install --upgrade pip
+pip install -c requirements-dev.lock -e ".[dev]"
 
----------- coverage: platform linux, python 3.11.x -----------
-Name                              Stmts   Miss  Cover   Missing
----------------------------------------------------------------
-api/__init__.py                       0      0   100%
-api/config.py                       137     12    91%   34-38, 142-145
-api/dependencies.py                  85      8    91%   67-74
-api/main.py                          95      5    95%   104-108
-api/rate_limiting.py                 78      5    94%   89-93
-api/routers/security.py             145     12    92%   156-160, 210-215
-core/db_models.py                   125      0   100%
-core/models.py                      189      8    96%   87-94
-core/prompt_sanitizer.py             92      4    96%   145-148
----------------------------------------------------------------
-TOTAL                              1846    104    94%
-
-============================== 35 passed in 2.34s ===============================
+# Systempakete für die OCR-Tests (ohne sie werden diese Tests übersprungen)
+sudo apt-get install -y tesseract-ocr tesseract-ocr-deu tesseract-ocr-eng
 ```
 
-### Coverage Report
+Optional für PostgreSQL-Modus und E2E-Tests (Wegwerf-Container; der Entwicklungs-Stack
+veröffentlicht 5432/6379 nicht, es gibt also keinen Portkonflikt):
 
-After running tests, open `htmlcov/index.html` in your browser to see detailed coverage.
+```bash
+docker run -d --name eki-test-pg -p 5432:5432 \
+  -e POSTGRES_DB=eki_test -e POSTGRES_USER=eki_user -e POSTGRES_PASSWORD=eki_password \
+  pgvector/pgvector:pg16
+docker run -d --name eki-test-redis -p 6379:6379 redis:7-alpine
+```
+
+Der DB-Nutzer braucht das Recht `CREATEDB` (die Migrationstests legen eigene
+Wegwerf-Datenbanken `<db>_mig_<hex>` an und verbinden sich dafür mit der Datenbank
+`postgres`) und die Extension `vector` – beides erfüllt der Superuser des
+`pgvector`-Images.
 
 ---
 
-## 🧪 Writing New Tests
+## 3. Tests ausführen
 
-### Test Structure
-
-```python
-import pytest
-from fastapi import status
-
-
-class TestNewFeature:
-    """Tests for new feature."""
-
-    @pytest.mark.asyncio
-    async def test_success_case(self, client, auth_headers):
-        """Test successful case."""
-        response = client.get("/endpoint", headers=auth_headers)
-        assert response.status_code == status.HTTP_200_OK
-
-    def test_failure_case(self, client):
-        """Test failure case."""
-        response = client.get("/endpoint")
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+```bash
+pytest                                  # ganze Suite, SQLite-Modus, mit Coverage (addopts)
+pytest --no-cov -q                      # schneller, wie der erste CI-Testschritt
+pytest -m "not temporal"                # offline: ohne Temporal-Testserver-Download
+pytest -m "not temporal and not ocr"    # zusätzlich ohne Tesseract
+pytest -m temporal                      # nur Temporal-Tests
+pytest tests/test_security.py::TestAuthentication -v
+pytest -x --pdb tests/test_reports.py   # beim ersten Fehler in den Debugger
+tests/scripts/run_tests.sh [pytest-Argumente]   # Wrapper mit Coverage-HTML (htmlcov/)
 ```
 
-### Available Fixtures
+`tests/scripts/run_tests.sh` installiert vorab `.[dev]` **ohne** Lock-Constraint und kann
+damit Pakete der venv verändern; in einer per Lock-Datei eingerichteten venv lieber
+`pytest` direkt aufrufen.
 
-- **client** - TestClient for synchronous requests
-- **async_client** - AsyncClient for async requests
-- **db_session** - Database session for test data
-- **auth_headers** - Valid authentication headers (user 1)
-- **auth_headers_user2** - Valid authentication headers (user 2)
-- **test_api_key** - Test API key (plaintext + model)
-- **test_api_key_user2** - Test API key for user 2
+**PostgreSQL-Modus mit echtem Redis** (entspricht dem zweiten CI-Testschritt):
 
-### Creating Test Data
-
-```python
-@pytest.mark.asyncio
-async def test_with_job(self, db_session, test_api_key):
-    """Test with job data."""
-    _, api_key_model = test_api_key
-    
-    # Create test job
-    job = JobMetadata(
-        job_id=uuid4(),
-        project_id="test-project",
-        script_format="fdx",
-        status="completed",
-        user_id=api_key_model.user_id,
-        priority=5,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
-    )
-    
-    db_session.add(job)
-    await db_session.commit()
-    
-    # Test with job...
+```bash
+export TEST_POSTGRES_URL=postgresql+asyncpg://eki_user:eki_password@localhost:5432/eki_test
+export DATABASE_URL=$TEST_POSTGRES_URL
+export TEST_REDIS_URL=redis://localhost:6379/4
+export REDIS_URL=redis://localhost:6379/0
+export ENV=test
+pytest --cov --cov-report=term-missing --cov-fail-under=95
 ```
+
+> **Achtung:** Die Datenbank hinter `TEST_POSTGRES_URL` wird zu Beginn der Session
+> geleert (`drop_all`/`create_all`), die Redis-DB hinter `TEST_REDIS_URL` vor und nach
+> jedem E2E-Test (`FLUSHDB`; DB 0 wird verweigert). Nie auf echte Daten zeigen lassen.
+
+**Migrationen wie in der CI** (gegen dieselbe Wegwerf-DB):
+
+```bash
+export DATABASE_URL=postgresql+asyncpg://eki_user:eki_password@localhost:5432/eki_test ENV=test
+alembic upgrade head && alembic check && alembic downgrade base && alembic upgrade head
+```
+
+**Coverage:** `pyproject.toml` misst `api`, `core`, `services`, `workflows`, `parsers`,
+`llm` (greenlet-fähig, sonst fehlen Zeilen nach DB-Aufrufen). Die Schwelle
+`--cov-fail-under=95` setzt nur die CI im PostgreSQL-Lauf; lokal gibt es kein Gate.
 
 ---
 
-## 🎯 Test Categories
+## 4. Die Ebenen im Detail
 
-### Unit Tests
-Test individual functions and classes in isolation.
+### 4.1 Unit-/Komponententests (Default)
+
+`tests/conftest.py` stellt die gemeinsame Umgebung:
+
+| Fixture / Hilfsobjekt | Zweck |
+|---|---|
+| `test_engine` (Session) | SQLite in-memory, im PG-Modus PostgreSQL |
+| `db_session` | AsyncSession für Testdaten |
+| `client`, `async_client` | FastAPI-Testclient; überschreibt `get_db`, `get_redis`, `get_temporal_client` |
+| `mock_redis` (`MockRedis`) | In-Memory-Redis für SecureBuffer und Rate-Limiting |
+| `mock_temporal` (`MockTemporalClient`) | zeichnet `start_workflow`-Aufrufe auf |
+| `test_api_key`, `test_api_key_user2`, `test_admin_key` | API-Keys in der Test-DB (Klartext + Modell) |
+| `auth_headers`, `auth_headers_user2`, `admin_headers` | passende `Authorization`-Header |
+| `MINIMAL_PDF_BYTES`, `requires_postgres` | minimales gültiges PDF; Skip-Marker für PG-only-Tests |
+
+`conftest.py` setzt außerdem `OMP_THREAD_LIMIT=1` (wie die Docker-Images), damit
+Tesseract unter Last nicht in den Seiten-Timeout läuft.
+
+Das LLM wird in Unit-Tests gemockt (Provider-Objekte oder `httpx.MockTransport`);
+`asyncio_mode = "auto"`, async-Tests brauchen keinen Marker.
+
+**Der blinde Fleck von SQLite.** SQLite erzwingt keine `VARCHAR(n)`-Längen und liefert
+Zeitstempel ohne Zeitzone. Genau das hat zwei Produktionsfehler verdeckt, die die
+SQLite-Suite grün ließ:
+
+- `JobStatus.DELIVERING` (10 Zeichen) passte nicht in die Spalte `VARCHAR(9)` – auf
+  PostgreSQL scheiterte jeder asynchrone Job in der Zustellphase
+  (`value too long for type character varying(9)`; behoben mit Migration `a7c9e1f3b5d2`).
+- naive Zeitstempel: Auf einem Host außerhalb von UTC blieben abgelaufene API-Keys
+  stundenlang gültig.
+
+Außerdem kann SQLite `JSONB` und `vector(1024)` nicht abbilden; die KB-Tabellen fehlen
+dort ganz (so blieb auch der global statt je Mandant eindeutige `content_hash` unentdeckt,
+behoben mit Migration `b8d0f2a4c6e3`). Deshalb läuft die CI die komplette Suite zusätzlich im PostgreSQL-Modus mit
+Coverage-Gate. `tests/test_db_dialect_regressions.py` hält beide Fehler fest – die Tests
+laufen auch auf SQLite, unterscheiden aber nur auf PostgreSQL.
+`tests/test_api_consistency.py` sichert weitere Übergabe-Korrekturen ab (`request_id` in
+jeder Fehlerantwort, gleicher Temporal-Namespace für API und Worker, echte
+`engine_version` im Report).
+
+### 4.2 PostgreSQL-Modus (`TEST_POSTGRES_URL`)
+
+Mit gesetzter Variable legt `conftest.py` die Extension `vector` an, löscht und erzeugt
+das Schema aus `core/db_models.py` (`Base.metadata`) und führt **dieselbe Suite** gegen
+PostgreSQL aus (NullPool, eine Session je Request). Zusätzlich laufen nur dann:
+
+- `tests/test_pg_integration.py`: Alembic `upgrade head` auf leerer DB, Drift-Prüfung
+  gegen `core/db_models.py` (wie `alembic check`), vollständiges Downgrade/Re-Upgrade,
+  die Verbreiterung von `job_metadata.status`; KB-Service auf echtem pgvector (Ingest,
+  Dedupe, Chunking, Cosine-Ranking, Mandantentrennung, Tags, TTL-Cleanup, Verschlüsselung
+  der Originale); `/v1/kb`-Endpunkte ohne Mocks; Zustell-Bookkeeping.
+- mit `@requires_postgres` markierte Einzeltests anderer Dateien.
+
+Ohne die Variable werden diese Tests übersprungen.
+
+### 4.3 Temporal-Tests (Marker `temporal`)
+
+`tests/test_m10_workflow_failover.py`, `tests/test_m09_context_propagation_e2e.py`,
+`tests/test_cov_security_check_workflow.py` und `tests/test_e2e_pipeline.py` starten den
+Time-Skipping-Testserver des Temporal-SDK (`WorkflowEnvironment.start_time_skipping()`).
+Er wird beim **ersten** Lauf heruntergeladen und danach zwischengespeichert – einmal
+Netzzugang nötig. Offline: `pytest -m "not temporal"`. Durable Timer (6-h-Retry-Fenster,
+Pull-TTL) laufen dort in Sekunden ab.
+
+### 4.4 E2E-Pipeline (`tests/test_e2e_pipeline.py`)
+
+Läuft den echten Produktionspfad in einem Prozess: HTTP-API (echte API-Key-Prüfung) →
+Temporal-Workflow über `worker/main.py:main()` (echte Registrierung) → echte Activities
+und Parser auf `tests/fixtures/` → **echter SecureBuffer auf echtem Redis** → Zustellung
+per One-Shot-GET (Pull) oder Multipart-POST an einen lokalen ePro-Mock (Push, inkl.
+Webhook). Ersetzt ist nur das LLM, durch einen deterministischen Fake an der Grenze
+`llm.factory.get_llm_provider`.
+
+Nachgewiesen werden u. a. AT2 (Push + Delete-on-Delivery), AT3 (Pull One-Shot, danach
+410), AT4 (4xx-Hard-Fail mit Dead Letter und Webhook), AT5 (Idempotenz),
+Verarbeitungsfehler, der synchrone Endpunkt und die Invariante „Temporal sieht nur
+Referenzschlüssel, keinen Inhalt“.
+
+Voraussetzung: Redis unter `TEST_REDIS_URL` (Default `redis://localhost:6379/4`). Ist es
+nicht erreichbar, wird das Modul übersprungen. Datenbank: wie die Suite (SQLite oder
+PostgreSQL).
+
+### 4.5 Grenzfälle und Lückentests
+
+- `tests/test_edge_api.py`: Größen- und Kodierungsgrenzen, Header, SSRF-Filter für
+  `callback_url`, UUID-Pfade, Bearer-Parsing, Rate-Limiting, One-Shot-Vertrag,
+  Fehler-Envelope.
+- `tests/test_edge_parsers_and_services.py`: FDX/Secure-XML/Scene-Heading, PDF-Split,
+  Prompt-Sanitizer, SecureBuffer, Report-Generator, Taxonomie.
+- `tests/test_cov_*.py`: Verhaltenstests für Zweige, die die Meilenstein-Suiten nicht
+  erreichen (Activities, API, LLM-Provider auf Transportebene, Parser, Workflow).
+
+Bekannte, noch nicht behobene Fehler sind dort als `xfail(strict=True)` festgehalten
+(§7); Tests mit Suffix `_documented` halten überraschendes, aber aktuelles Verhalten fest.
+
+### 4.6 OCR-Tests (Marker `ocr`)
+
+`tests/test_pdf_ocr.py` braucht `tesseract` mit den Sprachpaketen `deu` und `eng`
+(siehe §2). Fehlt das Binary oder `pytesseract`, werden die Tests übersprungen, nicht
+rot. Abwählen: `-m "not ocr"`.
+
+### 4.7 Vertragstests (OpenAPI)
+
+`openapi/eki-api-v1.0.yaml` ist der Schnittstellenvertrag. `/openapi.json` der laufenden
+App erzeugt FastAPI selbst (nur mit `DEBUG=true`); `tests/test_m12_openapi_contract.py`
+hält beide deckungsgleich (Routen, Enums, Version gegen `core/version.py`). Lint der Spec
+wie in der CI (Node.js nötig):
 
 ```bash
-pytest tests/ -m unit
-```
-
-### Integration Tests
-Test interactions between components.
-
-```bash
-pytest tests/ -m integration
-```
-
-### Security Tests
-Test security features and protections.
-
-```bash
-pytest tests/test_security.py -v
-```
-
-### API Tests
-Test API endpoints.
-
-```bash
-pytest tests/test_api.py -v
+npx @stoplight/spectral-cli lint openapi/eki-api-v1.0.yaml --ruleset .spectral.yaml --fail-severity=error
 ```
 
 ---
 
-## 🔍 Debugging Tests
+## 5. CI-Pipeline (`.github/workflows/ci.yml`)
 
-### Run with Print Statements
+Läuft bei Push auf `main`/`develop`, bei Pull-Requests dorthin und bei Tags `v*`.
+
+| Job | Inhalt | Blockierend |
+|---|---|---|
+| `lint` | `ruff check .`, `ruff format --check .`; `mypy api core services workflows worker` | Ruff ja; mypy nur beratend (`continue-on-error`) |
+| `security-scan` | Bandit über `api core services workflows worker llm parsers` (bricht ab Schwere *medium*); `safety check` | Bandit ja; Safety beratend |
+| `test` | Dienste `pgvector/pgvector:pg16` + `redis:7-alpine`; Tesseract installieren; `pip install -c requirements-dev.lock -e ".[dev]"`; Migrationszyklus `upgrade head → check → downgrade base → upgrade head`; `pytest --no-cov -q` (SQLite); `pytest` im PostgreSQL-Modus mit echtem Redis und `--cov-fail-under=95`; Coverage-Artefakt + Codecov | ja |
+| `openapi-validation` | Spectral auf `openapi/eki-api-v1.0.yaml`, 0 Errors | ja |
+| `observability-validation` | `promtool check rules`, `amtool check-config`, `docker compose config` für Basis + Observability-Overlay; Prüfung, dass das Prod-Overlay nur Port 8000 veröffentlicht und keinen Quellcode mountet | ja |
+| `docker-build` | baut API- und Worker-Image (nach `lint`, `test`, `security-scan`) | ja |
+| `integration-test` | `.env.example` → `.env.local`, `docker compose up -d --build`, `/health`, `alembic upgrade head` + `alembic check` **im API-Image**, `/docs`; `/ready` und Temporal UI nur informativ | ja |
+| `release-images` | nur bei Tags `v*`: Tag muss `core/version.py` entsprechen; pusht `eki-api`/`eki-worker` (Version + `latest`) nach GHCR | – |
+
+Lokal nachstellen: `ruff check . && ruff format --check .`,
+`bandit -r api core services workflows worker llm parsers -ll -q`,
+`mypy api core services workflows worker`, Spectral (§4.7), Migrationszyklus und
+PostgreSQL-Lauf (§3).
+
+---
+
+## 6. Abnahme- und Lasttests gegen einen laufenden Stack
+
+Diese Werkzeuge brauchen einen gestarteten Docker-Stack (README „Schnellstart“) und
+einen API-Key. Auf dem Host genügt die venv aus §2 (enthält `httpx`, `fastapi`,
+`uvicorn`, `python-multipart`, `redis`, `requests`).
+
+### 6.1 Abnahmetests AT2–AT7 (`scripts/uat/`)
 
 ```bash
-pytest tests/ -v -s  # -s shows print statements
+# 1. ePro-Mock auf dem Host (Terminal 1)
+python scripts/uat/mock_epro_server.py --port 9999
+
+# 2. Nur Linux: host.docker.internal für api/worker bekannt machen
+cat > docker-compose.override.yml <<'EOF'
+services:
+  api:
+    extra_hosts: ["host.docker.internal:host-gateway"]
+  worker:
+    extra_hosts: ["host.docker.internal:host-gateway"]
+EOF
+
+# 3. eKI auf den Mock zeigen lassen -- sonst gehen Push-Jobs an die echte Stage
+#    (docker-compose.yml bildet staging.epro.filmakademie.de per extra_hosts ab).
+#    In .env.local:
+#      EPRO_BASE_URL=http://host.docker.internal:9999/api
+#      EPRO_WEBHOOK_URL=http://host.docker.internal:9999/api/eki/scl/delivery-failed
+docker compose up -d --force-recreate api worker
+
+# 4. Lauf (Terminal 2)
+export EKI_API_URL=http://localhost:8000 EKI_API_KEY=eki_... EKI_ADMIN_KEY=eki_... MOCK_URL=http://localhost:9999
+python scripts/uat/run_acceptance_tests.py --log-cmd "docker compose logs api worker"
+# -> tests/reports/uat_<timestamp>.json und .md (inhaltsfreies Protokoll)
 ```
 
-### Run Specific Test with Debugging
+- Die eigene `docker-compose.override.yml` wird ohne `-f` automatisch geladen. Nicht
+  einfach `docker-compose.override.yml.example` kopieren: das Beispiel setzt
+  `LLM_PROVIDER=ollama`/`OLLAMA_MODEL=mistral` und überschreibt damit `.env.local`.
+- Redis ist nicht auf den Host veröffentlicht, `--redis-url` daher weglassen; der Lauf
+  vermerkt dann den manuellen Buffer-Check:
+  `docker compose exec redis redis-cli --scan --pattern 'eki:buf:*' | wc -l` → `0`.
+- AT6 (Großdokument, bis 120 min) nur mit `--with-large-document`.
+- AT1, AT8, AT9 sind manuelle Schritte: `docs/UAT/UAT_TESTPLAN.md`.
+
+### 6.2 Prod-Smoke (AT9) und Parität
 
 ```bash
-pytest tests/test_security.py::TestAuthentication::test_invalid_api_key -v -s --pdb
+docker compose exec -e EKI_API_KEY=eki_... api \
+  python scripts/smoke_prod.py --worker-metrics http://worker:9090   # RESULT: PASSED
 ```
 
-### Show Full Traceback
+Paritätslauf über das Golden-Set (`tests/parity/golden_scenes.yaml`): im API-Container,
+weil Ollama nur im Docker-Netz erreichbar ist – Kommandos in
+[`OPERATIONS_GUIDE.md`](OPERATIONS_GUIDE.md) §7. Auf dem Host liest
+`scripts/run_parity.py` die Konfiguration aus `.env`/Umgebung (nicht `.env.local`) und
+braucht ein erreichbares `OLLAMA_BASE_URL`. `mistral_cloud` braucht `MISTRAL_API_KEY`
+und ist mit `ENV=production` gesperrt.
+
+### 6.3 Großdokument-Benchmark (AT6)
 
 ```bash
-pytest tests/ -v --tb=long
+python tests/build_large_fixture.py                     # erzeugt tests/fixtures/pdf/large_synthetic_300pp.pdf (liegt bereits bei)
+EKI_API_KEY=eki_... python tests/run_pdf_m07_benchmark.py --concurrency 1
+# -> tests/reports/m07_benchmark_<timestamp>.json + _stats.csv (docker stats)
 ```
 
-### Show Coverage for Specific Module
+### 6.4 Weitere Stack-Runner (`tests/run_*.py`)
 
-```bash
-pytest tests/ --cov=api.dependencies --cov-report=term-missing
-```
+| Skript | Zweck | braucht Stack |
+|---|---|---|
+| `tests/run_pdf_full_pipeline.py` | alle PDF-Fixtures nacheinander durch `check:async` | ja (`EKI_API_KEY`) |
+| `tests/run_pdf_selected.py` | ausgewählte PDFs durch die Pipeline | ja (`EKI_API_KEY`) |
+| `tests/run_security_check.py` | Einzel-PDF prüfen, Report-PDF speichern | ja (`--key`/`EKI_API_KEY`) |
+| `tests/run_pdf_m07_benchmark.py` | Großdokument-Benchmark (§6.3) | ja |
+| `tests/run_pdf_bulk_test.py` | nur Textextraktion + Szenen-Split aller PDF-Fixtures, ohne LLM | nein |
 
----
-
-## ✅ Continuous Integration
-
-### GitHub Actions
-
-The CI pipeline runs tests automatically on every push:
-
-```yaml
-# .github/workflows/test.yml
-name: Tests
-
-on: [push, pull_request]
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-      - run: pip install -e ".[dev]"
-      - run: pytest tests/ -v --cov
-```
+Ausgaben unter `tests/reports/` sind per `.gitignore` ausgeschlossen: Läufe mit echten
+Drehbüchern können Report-Inhalte und Dateinamen enthalten. Hinweis: Die PDF-Fixtures
+enthalten echte Drehbücher der Filmakademie (Freigabe-/Rechtefrage beim Auftraggeber,
+siehe `DATENSCHUTZ.md`).
 
 ---
 
-## 📈 Coverage Goals
+## 7. Konventionen für neue Tests
 
-| Component | Goal | Current |
-|-----------|------|---------|
-| API | 95% | ✅ 94% |
-| Core | 95% | ✅ 96% |
-| Services | 90% | 🔄 TBD |
-| Workflows | 85% | 🔄 TBD |
-
----
-
-## 🐛 Common Issues
-
-### Issue: `ModuleNotFoundError: No module named 'pytest'`
-
-**Solution:** Install dev dependencies
-```bash
-pip install -e ".[dev]"
-```
-
-### Issue: Database connection errors in tests
-
-**Solution:** Tests use in-memory SQLite, not PostgreSQL. Check `conftest.py` fixtures.
-
-### Issue: Async tests failing
-
-**Solution:** Make sure to use `@pytest.mark.asyncio` and `async def` for async tests.
-
-### Issue: Authentication failures in tests
-
-**Solution:** Use the `auth_headers` fixture which provides valid API keys.
+- **Ablage:** `tests/test_<bereich>.py`; Testdaten unter `tests/fixtures/` (synthetisch,
+  keine echten Drehbuchtexte in Assertions oder Logs).
+- **Fixtures** aus `tests/conftest.py` nutzen (`client`, `auth_headers`, `db_session`,
+  `mock_redis` …) statt eigene Engines oder Clients zu bauen. Wer per `monkeypatch`
+  Umgebungsvariablen ändert, ruft `get_settings.cache_clear()` vorher und nachher.
+- **Kein echtes Netz:** LLM an der Provider-Grenze (`llm.factory.get_llm_provider`) oder
+  per `httpx.MockTransport` ersetzen; ePro über `httpx.MockTransport` oder einen lokalen
+  Mock. Nie echte Ollama-, Mistral- oder ePro-Endpunkte.
+- **Marker:** `temporal` für alles mit `WorkflowEnvironment`, `ocr` für Tesseract (plus
+  Skip, wenn das Binary fehlt). `--strict-markers` ist aktiv – neue Marker in
+  `pyproject.toml` registrieren.
+- **Beide DB-Modi:** Tests müssen auf SQLite **und** PostgreSQL grün sein; PG-only mit
+  `requires_postgres`. Zeitstempel immer zeitzonenbewusst (`datetime.now(UTC)`), Längen
+  wie im Modell – nicht auf die Nachsicht von SQLite verlassen.
+- **Bekannte Fehler:** als `@pytest.mark.xfail(strict=True, reason="BUG: …")` mit dem
+  *korrekten* Sollverhalten festhalten. Wird der Fehler behoben, schlägt der Test als
+  XPASS fehl, und der Marker fällt mit dem Fix weg.
+- **Migrationen:** Schemaänderungen brauchen eine Alembic-Revision; Ablauf in
+  `OPERATIONS_GUIDE.md` §4.6.
 
 ---
 
-## 📚 Additional Resources
+## 8. Häufige Probleme
 
-- [pytest documentation](https://docs.pytest.org/)
-- [pytest-asyncio documentation](https://pytest-asyncio.readthedocs.io/)
-- [FastAPI testing](https://fastapi.tiangolo.com/tutorial/testing/)
-- [Coverage.py documentation](https://coverage.readthedocs.io/)
-
----
-
-## 🎓 Best Practices
-
-1. **Test Isolation**: Each test should be independent
-2. **Clear Names**: Use descriptive test names
-3. **Arrange-Act-Assert**: Structure tests clearly
-4. **Mock External Services**: Don't hit real APIs in tests
-5. **Test Edge Cases**: Not just happy paths
-6. **Keep Tests Fast**: Use fixtures efficiently
-7. **Document Complex Tests**: Add comments for clarity
+| Problem | Lösung |
+|---|---|
+| `The SQLAlchemy asyncio module requires … greenlet` | mit Lock-Datei installieren: `pip install -c requirements-dev.lock -e ".[dev]"` |
+| Temporal-Tests hängen/scheitern offline | Testserver-Download braucht einmal Netz; sonst `-m "not temporal"` |
+| E2E-Tests übersprungen | Redis unter `TEST_REDIS_URL` starten (§2) |
+| `tests/test_pg_integration.py` übersprungen | `TEST_POSTGRES_URL` setzen |
+| Migrationstests: `permission denied to create database` | Nutzer braucht `CREATEDB` (§2) |
+| OCR-Tests übersprungen | `tesseract-ocr`, `-deu`, `-eng` installieren |
+| OCR-Tests laufen in Timeouts | `OMP_THREAD_LIMIT=1` (setzt `conftest.py` per Default) |
 
 ---
 
-**Happy Testing!** 🧪✅
+## 9. Kennzahlen
+
+Stand 2026-10-15, Python 3.11, gemessen wie der CI-Job `test`:
+
+| Kennzahl | Wert |
+|---|---|
+| Tests gesamt | 1742 |
+| PostgreSQL-Lauf | 1741 bestanden, 1 `xfail` (Sync-Stub, `test_sync_check_returns_the_real_analysis`) |
+| SQLite-Lauf | 1703 bestanden, 38 übersprungen (nur PostgreSQL), 1 `xfail` |
+| Line-Coverage (PostgreSQL-Lauf) | 98,59 % (Untergrenze, siehe Messartefakt in `docs/COVERAGE_REPORT.md`) |
+| CI-Gate | 95 % |
+| Laufzeit | ~60 s SQLite, ~150 s PostgreSQL mit Coverage |
+
+Aufschlüsselung nach Ebene und Modul: `docs/COVERAGE_REPORT.md`.

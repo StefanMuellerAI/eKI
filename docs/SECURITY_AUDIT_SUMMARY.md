@@ -1,3 +1,6 @@
+> **Veraltet** – Zusammenfassung des M01-Audits vom 30.01.2026, wird nicht fortgeschrieben.
+> Maßgeblich sind [DATENSCHUTZ.md](DATENSCHUTZ.md) und [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md).
+
 # 🔒 Security Audit - Executive Summary
 
 **Audit Date:** 30. Januar 2026

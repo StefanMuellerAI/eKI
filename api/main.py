@@ -5,13 +5,14 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import ValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from api.config import get_settings
 from api.dependencies import verify_api_key
@@ -99,13 +100,18 @@ app.add_middleware(
 async def request_id_middleware(request: Request, call_next):
     incoming = request.headers.get("X-Request-ID")
     request_id = set_request_id(incoming)
+    # request.state lives in the ASGI scope, so every exception handler sees
+    # it -- unlike the ContextVar, which does not reach handlers that run
+    # outside this middleware's task.
+    request.state.request_id = request_id
     try:
         response: Response = await call_next(request)
-    except Exception:
-        # Selbst bei Exception soll der Header gesetzt sein, falls ein
-        # Exception-Handler die Response noch produziert. set_request_id
-        # bleibt in der ContextVar erhalten.
-        raise
+    except Exception as exc:
+        # Unbehandelte Fehler wuerde sonst Starlettes ServerErrorMiddleware
+        # *ausserhalb* dieser Middleware rendern: ohne X-Request-ID-Header,
+        # ohne request_id im Body, und die Metrics-Middleware zaehlte jede
+        # Infrastruktur-503 als 500. Deshalb hier rendern.
+        response = await general_exception_handler(request, exc)
     response.headers.setdefault("X-Request-ID", request_id)
     return response
 
@@ -176,6 +182,15 @@ def _is_infrastructure_error(exc: Exception) -> tuple[bool, str]:
     return False, ""
 
 
+def _error_request_id(request: Request) -> str | None:
+    """Request id for error bodies: the one the middleware generated or adopted.
+
+    Before, only a client-supplied ``X-Request-ID`` was echoed, so callers that
+    did not send one got ``request_id: null`` and had nothing to quote to ops.
+    """
+    return getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID") or None
+
+
 @app.exception_handler(EKIException)
 async def eki_exception_handler(request: Request, exc: EKIException) -> JSONResponse:
     """Handle custom EKI exceptions with their specific status codes."""
@@ -185,14 +200,19 @@ async def eki_exception_handler(request: Request, exc: EKIException) -> JSONResp
             error=exc.__class__.__name__,
             message=exc.message,
             details=[ErrorDetail(message=str(v)) for v in exc.details.values()],
-            request_id=request.headers.get("X-Request-ID"),
+            request_id=_error_request_id(request),
         ).model_dump(mode="json"),
     )
 
 
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-    """Normalize FastAPI HTTPExceptions into the ErrorResponse format."""
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    """Normalize HTTP errors into the ErrorResponse format.
+
+    Registered on Starlette's base class so that framework-raised errors
+    (unknown route 404, 405, malformed multipart 400) use the same envelope as
+    ``fastapi.HTTPException`` (a subclass) raised by the routers.
+    """
     error_name = {
         400: "BadRequest",
         401: "Unauthorized",
@@ -202,6 +222,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
         409: "Conflict",
         410: "Gone",
         413: "PayloadTooLarge",
+        415: "UnsupportedMediaType",
         422: "ValidationError",
         429: "RateLimitExceeded",
     }.get(exc.status_code, "Error")
@@ -211,7 +232,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
         content=ErrorResponse(
             error=error_name,
             message=str(exc.detail),
-            request_id=request.headers.get("X-Request-ID"),
+            request_id=_error_request_id(request),
         ).model_dump(mode="json"),
     )
 
@@ -241,7 +262,7 @@ async def validation_exception_handler(
             error="ValidationError",
             message="Request validation failed",
             details=details,
-            request_id=request.headers.get("X-Request-ID"),
+            request_id=_error_request_id(request),
         ).model_dump(mode="json"),
     )
 
@@ -266,7 +287,7 @@ async def pydantic_validation_exception_handler(
             error="ValidationError",
             message="Request validation failed",
             details=details,
-            request_id=request.headers.get("X-Request-ID"),
+            request_id=_error_request_id(request),
         ).model_dump(mode="json"),
     )
 
@@ -283,7 +304,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
             content=ErrorResponse(
                 error="ServiceUnavailable",
                 message=user_message,
-                request_id=request.headers.get("X-Request-ID"),
+                request_id=_error_request_id(request),
             ).model_dump(mode="json"),
         )
 
@@ -294,7 +315,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
         content=ErrorResponse(
             error="InternalServerError",
             message="An internal error occurred. Please try again later.",
-            request_id=request.headers.get("X-Request-ID"),
+            request_id=_error_request_id(request),
         ).model_dump(mode="json"),
     )
 
@@ -340,7 +361,10 @@ _MULTIPART_BASE: dict = {
         },
         "project_id": {
             "type": "string",
-            "description": "eProjekt project ID",
+            "minLength": 1,
+            "maxLength": 100,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "description": "eProjekt project ID (same rules as JSON; 'unknown' if omitted)",
         },
         "script_format": {
             "type": "string",
@@ -349,18 +373,26 @@ _MULTIPART_BASE: dict = {
         },
         "script_id": {
             "type": "integer",
+            "minimum": -(2**31),
+            "maximum": 2**31 - 1,
             "description": "eProjekt document ID of the script/treatment",
         },
         "delivery": {
             "type": "string",
             "enum": ["pull", "push"],
             "default": "pull",
-            "description": "Delivery mode: pull (One-Shot GET) or push (POST to ePro)",
+            "description": (
+                "Delivery mode: pull (One-Shot GET) or push (POST to ePro); "
+                "case-insensitive, blank means pull"
+            ),
         },
         "idempotency_key": {
             "type": "string",
             "maxLength": 255,
-            "description": "Optional idempotency key to prevent duplicate jobs",
+            "description": (
+                "Optional idempotency key to prevent duplicate jobs; empty means none, "
+                "control characters are rejected"
+            ),
         },
     },
 }
