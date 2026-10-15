@@ -4,6 +4,46 @@ Alle wesentlichen Änderungen der eKI API. Format nach [Keep a Changelog](https:
 Versionierung nach [SemVer](https://semver.org/lang/de/). Ein Minor-Release pro Pflichtenheft-Meilenstein
 (M0x → 0.x.0), `1.0.0` mit dem UAT-Paket (M12). Die Versionsquelle ist `core/version.py`.
 
+## [Unreleased] – Stabilisierung zur Übergabe
+
+Ergebnis eines Test- und Doku-Reviews vor der Übergabe. Mehrere Fehler traten nur auf echtem
+PostgreSQL bzw. bei einer frischen Installation auf und waren für die bisherige SQLite-Testsuite
+unsichtbar. Empfehlung: als Patch-Release (z. B. `1.0.1`) veröffentlichen und die Abnahmetests
+AT2–AT7 auf diesem Stand wiederholen.
+
+### Behoben – kritisch
+- **Frische Installation lief nicht:** `sqlalchemy` ohne `[asyncio]`-Extra; SQLAlchemy ≥ 2.1 installiert
+  `greenlet` nicht mehr → jeder DB-Zugriff brach ab. Jetzt `sqlalchemy[asyncio]`.
+- **`alembic upgrade head` brach ab:** SQLAlchemy 2.1 löst `postgresql://` auf psycopg (v3) auf, installiert
+  ist psycopg2. `db/migrations/env.py` nutzt jetzt explizit `+psycopg2`.
+- **Asynchrone Jobs scheiterten in der Zustellphase:** `job_metadata.status` war `VARCHAR(9)`, `DELIVERING` hat
+  10 Zeichen (PostgreSQL: „value too long"). Neue Migration `a7c9e1f3b5d2` (`VARCHAR(20)`).
+- **Produktions-Overlay band den Quellcode vom Host ein und veröffentlichte die Temporal-UI:**
+  `volumes: []`/`ports: []` werden von Compose gemergt statt ersetzt; jetzt `!reset []`
+  (Docker Compose ≥ 2.24). Image-Updates ersetzen damit tatsächlich Code und Migrationen.
+- **Produktions-Validator akzeptierte die Platzhalter aus `.env.example`** (`CHANGE_ME_…` in
+  `API_SECRET_KEY`/`DATABASE_URL`). Platzhalter werden jetzt abgelehnt.
+
+### Behoben
+- Zeitzonenbewusste UTC-Zeitstempel für DB-Werte (API-Key-Ablauf, `last_used_at`, `retrieved_at`,
+  Dead-Letter-Quittung). Auf Hosts mit TZ ≠ UTC blieben abgelaufene Keys stundenlang gültig.
+- API verbindet sich mit `TEMPORAL_NAMESPACE` wie der Worker (vorher immer `default`).
+- Fehlerantworten tragen immer eine `request_id` (= Response-Header `X-Request-ID`); unbehandelte Fehler
+  werden innerhalb der Request-ID-Middleware gerendert (Header, Body-ID und HTTP-Metrik-Label 503/500 korrekt).
+- Reports nennen die echte Engine-Version (`core/version.py`) statt fest `0.6.0`; Postman-Collection-Version 1.0.0.
+- OCR: `OMP_THREAD_LIMIT=1` in beiden Images – unter Last liefen Tesseract-Seiten in den 60-s-Timeout und
+  wurden übersprungen.
+- pgvector-Index `ix_kb_embeddings_vector` im Modell deklariert (`alembic check` ohne Drift).
+
+### Hinzugefügt
+- Testsuite optional gegen echtes PostgreSQL + pgvector (`TEST_POSTGRES_URL`); die CI fährt SQLite- und
+  PostgreSQL-Lauf, den Migrationszyklus (upgrade → check → downgrade → upgrade) und `alembic` im Docker-Image.
+- CI prüft, dass das Prod-Overlay nur die API veröffentlicht und keinen Quellcode einbindet.
+- Lockfiles `requirements.lock` / `requirements-dev.lock` (Python 3.11, `uv pip compile --universal`) als
+  Constraints in Dockerfiles und CI – reproduzierbare Builds.
+- Regressionstests: `tests/test_db_dialect_regressions.py`, `tests/test_api_consistency.py`,
+  Produktions-Validator in `tests/test_config.py`.
+
 ## [1.0.0] – 2026-09-16 – M12 UAT-Paket & Übergabe
 
 ### Hinzugefügt
