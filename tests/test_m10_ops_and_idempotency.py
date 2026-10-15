@@ -11,7 +11,7 @@ import pytest
 from fastapi import status
 
 from core.db_models import DeliveryDeadLetter, JobMetadata, ReportMetadata
-from tests.conftest import MINIMAL_PDF_BYTES
+from tests.conftest import MINIMAL_PDF_BYTES, store_report_package
 
 
 def _job(user_id: str, **kw) -> JobMetadata:
@@ -248,9 +248,10 @@ class TestUserScopedIdempotency:
 class TestOneShotHeaderAndDeliveryBookkeeping:
     @pytest.mark.asyncio
     async def test_get_report_sets_one_shot_header_and_marks_delivered(
-        self, client, db_session, auth_headers
+        self, client, db_session, auth_headers, mock_redis
     ):
         report_id = uuid4()
+        ref_key = await store_report_package(mock_redis, report_id=report_id, project_id="p1")
         job = _job(
             "test-user-123",
             status="completed",
@@ -272,6 +273,7 @@ class TestOneShotHeaderAndDeliveryBookkeeping:
                 total_findings=0,
                 processing_time_seconds=1.0,
                 delivery_mode="pull",
+                report_ref_key=ref_key,
             )
         )
         await db_session.commit()
@@ -279,6 +281,7 @@ class TestOneShotHeaderAndDeliveryBookkeeping:
         response = client.get(f"/v1/security/reports/{report_id}", headers=auth_headers)
         assert response.status_code == status.HTTP_200_OK
         assert response.headers.get("X-One-Shot") == "true"
+        assert await mock_redis.get(ref_key) is None  # one-shot: deleted after delivery
 
         await db_session.refresh(job)
         assert job.delivery_status == "delivered"

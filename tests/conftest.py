@@ -34,6 +34,28 @@ MINIMAL_PDF_BYTES = (
 )
 
 
+async def store_report_package(
+    redis_client: object, *, report_id: object, project_id: str, script_format: str = "fdx"
+) -> str:
+    """Put a real, encrypted report package into the SecureBuffer (as the
+    workflow does) and return its ``report_ref_key``.  ``GET /reports/{id}``
+    answers 410 when the buffered report is missing, so API tests that expect
+    a 200 need one."""
+    from api.config import get_settings
+    from services.report_generator import build_report_dict
+    from services.secure_buffer import SecureBuffer
+
+    report = build_report_dict(
+        report_id=str(report_id),
+        project_id=project_id,
+        script_format=script_format,
+        findings=[],
+        processing_time_seconds=1.0,
+    )
+    buffer = SecureBuffer(redis_client, secret_key=get_settings().api_secret_key)
+    return await buffer.store({"report": report, "pdf_base64": None})
+
+
 class MockRedis:
     """In-memory stand-in for ``redis.asyncio.Redis``.
 

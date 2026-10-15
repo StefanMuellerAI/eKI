@@ -1775,13 +1775,6 @@ async def test_findings_do_not_travel_through_temporal_history(
     assert b"E2E: cliff jump of a stunt performer" not in history
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: GET /v1/security/reports/{id} answers 200 with an empty placeholder report "
-        "(0 findings) when the buffered report is gone, e.g. after push delivery"
-    ),
-)
 async def test_report_get_after_push_delivery_does_not_fabricate_an_empty_report(
     pipeline: Pipeline, auth_headers: dict[str, str]
 ) -> None:
@@ -1805,35 +1798,23 @@ async def test_report_get_after_push_delivery_does_not_fabricate_an_empty_report
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: 'delivery' is not validated against the OpenAPI enum [pull, push]; e.g. 'PUSH' "
-        "is accepted, never pushed and skips the pull-TTL watch (no dead letter/webhook)"
-    ),
-)
 async def test_unknown_delivery_mode_is_rejected(
     pipeline: Pipeline, auth_headers: dict[str, str]
 ) -> None:
+    """``delivery`` used to be a free string: 'PUSH' or 'foo' were stored verbatim,
+    never pushed and skipped the pull-TTL watch.  Unknown values are now 422."""
     resp = await _submit_json(
         pipeline,
         auth_headers,
         fixture="fdx/simple_scene.fdx",
         script_format="fdx",
         project_id=_project_id("delivery-enum"),
-        delivery="PUSH",
+        delivery="carrier-pigeon",
     )
     assert resp.status_code == 422, resp.text
     assert pipeline.starts == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: multipart project_id is not validated (JSON enforces ^[a-zA-Z0-9_-]+$) and is "
-        "interpolated into the ePro push URL path"
-    ),
-)
 async def test_multipart_project_id_cannot_steer_the_epro_push_url(
     pipeline: Pipeline, auth_headers: dict[str, str]
 ) -> None:

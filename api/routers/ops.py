@@ -41,6 +41,10 @@ router = APIRouter()
 
 _DELIVERY_STATES = ("pending", "delivering", "delivered", "failed", "dead_lettered")
 
+# Largest OFFSET PostgreSQL (BIGINT) and SQLite accept; beyond it the driver
+# raised a DataError/OverflowError that surfaced as 503/500 instead of 422.
+_MAX_OFFSET = 2**63 - 1
+
 
 async def _unacknowledged_count(db: AsyncSession) -> int:
     return int(
@@ -98,7 +102,7 @@ async def list_jobs(
     ),
     project_id: str | None = Query(None, max_length=255, description="Project ID filter"),
     limit: int = Query(50, ge=1, le=500, description="Page size"),
-    offset: int = Query(0, ge=0, description="Page offset"),
+    offset: int = Query(0, ge=0, le=_MAX_OFFSET, description="Page offset"),
 ) -> OpsJobListResponse:
     if delivery_status is not None and delivery_status not in _DELIVERY_STATES:
         raise HTTPException(
@@ -187,7 +191,7 @@ async def list_dead_letters(
         None, description="true = only acknowledged, false = only open, omit = all"
     ),
     limit: int = Query(50, ge=1, le=500),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=_MAX_OFFSET),
 ) -> DeadLetterListResponse:
     filters = []
     if acknowledged is True:

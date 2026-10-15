@@ -6,6 +6,7 @@ import logging
 
 import redis.asyncio as aioredis
 from fastapi import Depends, HTTPException, Request, status
+from fastapi.security.utils import get_authorization_scheme_param
 
 from api.config import Settings, get_settings
 from api.dependencies import get_redis
@@ -97,12 +98,13 @@ async def rate_limit_by_api_key(
     if not settings.rate_limit_enabled:
         return
 
-    auth_header = request.headers.get("Authorization", "")
-
-    if not auth_header.startswith("Bearer "):
+    # Parse exactly like ``HTTPBearer`` (case-insensitive scheme, stripped
+    # token): every spelling that authenticates as a key must share its bucket,
+    # otherwise "bearer <key>" or "Bearer  <key>" would bypass the hourly limit.
+    scheme, api_key = get_authorization_scheme_param(request.headers.get("Authorization"))
+    if scheme.lower() != "bearer" or not api_key:
         return
 
-    api_key = auth_header[7:]
     key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:16]
 
     key = f"rate_limit:api_key:{key_hash}"

@@ -5,13 +5,14 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import ValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from api.config import get_settings
 from api.dependencies import verify_api_key
@@ -204,9 +205,14 @@ async def eki_exception_handler(request: Request, exc: EKIException) -> JSONResp
     )
 
 
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-    """Normalize FastAPI HTTPExceptions into the ErrorResponse format."""
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    """Normalize HTTP errors into the ErrorResponse format.
+
+    Registered on Starlette's base class so that framework-raised errors
+    (unknown route 404, 405, malformed multipart 400) use the same envelope as
+    ``fastapi.HTTPException`` (a subclass) raised by the routers.
+    """
     error_name = {
         400: "BadRequest",
         401: "Unauthorized",
@@ -216,6 +222,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
         409: "Conflict",
         410: "Gone",
         413: "PayloadTooLarge",
+        415: "UnsupportedMediaType",
         422: "ValidationError",
         429: "RateLimitExceeded",
     }.get(exc.status_code, "Error")
@@ -354,7 +361,10 @@ _MULTIPART_BASE: dict = {
         },
         "project_id": {
             "type": "string",
-            "description": "eProjekt project ID",
+            "minLength": 1,
+            "maxLength": 100,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "description": "eProjekt project ID (same rules as JSON; 'unknown' if omitted)",
         },
         "script_format": {
             "type": "string",
@@ -363,18 +373,26 @@ _MULTIPART_BASE: dict = {
         },
         "script_id": {
             "type": "integer",
+            "minimum": -(2**31),
+            "maximum": 2**31 - 1,
             "description": "eProjekt document ID of the script/treatment",
         },
         "delivery": {
             "type": "string",
             "enum": ["pull", "push"],
             "default": "pull",
-            "description": "Delivery mode: pull (One-Shot GET) or push (POST to ePro)",
+            "description": (
+                "Delivery mode: pull (One-Shot GET) or push (POST to ePro); "
+                "case-insensitive, blank means pull"
+            ),
         },
         "idempotency_key": {
             "type": "string",
             "maxLength": 255,
-            "description": "Optional idempotency key to prevent duplicate jobs",
+            "description": (
+                "Optional idempotency key to prevent duplicate jobs; empty means none, "
+                "control characters are rejected"
+            ),
         },
     },
 }
