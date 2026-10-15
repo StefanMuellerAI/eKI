@@ -79,7 +79,7 @@ export DATABASE_URL=$TEST_POSTGRES_URL
 export TEST_REDIS_URL=redis://localhost:6379/4
 export REDIS_URL=redis://localhost:6379/0
 export ENV=test
-pytest --cov --cov-report=term-missing --cov-fail-under=80
+pytest --cov --cov-report=term-missing --cov-fail-under=95
 ```
 
 > **Achtung:** Die Datenbank hinter `TEST_POSTGRES_URL` wird zu Beginn der Session
@@ -95,7 +95,7 @@ alembic upgrade head && alembic check && alembic downgrade base && alembic upgra
 
 **Coverage:** `pyproject.toml` misst `api`, `core`, `services`, `workflows`, `parsers`,
 `llm` (greenlet-fähig, sonst fehlen Zeilen nach DB-Aufrufen). Die Schwelle
-`--cov-fail-under=80` setzt nur die CI im PostgreSQL-Lauf; lokal gibt es kein Gate.
+`--cov-fail-under=95` setzt nur die CI im PostgreSQL-Lauf; lokal gibt es kein Gate.
 
 ---
 
@@ -223,7 +223,7 @@ Läuft bei Push auf `main`/`develop`, bei Pull-Requests dorthin und bei Tags `v*
 |---|---|---|
 | `lint` | `ruff check .`, `ruff format --check .`; `mypy api core services workflows worker` | Ruff ja; mypy nur beratend (`continue-on-error`) |
 | `security-scan` | Bandit über `api core services workflows worker llm parsers` (bricht ab Schwere *medium*); `safety check` | Bandit ja; Safety beratend |
-| `test` | Dienste `pgvector/pgvector:pg16` + `redis:7-alpine`; Tesseract installieren; `pip install -c requirements-dev.lock -e ".[dev]"`; Migrationszyklus `upgrade head → check → downgrade base → upgrade head`; `pytest --no-cov -q` (SQLite); `pytest` im PostgreSQL-Modus mit echtem Redis und `--cov-fail-under=80`; Coverage-Artefakt + Codecov | ja |
+| `test` | Dienste `pgvector/pgvector:pg16` + `redis:7-alpine`; Tesseract installieren; `pip install -c requirements-dev.lock -e ".[dev]"`; Migrationszyklus `upgrade head → check → downgrade base → upgrade head`; `pytest --no-cov -q` (SQLite); `pytest` im PostgreSQL-Modus mit echtem Redis und `--cov-fail-under=95`; Coverage-Artefakt + Codecov | ja |
 | `openapi-validation` | Spectral auf `openapi/eki-api-v1.0.yaml`, 0 Errors | ja |
 | `observability-validation` | `promtool check rules`, `amtool check-config`, `docker compose config` für Basis + Observability-Overlay; Prüfung, dass das Prod-Overlay nur Port 8000 veröffentlicht und keinen Quellcode mountet | ja |
 | `docker-build` | baut API- und Worker-Image (nach `lint`, `test`, `security-scan`) | ja |
@@ -359,4 +359,15 @@ siehe `DATENSCHUTZ.md`).
 
 ## 9. Kennzahlen
 
-<!-- KENNZAHLEN -->
+Stand 2026-10-15, Python 3.11, gemessen wie der CI-Job `test`:
+
+| Kennzahl | Wert |
+|---|---|
+| Tests gesamt | 1742 |
+| PostgreSQL-Lauf | 1741 bestanden, 1 `xfail` (Sync-Stub, `test_sync_check_returns_the_real_analysis`) |
+| SQLite-Lauf | 1703 bestanden, 38 übersprungen (nur PostgreSQL), 1 `xfail` |
+| Line-Coverage (PostgreSQL-Lauf) | 98,59 % (Untergrenze, siehe Messartefakt in `docs/COVERAGE_REPORT.md`) |
+| CI-Gate | 95 % |
+| Laufzeit | ~60 s SQLite, ~150 s PostgreSQL mit Coverage |
+
+Aufschlüsselung nach Ebene und Modul: `docs/COVERAGE_REPORT.md`.

@@ -728,11 +728,13 @@ TEST_POSTGRES_URL=postgresql+asyncpg://eki_user:eki_password@localhost:5432/eki_
 ```
 
 Die CI laeuft die Suite zweimal: im SQLite-Modus und gegen PostgreSQL + pgvector mit echtem
-Redis und Coverage-Gate 80 %. SQLite allein reicht nicht -- es hat zwei Produktionsfehler
+Redis und Coverage-Gate 95 %. SQLite allein reicht nicht -- es hat zwei Produktionsfehler
 (`VARCHAR(9)`-Statusspalte, Zeitzonen bei API-Key-Ablauf) verdeckt. Marker: `temporal`
 (Time-Skipping-Testserver, Download beim ersten Lauf) und `ocr` (Tesseract `deu`+`eng`).
 
-<!-- TESTZAHLEN -->
+**Stand 2026-10-15:** 1742 Tests – PostgreSQL-Lauf 1741 bestanden + 1 dokumentiertes `xfail`
+(Sync-Stub), SQLite-Lauf 1703 bestanden / 38 übersprungen (reine PostgreSQL-Tests); Line-Coverage
+**98,59 %**. Details je Modul: `docs/COVERAGE_REPORT.md`.
 
 Testebenen, E2E-Pipeline, Abnahmetests gegen den Stack, CI-Jobs und Konventionen:
 `docs/TESTING_GUIDE.md`.

@@ -32,7 +32,7 @@ auf PostgreSQL erst ab `a7c9e1f3b5d2`) zählen; ältere Läufe der Tests 2–7 s
 | AT6 Großdokument | ☐ ☐ | `tests/reports/m07_benchmark_….json` | Seiten: __ · Dauer: __ min · Limit 120 min |
 | AT7 Log-Hygiene | ☐ ☐ | | Marker: __ · Treffer: __ |
 | Unit-/Contract-Suite (SQLite) | ☐ ☐ | `pytest --no-cov` Zusammenfassung: __ passed | |
-| Suite gegen PostgreSQL (`TEST_POSTGRES_URL`, `docs/TESTING_GUIDE.md`) | ☐ ☐ | `pytest` Zusammenfassung: __ passed | Coverage: __ % (Gate 80 %) |
+| Suite gegen PostgreSQL (`TEST_POSTGRES_URL`, `docs/TESTING_GUIDE.md`) | ☐ ☐ | `pytest` Zusammenfassung: __ passed | Coverage: __ % (Gate 95 %) |
 | OpenAPI | ☐ ☐ | `spectral lint` 0 Errors | |
 
 ## 2. Manuelle Nachweise

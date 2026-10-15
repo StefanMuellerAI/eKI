@@ -90,23 +90,34 @@ class BaseLLMProvider(ABC):
     def __init__(self, config: dict[str, Any]) -> None: ...
 
     @abstractmethod
-    async def generate(self, prompt: str, system_prompt: str | None = None,
-                       temperature: float = 0.7, max_tokens: int = 2000, **kwargs) -> str: ...
+    async def generate(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+        **kwargs,
+    ) -> str: ...
 
     @abstractmethod
-    async def generate_structured(self, prompt: str, schema: dict[str, Any],
-                                  system_prompt: str | None = None,
-                                  temperature: float = 0.2, **kwargs) -> dict[str, Any]: ...
+    async def generate_structured(
+        self,
+        prompt: str,
+        schema: dict[str, Any],
+        system_prompt: str | None = None,
+        temperature: float = 0.2,
+        **kwargs,
+    ) -> dict[str, Any]: ...
 
     @abstractmethod
     async def health_check(self) -> bool: ...
 
-    async def embed(self, text: str) -> list[float]:      # optional, Default: NotImplementedError
+    async def embed(self, text: str) -> list[float]:  # optional, Default: NotImplementedError
         ...
 
     @property
     @abstractmethod
-    def provider_name(self) -> str: ...                    # Label in Metriken, Logs, Fehlern
+    def provider_name(self) -> str: ...  # Label in Metriken, Logs, Fehlern
 ```
 
 Fehler werden als `core.exceptions.LLMException` gemeldet (Nachricht und `details` ohne
@@ -130,7 +141,9 @@ ok = await provider.health_check()
 anlegen statt das gecachte Objekt zu verändern – so macht es auch `scripts/run_parity.py`:
 
 ```python
-settings = get_settings().model_copy(update={"llm_provider": "ollama", "ollama_model": "gemma4:31b"})
+settings = get_settings().model_copy(
+    update={"llm_provider": "ollama", "ollama_model": "gemma4:31b"}
+)
 provider = get_llm_provider(settings)
 ```
 

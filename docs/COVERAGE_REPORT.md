@@ -1,181 +1,103 @@
-# eKI API - Test Coverage Report
+# eKI API – Test- und Coverage-Bericht
 
-**Datum:** 2026-02-11
-**Version:** 0.5.0
-**Python:** 3.12.4
-**Testframework:** pytest + pytest-cov
+**Stand:** 2026-10-15 (Übergabe-Stabilisierung, siehe `CHANGELOG.md` → *Unreleased*)
+**Gemessen:** Python 3.11, `pip install -c requirements-dev.lock -e ".[dev]"`, PostgreSQL 16 + pgvector,
+Redis 7, Tesseract (`deu`, `eng`) – genau wie der CI-Job `test`:
+
+```bash
+TEST_POSTGRES_URL=postgresql+asyncpg://eki_user:eki_password@localhost:5432/eki_test \
+TEST_REDIS_URL=redis://localhost:6379/6 ENV=test \
+pytest --cov --cov-report=term-missing --cov-fail-under=95
+```
+
+Wie die Suite aufgebaut ist und lokal läuft: `docs/TESTING_GUIDE.md`. Der frühere Bericht (Stand
+0.5.0, 167 Tests, 65,75 %) ist durch dieses Dokument ersetzt.
 
 ---
 
 ## Zusammenfassung
 
-| Metrik | Wert |
-|--------|------|
-| **Tests gesamt** | 167 |
-| **Bestanden** | 155 |
-| **Fehlgeschlagen** | 12 |
-| **Bestehensquote** | 92.8% |
-| **Gesamtabdeckung** | 65.75% |
-| **Statements** | 1.956 |
-| **Abgedeckt** | 1.286 |
-| **Nicht abgedeckt** | 670 |
+| Kennzahl | Vorher (v1.0.0-Tag) | Jetzt |
+|---|---|---|
+| Tests gesamt | 465 | **1742** |
+| PostgreSQL-Lauf | – (nie ausgeführt) | **1741 bestanden, 1 xfail** |
+| SQLite-Lauf | 463 bestanden, 2 übersprungen | **1703 bestanden, 38 übersprungen** (reine PostgreSQL-Tests), 1 xfail |
+| Line-Coverage gesamt | 80,78 % (SQLite) | **98,59 %** (PostgreSQL-Lauf) |
+| CI-Gate | 80 % | **95 %** |
+| Laufzeit | ~15 s | ~60 s (SQLite) / ~150 s (PostgreSQL inkl. Coverage) |
 
----
+Das eine `xfail` (`tests/test_e2e_pipeline.py::test_sync_check_returns_the_real_analysis`) dokumentiert
+eine bekannte Grenze: der synchrone Endpunkt `POST /v1/security/check` ist ein M01-Stub. Er ist als
+`xfail(strict=True)` hinterlegt und wird rot, sobald der Endpunkt echt analysiert.
+
+## Tests nach Ebene
+
+| Ebene | Dateien | Tests |
+|---|---|---|
+| Unit (Lücken geschlossen) | `test_cov_parsers.py`, `test_cov_llm_providers.py`, `test_cov_activities.py`, `test_cov_security_check_workflow.py`, `test_cov_api.py` | 505 |
+| Edge-Cases / Grenzwerte | `test_edge_api.py`, `test_edge_parsers_and_services.py` | 698 |
+| End-to-End (API → Temporal → echte Activities → Redis → Pull/Push an ePro-Mock) | `test_e2e_pipeline.py`, `test_m09_context_propagation_e2e.py` | 18 |
+| PostgreSQL-Integration (Migrationen, pgvector-KB, Zustell-Buchhaltung) | `test_pg_integration.py`, `test_db_dialect_regressions.py` | 39 |
+| Contract (FastAPI ⇄ OpenAPI) | `test_m12_openapi_contract.py` | 13 |
+| Bestehende Modul- und Meilenstein-Tests | übrige `tests/test_*.py` | 469 |
 
 ## Coverage nach Modul
 
-### Kernmodule (Core)
+„Vorher" = Messung am v1.0.0-Stand (SQLite, `worker/` nicht gemessen); „Jetzt" = PostgreSQL-Lauf.
 
-| Modul | Stmts | Miss | Coverage |
-|-------|-------|------|----------|
-| `core/models.py` | 217 | 20 | **90.8%** |
-| `core/db_models.py` | 67 | 1 | **98.5%** |
-| `core/exceptions.py` | 24 | 0 | **100.0%** |
-| `core/prompt_sanitizer.py` | 35 | 6 | **82.9%** |
+| Modul | Vorher | Jetzt | Nicht gedeckt / Anmerkung |
+|---|---:|---:|---|
+| `api/config.py` | 87,36 % | 98,88 % | 402, 420: JSON-Listen-Prüfung, unerreichbar |
+| `api/dependencies.py` | 71,93 % | 100 % | |
+| `api/main.py` | 79,14 % | 100 % | |
+| `api/rate_limiting.py` | 95,52 % | 97,01 % | |
+| `api/routers/health.py` | 86,36 % | 100 % | |
+| `api/routers/knowledge_base.py` | 92,78 % | 100 % | |
+| `api/routers/ops.py` | 95,96 % | 98,67 % | |
+| `api/routers/security.py` | 91,10 % | 85,59 % ¹ | Messartefakt, siehe unten |
+| `core/db_models.py` | 96,80 % | 96,85 % | `__repr__` |
+| `core/models.py` | 92,36 % | 100 % | |
+| `core/prompt_sanitizer.py` | 95,35 % | 96,61 % | Metrik-Fallback |
+| `core/temporal_context.py` | 91,67 % | 100 % | |
+| `llm/base.py` | 75,00 % | 100 % | |
+| `llm/mistral_cloud.py` | 69,37 % | 100 % | |
+| `llm/ollama.py` | 70,44 % | 99,55 % | |
+| `llm/local_mistral.py`, `factory.py`, `prompt_manager.py` | 91–97 % | 100 % | |
+| `parsers/pdf.py` | 49,28 % | 100 % | |
+| `parsers/fdx.py` | 93,44 % | 100 % | |
+| `parsers/pdf_llm_structurer.py`, `pdf_ocr.py`, `secure_xml.py`, `pdf_scene_splitter.py` | 82–98 % | 100 % | |
+| `services/knowledge_base.py` | 48,82 % | 97,30 % | braucht pgvector (nur PostgreSQL-Lauf) |
+| `services/report_generator.py` | 100 % | 99,37 % | |
+| `services/secure_buffer.py` | 95,24 % | 100 % | |
+| `services/taxonomy.py` | 99,07 % | 99,26 % | |
+| `workflows/activities.py` | 55,15 % | 100 % | |
+| `workflows/security_check.py` | 69,76 % | 99,33 % | Vor-Patch-Abbruchpfad, unerreichbarer Guard |
+| `workflows/maintenance.py` | 97,96 % | 100 % | |
+| `worker/main.py` | – | 97,67 % | `__main__`-Guard |
+| **Gesamt** | **80,78 %** | **98,59 %** | |
 
-### Parser
+¹ Die als ungedeckt gemeldeten Zeilen in `api/routers/security.py` (u. a. 166–187, `_resolve_json`)
+laufen in Hunderten Tests – die Edge-Case-Tests prüfen die dort erzeugten Fehlermeldungen wörtlich.
+coverage.py verliert bei ASGI-Requests über den `TestClient` (Thread-Portal + greenlet) den Frame nach
+`await request.body()`. Gegenprobe: mit reinem Thread-Tracing fällt das Modul auf 54 %; die
+konfigurierte `concurrency = ["thread", "greenlet"]` misst am vollständigsten. Die Gesamtzahl ist
+daher eine Untergrenze. Der Rückgang gegenüber „vorher" kommt zusätzlich durch neuen Validierungscode.
 
-| Modul | Stmts | Miss | Coverage |
-|-------|-------|------|----------|
-| `parsers/scene_heading.py` | 30 | 0 | **100.0%** |
-| `parsers/pdf_scene_splitter.py` | 32 | 1 | **96.9%** |
-| `parsers/fdx.py` | 122 | 8 | **93.4%** |
-| `parsers/base.py` | 17 | 0 | **100.0%** |
-| `parsers/pdf_llm_structurer.py` | 45 | 8 | **82.2%** |
-| `parsers/secure_xml.py` | 22 | 4 | **81.8%** |
-| `parsers/pdf.py` | 81 | 43 | 46.9% |
+## Was die neuen Tests gefunden haben
 
-### Services
+Die Tests haben über 40 Fehler aufgedeckt, die alle behoben und per Regressionstest abgesichert sind
+(Details: `CHANGELOG.md` → *Unreleased*). Die gravierendsten:
 
-| Modul | Stmts | Miss | Coverage |
-|-------|-------|------|----------|
-| `services/report_generator.py` | 94 | 0 | **100.0%** |
-| `services/taxonomy.py` | 104 | 1 | **99.0%** |
-| `services/secure_buffer.py` | 42 | 2 | **95.2%** |
-| `services/security_service.py` | 7 | 7 | 0.0% |
-
-### LLM Provider
-
-| Modul | Stmts | Miss | Coverage |
-|-------|-------|------|----------|
-| `llm/prompt_manager.py` | 36 | 3 | **91.7%** |
-| `llm/base.py` | 18 | 5 | 72.2% |
-| `llm/local_mistral.py` | 11 | 3 | 72.7% |
-| `llm/factory.py` | 35 | 26 | 25.7% |
-| `llm/mistral_cloud.py` | 55 | 41 | 25.5% |
-| `llm/ollama.py` | 102 | 84 | 17.6% |
-
-### API Layer
-
-| Modul | Stmts | Miss | Coverage |
-|-------|-------|------|----------|
-| `api/main.py` | 46 | 7 | **84.8%** |
-| `api/config.py` | 128 | 27 | 78.9% |
-| `api/rate_limiting.py` | 55 | 17 | 69.1% |
-| `api/dependencies.py` | 47 | 18 | 61.7% |
-| `api/routers/security.py` | 127 | 56 | 55.9% |
-| `api/routers/health.py` | 36 | 18 | 50.0% |
-
-### Workflows (Temporal)
-
-| Modul | Stmts | Miss | Coverage |
-|-------|-------|------|----------|
-| `workflows/security_check.py` | 64 | 45 | 29.7% |
-| `workflows/activities.py` | 247 | 219 | 11.3% |
-
----
-
-## Coverage nach Bereich (gewichtet)
-
-| Bereich | Stmts | Miss | Coverage | Bewertung |
-|---------|-------|------|----------|-----------|
-| **Parser (Kernlogik)** | 349 | 64 | **81.7%** | Ziel erreicht (>=80%) |
-| **Services (Kernlogik)** | 247 | 10 | **96.0%** | Ziel uebertroffen |
-| **Core Models & Schemas** | 343 | 27 | **92.1%** | Ziel uebertroffen |
-| **LLM Provider** | 257 | 162 | 37.0% | Unter Ziel (*) |
-| **API Layer** | 439 | 143 | 67.4% | Unter Ziel (*) |
-| **Workflows (Temporal)** | 311 | 264 | 15.1% | Unter Ziel (*) |
-
-(*) LLM Provider, API-Endpoints und Temporal Workflows sind schwerer unit-testbar, da sie externe Abhaengigkeiten (Ollama, Redis, PostgreSQL, Temporal) benoetigen. Diese werden durch Integrationstests auf dem Server abgedeckt.
-
----
-
-## Tests nach Testdatei
-
-| Testdatei | Tests | Status |
-|-----------|-------|--------|
-| `test_fdx_parser.py` | 41 | 41 bestanden |
-| `test_pdf_parser.py` | 32 | 32 bestanden |
-| `test_taxonomy.py` | 38 | 38 bestanden |
-| `test_reports.py` | 13 | 13 bestanden |
-| `test_config.py` | 19 | 19 bestanden |
-| `test_api.py` | 12 | 7 bestanden, 5 fehlgeschlagen |
-| `test_security.py` | 12 | 5 bestanden, 7 fehlgeschlagen |
-
-**Gesamt: 167 Tests, 155 bestanden (92.8%)**
-
----
-
-## Fehlgeschlagene Tests (12)
-
-Alle 12 Fehler betreffen Tests, die HTTP-Level-Validierungsfehler (422) erwarten, aber die Validierung bereits auf Pydantic-Model-Ebene greift (vor dem HTTP-Request). Die Validierung selbst funktioniert korrekt - die Tests muessen an die aktualisierte Validierungsarchitektur angepasst werden.
-
-| Test | Fehlertyp | Ursache |
-|------|-----------|---------|
-| `test_sync_check_invalid_format` | ValidationError | Pydantic validiert `script_format` vor HTTP |
-| `test_async_check_success` | ValidationError | PDF-Magic-Byte-Check auf Model-Ebene |
-| `test_empty_script_content` | ValidationError | Min-Length-Check auf Model-Ebene |
-| `test_missing_required_field` | ValidationError | Required-Field-Check auf Model-Ebene |
-| `test_invalid_priority` | AttributeError | Mock-Redis fehlt `setex` Methode |
-| `test_invalid_base64` | ValidationError | Base64-Check auf Model-Ebene |
-| `test_script_size_limit` | ValidationError | Max-Length-Check auf Model-Ebene |
-| `test_ssrf_private_ip_blocked` | ValidationError | HTTPS-Pflicht vor IP-Check |
-| `test_ssrf_private_https_ip_blocked` | ValidationError | IP-Check auf Model-Ebene |
-| `test_ssrf_domain_whitelist` | ValidationError | Domain-Whitelist auf Model-Ebene |
-| `test_project_id_sql_injection` | ValidationError | Regex-Pattern auf Model-Ebene |
-| `test_metadata_limits` | ValidationError | Metadata-Limit auf Model-Ebene |
-
-**Hinweis:** Die Validierungslogik ist korrekt implementiert und schuetzt die API. Die Tests muessen lediglich so angepasst werden, dass sie Pydantic-ValidationErrors statt HTTP-422-Responses pruefen.
-
----
-
-## Abdeckung nach Meilenstein
-
-### M01 - Projektgeruest & OpenAPI
-- API-Framework, Auth, Health: **67.4%** API-Layer-Coverage
-- Postman-Collection: vorhanden und aktuell (v0.5)
-
-### M02 - Parser Basis (FDX) & Testdataset
-- FDX-Parser: **93.4%**
-- Scene Heading Parser: **100.0%**
-- Secure XML: **81.8%**
-- SecureBuffer: **95.2%**
-- 41 dedizierte FDX-Tests, 12 Testdateien
-
-### M03 - PDF & Streaming-Parsing
-- PDF Scene Splitter: **96.9%**
-- PDF LLM Structurer: **82.2%**
-- Prompt Manager: **91.7%**
-- 32 dedizierte PDF-Tests, 5 Testdateien
-
-### M04 - Risiko-Taxonomie & Scoring
-- Taxonomy Manager: **99.0%**
-- Report Generator: **100.0%**
-- 38 dedizierte Taxonomie-Tests
-
-### M05 - Reports & Delivery
-- Report Generator: **100.0%**
-- 13 dedizierte Report-Tests
-
----
-
-## Empfehlungen
-
-1. **Fehlgeschlagene Tests fixen:** Die 12 Tests an die Pydantic-Validierungsarchitektur anpassen
-2. **LLM Provider Coverage erhoehen:** Mock-basierte Tests fuer Ollama/Mistral Provider
-3. **Workflow Coverage erhoehen:** Temporal-Activity-Tests mit gemocktem Redis/LLM
-4. **PDF-Parser Coverage erhoehen:** Zusaetzliche Tests fuer OCR-Fallback-Pfade
-
----
-
-*Generiert mit pytest-cov auf Basis von 167 Tests gegen 1.956 Statements.*
+- **Installation/Betrieb:** frische Installation ohne `greenlet`, `alembic upgrade` mit falschem
+  Treiber, `VARCHAR(9)`-Statusspalte (jeder asynchrone Job scheiterte in der Zustellphase),
+  Prod-Overlay band den Quellcode vom Host ein und veröffentlichte die Temporal-UI,
+  Platzhalter-Secrets wurden in Produktion akzeptiert.
+- **Sicherheitsanalyse:** LLM-Fehler und Filter-Treffer wurden als „keine Risiken" gemeldet;
+  der Prompt-Injection-Filter blockte normalen Drehbuchtext („User:innen", „---");
+  lange Szenen wurden ab 10 000 Zeichen abgeschnitten; FDX-Inhalte ohne Szenenüberschrift bzw. in
+  `<DualDialogue>` gingen verloren; OCR-Seiten liefen unter Last in den Timeout.
+- **Datenschutz:** Findings mit Drehbuchzitaten in der Temporal-History, Skriptinhalt nach
+  Verarbeitungsfehlern 6 h im Puffer, Bildschirm-Vorschau von Drehbuchtext im Log.
+- **API:** über 15 Eingaben führten zu 500/503 statt 4xx, Pfad-Traversal über `project_id` in die
+  ePro-Push-URL, Rate-Limit-Umgehung über die Schreibweise des `Authorization`-Headers,
+  Platzhalter-Report mit 0 Befunden nach Ablauf des Puffers.
