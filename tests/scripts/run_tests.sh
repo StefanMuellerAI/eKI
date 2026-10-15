@@ -27,7 +27,7 @@ echo ""
 
 # Install dev dependencies if needed
 echo "Installing dev dependencies..."
-$PYTHON_CMD -m pip install -e ".[dev]" -q
+$PYTHON_CMD -m pip install -c requirements-dev.lock -e ".[dev]" -q
 
 echo ""
 echo "Running tests..."

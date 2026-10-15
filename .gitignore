@@ -53,6 +53,10 @@ secrets/*.txt
 secrets/*.key
 secrets/*.pem
 
+# Real knowledge-base documents for seeding (customer material -- never commit)
+config/kb_seed/real/*
+!config/kb_seed/real/.gitkeep
+
 # Database
 *.db
 *.sqlite3

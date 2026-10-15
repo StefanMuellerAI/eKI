@@ -10,7 +10,7 @@ Die eKI ist eine modulare REST-API, die Drehbuecher aus dem eProjekt-System der 
 
 ### Kernprinzipien
 
-- **Design-First:** OpenAPI 3.1.1 ist die Single Source of Truth
+- **Design-First:** Der OpenAPI-3.1.1-Vertrag `openapi/eki-api-v1.0.yaml` ist massgeblich. Das von FastAPI erzeugte `/openapi.json` (nur mit `DEBUG=true` ausgeliefert) wird per Contract-Test (`tests/test_m12_openapi_contract.py`) mit ihm deckungsgleich gehalten
 - **Processing-Only:** Keine persistente Speicherung von Drehbuechern/Reports (nur Audit-Metadaten)
 - **Write-Through:** Ergebnisse werden sofort an eProjekt zurueckgespielt
 - **Minimalinvasiv:** Integration nur ueber REST, keine direkten DB-Zugriffe
@@ -78,9 +78,9 @@ Beide Workflows teilen sich die Risikoanalyse (pro Szene) und Delivery-Activitie
 
 | Komponente | Technologie | Zweck |
 |---|---|---|
-| Framework | Python 3.11+ / FastAPI | REST-API (ASGI) |
+| Framework | Python 3.11 / FastAPI | REST-API (ASGI); Abhaengigkeiten gepinnt in `requirements.lock` / `requirements-dev.lock` |
 | Workflow-Engine | Temporal 1.29.4 | Asynchrone Verarbeitung, 6h-Retry-Fenster, Schedules |
-| Datenbank | PostgreSQL 16 + pgvector | Metadaten, Embeddings (spaeter) |
+| Datenbank | PostgreSQL 16 + pgvector | Metadaten, Dead Letters, Knowledge-Base-Embeddings |
 | Cache | Redis 7 | SecureBuffer, Rate Limiting |
 | LLM | Ollama (mistral-small3.2 via LocalMistralProvider) | Lokale Inferenz in Produktion (Strukturierung + Risikoanalyse) |
 | LLM (Cloud) | Mistral Cloud API | Stage-Umgebung (in Produktion gesperrt) |
@@ -95,42 +95,106 @@ Beide Workflows teilen sich die Risikoanalyse (pro Szene) und Delivery-Activitie
 
 ## Schnellstart
 
+Lokaler Entwicklungs-Stack unter Linux (Docker Desktop auf macOS/Windows funktioniert
+analog). Produktion: `docs/OPERATIONS_GUIDE.md`.
+
 ### Voraussetzungen
 
-- Docker & Docker Compose
-- Python 3.11+ (fuer lokale Entwicklung)
-- Ollama mit `mistral-small3.2` fuer LLM-Inferenz
-- Fuer lokale Entwicklung ohne Docker: `tesseract-ocr tesseract-ocr-deu tesseract-ocr-eng` (OCR-Fallback; im Docker-Image enthalten)
+- Docker mit Docker Compose >= 2.24 (`docker compose version`)
+- Python 3 auf dem Host (nur fuer `scripts/generate_secrets.py`); fuer Entwicklung und Tests
+  Python 3.11 wie CI/Docker (siehe `docs/TESTING_GUIDE.md`)
+- ca. 25 GB Plattenplatz (Images, `mistral-small3.2` ~15 GB, `mxbai-embed-large`)
+- NVIDIA-GPU empfohlen (>= 24 GB VRAM); ohne GPU laeuft Ollama auf der CPU und eine Pruefung
+  dauert entsprechend lange. GPU fuer den `ollama`-Service: `deploy`-Block aus
+  `docker-compose.override.yml.example` uebernehmen (nur diesen, siehe `docs/CONFIGURATION.md` §2.2)
+- Fuer Tests ohne Docker: `tesseract-ocr tesseract-ocr-deu tesseract-ocr-eng` (OCR-Fallback; im Docker-Image enthalten)
 
 ### Setup
 
 ```bash
-# 1. Environment konfigurieren
+# 1. Konfiguration mit echten Secrets (Passwort muss in POSTGRES_PASSWORD, POSTGRES_PWD
+#    und DATABASE_URL identisch sein -- der sed-Aufruf setzt alle drei)
 cp .env.example .env.local
-# .env.local mit sicheren Werten fuellen
+python3 scripts/generate_secrets.py
+PW=$(cat secrets/db_password.txt); KEY=$(cat secrets/api_secret_key.txt)
+sed -i.bak -e "s/CHANGE_ME_STRONG_PASSWORD_HERE/$PW/g" \
+           -e "s/CHANGE_ME_256_BIT_SECRET_KEY_HERE/$KEY/" .env.local && rm .env.local.bak
 
-# 2. Services starten
-docker compose up -d
+# 2. Stack bauen und starten (7 Services; api/worker mounten den Quellcode)
+docker compose up -d --build
+docker compose ps                     # postgres, redis, temporal, api: healthy
 
-# 3. Migrationen ausfuehren
-docker compose exec api alembic upgrade head
+# 3. Modelle einmalig laden (Volume ollama_data)
+docker compose exec ollama ollama pull mistral-small3.2      # LLM (LLM_PROVIDER=local_mistral)
+docker compose exec ollama ollama pull mxbai-embed-large     # KB-Embeddings (OLLAMA_EMBEDDING_MODEL)
 
-# 4. API-Key erstellen
+# 4. Datenbankschema anlegen
+docker compose exec api alembic upgrade head                 # head: b8d0f2a4c6e3
+
+# 5. API-Key erstellen (interaktiv, Klartext wird nur einmal angezeigt)
 docker compose exec api python scripts/create_api_key.py --insert
+export EKI_API_KEY=eki_...
 
-# 5. Testen
+# 6. Pruefen
 curl http://localhost:8000/health
+curl -H "Authorization: Bearer $EKI_API_KEY" http://localhost:8000/ready
+
+# 7. Erste Pruefung (FDX-Fixture, Pull-Modus)
+B64=$(base64 -w0 tests/fixtures/fdx/stunt_heavy.fdx)
+curl -s -X POST http://localhost:8000/v1/security/check:async \
+  -H "Authorization: Bearer $EKI_API_KEY" -H "Content-Type: application/json" \
+  -d "{\"script_content\": \"$B64\", \"script_format\": \"fdx\", \"project_id\": \"demo-1\", \"delivery\": \"pull\"}"
+curl -s -H "Authorization: Bearer $EKI_API_KEY" http://localhost:8000/v1/security/jobs/<job_id>        # bis "completed"
+curl -s -H "Authorization: Bearer $EKI_API_KEY" http://localhost:8000/v1/security/reports/<report_id>  # One-Shot: JSON + PDF
 ```
+
+Aenderungen an `.env.local` wirken erst nach `docker compose up -d --force-recreate api worker`
+(`docker compose restart` liest die Datei nicht neu ein). Variablen wie `GRAFANA_ADMIN_PASSWORD`,
+`EKI_IMAGE_TAG` oder `GHCR_OWNER` liest Docker Compose aus der Shell bzw. einer Projekt-`.env`,
+nicht aus `.env.local` (`docs/CONFIGURATION.md` §2).
 
 ### Services
 
-| Service | URL | Beschreibung |
+Veroeffentlicht werden nur Port 8000 (API) und im Entwicklungs-Stack 8080 (Temporal UI).
+
+| Service | Zugriff | Beschreibung |
 |---|---|---|
-| API | http://localhost:8000 | FastAPI mit Swagger UI (`/docs`) |
-| Temporal UI | http://localhost:8080 | Workflow-Monitoring |
-| PostgreSQL | localhost:5432 | Datenbank (intern) |
-| Redis | localhost:6379 | SecureBuffer + Cache (intern) |
-| Ollama | localhost:11434 | Lokale LLM-Inferenz |
+| API | http://localhost:8000 | FastAPI; Swagger UI `/docs` nur mit `DEBUG=true` |
+| Temporal UI | http://localhost:8080 | Workflow-Monitoring; nur Entwicklung (Produktion: SSH-Tunnel, `docs/OPERATIONS_GUIDE.md` §8.2) |
+| PostgreSQL | nur intern: `docker compose exec postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'` | Datenbanken `eki_db`, `temporal`, `temporal_visibility` |
+| Redis | nur intern: `docker compose exec redis redis-cli` | SecureBuffer + Rate-Limit-Zaehler |
+| Ollama | nur intern: `docker compose exec ollama ollama list` | Lokale LLM-Inferenz + Embeddings |
+| Grafana / Jaeger | http://localhost:3000 / http://localhost:16686 | nur mit `docker-compose.observability.yml` |
+
+---
+
+## Dokumentation
+
+| Dokument | Inhalt |
+|---|---|
+| `README.md` | Ueberblick, Schnellstart, Architektur (dieses Dokument) |
+| `CHANGELOG.md` | Aenderungsprotokoll je Version |
+| `docs/OPERATIONS_GUIDE.md` | Betrieb: Installation, Updates, Migrationen, Backup/Restore, Runbooks, Troubleshooting |
+| `docs/CONFIGURATION.md` | Referenz aller Einstellungen (`.env.local`, Compose-Variablen) |
+| `docs/TESTING_GUIDE.md` | Testebenen, lokale Ausfuehrung, CI-Pipeline |
+| `docs/EPRO_INTEGRATION_GUIDE.md` | Schnittstelle fuer das eProjekt-Team |
+| `docs/DATENSCHUTZ.md` | Datenhaltung: was wo wie lange gespeichert wird |
+| `docs/M09_SLO.md` | SLOs, Alerts, Dashboards |
+| `docs/M10_FAILOVER_RUNBOOK.md` | Zustellstoerungen, Dead Letters |
+| `docs/M06_KB_GUIDE.md` | Knowledge Base befuellen und aktivieren |
+| `docs/LLM_INTEGRATION.md` | LLM-Provider-Architektur |
+| `docs/M11_PARITY_REPORT.md` | Paritaet Cloud <-> Lokal |
+| `docs/UAT/UAT_TESTPLAN.md`, `docs/UAT/UAT_PROTOCOL_TEMPLATE.md` | Abnahmetests 1-9, Protokollvorlage |
+| `docs/UAT/GO_LIVE_CHECKLIST.md`, `docs/UAT/TRAINING.md`, `docs/UAT/HANDOVER.md` | Go-Live, Schulung, Uebergabe |
+| `openapi/eki-api-v1.0.yaml` | API-Vertrag (OpenAPI 3.1.1) |
+| `postman/README.md` | Postman-Collection und Environment |
+| `secrets/README.md` | Secrets erzeugen und einbinden |
+
+Die Meilenstein-Nachweise (`docs/M01_COMPLETION_REPORT.md`, `docs/M06_ACCEPTANCE_EVIDENCE.md` bis
+`docs/M12_ACCEPTANCE_EVIDENCE.md`, `docs/TEST_REPORT.md`, `docs/SECURITY_AUDIT_2026-02-06.md`) sind
+historisch: Sie beschreiben den Stand ihres Datums und werden nicht fortgeschrieben. Als veraltet
+markierte Dokumente (`docs/DEPLOYMENT_GUIDE.md`, `docs/OLLAMA_*.md`, `docs/QUICKSTART_OLLAMA.md`,
+`docs/SECURITY_AUDIT_REPORT.md` u. a.) bleiben nur zur Nachverfolgung erhalten.
 
 ---
 
@@ -140,10 +204,14 @@ curl http://localhost:8000/health
 
 | Methode | Endpunkt | Beschreibung |
 |---|---|---|
-| `POST` | `/v1/security/check` | Synchroner Check -- JSON (Base64) oder Multipart FDX/PDF-Upload |
+| `POST` | `/v1/security/check` | **Stub (M01):** validiert JSON (Base64) oder Multipart-Upload und liefert einen festen Platzhalter-Report **ohne Analyse** -- fuer echte Pruefungen `check:async` verwenden |
 | `POST` | `/v1/security/check:async` | Asynchroner Check via Temporal Workflow (FDX oder PDF) |
 | `GET` | `/v1/security/jobs/{job_id}` | Echtes Job-Status-Tracking aus DB (M05) |
 | `GET` | `/v1/security/reports/{id}` | One-Shot-Report: JSON + PDF, danach geloescht (M05); Header `X-One-Shot: true` (M10) |
+
+Das Request-Feld `callback_url` wird validiert (HTTPS, keine privaten Adressen), aber **nicht
+verwendet**: Push-Zustellungen gehen immer an `EPRO_BASE_URL/eki/scl/set-risk-assessment/{project_id}`.
+`priority` wird gespeichert, beeinflusst die Abarbeitung aber nicht.
 
 ### Knowledge Base Endpoints (M06, Auth erforderlich)
 
@@ -161,9 +229,9 @@ curl http://localhost:8000/health
 |---|---|---|---|
 | `GET` | `/` | Nein | API-Info |
 | `GET` | `/health` | Nein | Liveness-Probe |
-| `GET` | `/ready` | Ja | Readiness-Probe (DB, Redis, Temporal) |
-| `GET` | `/metrics` | Ja | Prometheus Metrics |
-| `GET` | `/docs` | Nein | Swagger UI (nur Development) |
+| `GET` | `/ready` | Ja | Readiness-Probe (DB, Redis, Temporal; Ollama wird nicht geprueft) |
+| `GET` | `/metrics` | Ja | Prometheus Metrics (bei `METRICS_ENABLED=true`) |
+| `GET` | `/docs`, `/redoc`, `/openapi.json` | Nein | nur mit `DEBUG=true` (in Produktion verboten) |
 
 ### Upload-Formate
 
@@ -260,7 +328,11 @@ Beim Abruf via `GET /v1/security/reports/{id}` enthaelt die Response beides: `re
 | Modus | Beschreibung | Konfiguration |
 |---|---|---|
 | **Pull** (Default) | Report bleibt in Redis (verschluesselt, TTL 6h). ePro holt ihn via One-Shot-GET. Nach erstem Abruf sofort geloescht. | `delivery: "pull"` |
-| **Push** | eKI sendet Report per POST an ePro. Bei 201 sofort geloescht, bei Fehler Retry. | `delivery: "push"` |
+| **Push** | eKI sendet Report per POST an `EPRO_BASE_URL/eki/scl/set-risk-assessment/{project_id}`. Bei 2xx sofort geloescht, bei Fehler Retry. | `delivery: "push"` |
+
+Ein Abruf nach Ablauf der Buffer-TTL oder nach einer Push-Zustellung liefert `410 Gone` (der Inhalt
+ist geloescht). Ist Redis nicht erreichbar, antwortet der Abruf mit `503`, und der Report bleibt
+abrufbar.
 
 ### Idempotenz
 
@@ -281,7 +353,7 @@ Der Mistral-Cloud-Adapter ist auf produktionsreifes Structured Output aufgeruest
 - Genau ein Self-Correcting-Retry mit Fehlerkontext im Prompt
 - Identischer Rueckgabevertrag wie OllamaProvider
 
-Damit kann `LLM_PROVIDER=mistral_cloud` fuer Stage-Tests (Pflichtenheft Abnahmetest 8) genutzt werden. Ollama bleibt der Default fuer den lokalen Produktivbetrieb.
+Damit kann `LLM_PROVIDER=mistral_cloud` fuer Stage-Tests (Pflichtenheft Abnahmetest 8) genutzt werden. Produktion laeuft lokal mit `LLM_PROVIDER=local_mistral` (Ollama, M11); `mistral_cloud` ist dort gesperrt und bietet keine KB-Embeddings. Achtung: Der Code-Default von `LLM_PROVIDER` ist `mistral_cloud` -- `.env.example` setzt deshalb explizit `local_mistral`.
 
 ### Knowledge Base mit pgvector
 
@@ -290,26 +362,30 @@ Die KB speichert verschluesselte Sicherheits-Dokumente (Stunt-SOPs, SFX-Leitfaed
 | Tabelle | Inhalt |
 |---|---|
 | `kb_documents` | Originaltext Fernet-verschluesselt, Metadaten (title, source, tags, tenant_id, expires_at, content_hash) |
-| `kb_embeddings` | Chunks (~1200 Tokens, 100 Overlap) mit `vector(1024)` aus Ollama `mxbai-embed-large` und ivfflat-Cosine-Index |
+| `kb_embeddings` | Chunks (~1200 Tokens, 100 Overlap) mit `vector(1024)` aus Ollama `mxbai-embed-large` (Default; Alternative `bge-m3`) und ivfflat-Cosine-Index |
 
 **Aktivierung:** Per Feature-Flag `KB_RETRIEVAL_ENABLED` (Default `false`). Solange deaktiviert, ist der Risk-Flow bytewise identisch mit M05. Aktivierung erst nach Validierung.
 
-**Test-KB befuellen (Bernd-Stand-in):**
+**Embedding-Modell:** API (Ingest) und Worker (Retrieval) muessen dasselbe `OLLAMA_EMBEDDING_MODEL`
+nutzen. Ein Wechsel nach dem ersten Ingest erfordert Leeren und Neubefuellen der KB, weil Vektoren
+verschiedener Modelle nicht vergleichbar sind (`docs/OPERATIONS_GUIDE.md` §4.8, §5.6).
+
+**Test-KB befuellen (Bernd-Stand-in)** -- im API-Container (Entwicklung: `config/` ist gemountet):
 
 ```bash
-export EKI_API_KEY="eki_..."
-python scripts/seed_kb.py --seed-placeholders   # ingestet 6 Beispiel-SOPs
-python scripts/seed_kb.py --status              # Uebersicht
+docker compose exec -e EKI_API_KEY="eki_..." api python scripts/seed_kb.py --seed-placeholders   # 6 Beispiel-SOPs
+docker compose exec -e EKI_API_KEY="eki_..." api python scripts/seed_kb.py --status              # Uebersicht
 ```
 
-**Echte Inhalte einspielen:**
+**Echte Inhalte einspielen** (`config/kb_seed/real/` anlegen; echte Dokumente nicht committen):
 
 ```bash
-cp ~/Bernd-Stunt-Leitfaden.pdf config/kb_seed/real/
-python scripts/seed_kb.py --wipe-placeholders   # nur Tag 'placeholder' weg
-python scripts/seed_kb.py --reseed              # ingestet alles aus real/
+mkdir -p config/kb_seed/real && cp ~/Bernd-Stunt-Leitfaden.pdf config/kb_seed/real/
+docker compose exec -e EKI_API_KEY="eki_..." api python scripts/seed_kb.py --wipe-placeholders   # nur Tag 'placeholder' weg
+docker compose exec -e EKI_API_KEY="eki_..." api python scripts/seed_kb.py --reseed              # ingestet alles aus real/
 ```
 
+Alternativ laeuft `scripts/seed_kb.py` auf dem Host gegen `http://localhost:8000` (braucht `requests`).
 Details in `docs/M06_KB_GUIDE.md`.
 
 ## Grossdokument-Optimierung (M07)
@@ -350,19 +426,22 @@ mindestens einer der `*_CONCURRENCY`-Werte > 1 ist.
 ### Benchmark 300 Seiten
 
 ```bash
-# Fixture bauen
+# Host-venv mit Dev-Extras (requests, reportlab), siehe docs/TESTING_GUIDE.md
+# Fixture bauen (liegt bereits bei: tests/fixtures/pdf/large_synthetic_300pp.pdf)
 python tests/build_large_fixture.py
 
 # Baseline (Concurrency 1, M06-Verhalten)
 export EKI_API_KEY="eki_..."
 python tests/run_pdf_m07_benchmark.py --concurrency 1
 
-# Parallel-Lauf
-sed -i '' 's/^LLM_PARALLEL_ENABLED=.*/LLM_PARALLEL_ENABLED=true/' .env.local
-sed -i '' 's/^OLLAMA_MAX_CONCURRENT_REQUESTS=.*/OLLAMA_MAX_CONCURRENT_REQUESTS=2/' .env.local
-sed -i '' 's/^PDF_STRUCTURE_CONCURRENCY=.*/PDF_STRUCTURE_CONCURRENCY=2/' .env.local
-sed -i '' 's/^RISK_ANALYSIS_CONCURRENCY=.*/RISK_ANALYSIS_CONCURRENCY=2/' .env.local
-docker compose restart api worker
+# Parallel-Lauf (sed -i.bak funktioniert mit GNU- und BSD-sed)
+sed -i.bak \
+  -e 's/^LLM_PARALLEL_ENABLED=.*/LLM_PARALLEL_ENABLED=true/' \
+  -e 's/^OLLAMA_MAX_CONCURRENT_REQUESTS=.*/OLLAMA_MAX_CONCURRENT_REQUESTS=2/' \
+  -e 's/^PDF_STRUCTURE_CONCURRENCY=.*/PDF_STRUCTURE_CONCURRENCY=2/' \
+  -e 's/^RISK_ANALYSIS_CONCURRENCY=.*/RISK_ANALYSIS_CONCURRENCY=2/' \
+  .env.local && rm .env.local.bak
+docker compose up -d --force-recreate api worker   # 'restart' liest .env.local nicht neu ein
 python tests/run_pdf_m07_benchmark.py --concurrency 2
 ```
 
@@ -409,7 +488,10 @@ Webhook-Ergebnisse, KB-Bestand, Sanitizer-Treffer und `eki_build_info`.
 
 ```bash
 # Prometheus + Alertmanager + Grafana (3 provisionierte Dashboards) + Jaeger
-printf '%s' 'eki_...' > secrets/prometheus_api_key.txt   # Scraper-Key, siehe secrets/README.md
+# Scraper-Key VOR dem Start ablegen (sonst legt Docker ein Verzeichnis an), siehe secrets/README.md §3
+printf '%s' 'eki_...' > secrets/prometheus_api_key.txt
+sudo chown 65534 secrets/prometheus_api_key.txt && sudo chmod 600 secrets/prometheus_api_key.txt   # Prometheus laeuft als nobody
+export GRAFANA_ADMIN_PASSWORD='<starkes-passwort>'   # Compose-Substitution; ohne: wortwoertlich CHANGE_ME
 docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
 # Grafana http://localhost:3000, Jaeger http://localhost:16686
 ```
@@ -454,34 +536,36 @@ je API-Key gescoped (`(user_id, idempotency_key)` unique) und race-sicher.
 | `GET` | `/v1/ops/dead-letters/{id}` | Einzelansicht |
 | `POST` | `/v1/ops/dead-letters/{id}:acknowledge` | Nach Analyse quittieren |
 
-Admin-Keys: `python scripts/create_api_key.py --insert --admin`. Ein Replay aus der DLQ ist
+Admin-Keys: `docker compose exec api python scripts/create_api_key.py --insert --admin`. Ein Replay aus der DLQ ist
 bewusst nicht vorgesehen -- der Inhalt wird beim endgueltigen Scheitern geloescht
 (Delete-on-Delivery); ePro stoesst den Check neu an. Runbook: `docs/M10_FAILOVER_RUNBOOK.md`.
 
 ## Lokaler LLM-Adapter & Paritaetstests (M11)
 
 Produktion laeuft ausschliesslich lokal (Pflichtenheft §4.3): `LLM_PROVIDER=local_mistral` nutzt
-`llm/local_mistral.py` mit `LOCAL_MISTRAL_MODEL=mistral-small3.2` (Default) ueber Ollama; der
-Healthcheck prueft, dass das Modell gepullt ist. In `ENV=production` wird `mistral_cloud`
-abgelehnt, solange nicht `LLM_ALLOW_EXTERNAL_PROVIDERS=true` gesetzt ist (Abnahmetest 9).
-`gemma4` bleibt als Alternative konfigurierbar (`LLM_PROVIDER=ollama`, `OLLAMA_MODEL=gemma4:31b`).
+`llm/local_mistral.py` mit `LOCAL_MISTRAL_MODEL=mistral-small3.2` (Default) ueber Ollama; dessen
+`health_check()` prueft, dass das Modell gepullt ist (genutzt von `scripts/test_llm.py` und
+`scripts/run_parity.py`). In `ENV=production` wird `mistral_cloud` abgelehnt, solange nicht
+`LLM_ALLOW_EXTERNAL_PROVIDERS=true` gesetzt ist (Abnahmetest 9). `gemma4` bleibt als Alternative
+konfigurierbar (`LLM_PROVIDER=ollama`, `OLLAMA_MODEL=gemma4:31b`).
 
 ```bash
-# Paritaet Cloud <-> Lokal auf dem Golden-Set (16 Szenen)
-python scripts/run_parity.py --providers mistral_cloud,local_mistral,ollama:gemma4:31b
 # Prod-Cutover-Smoke: E2E-Job, One-Shot, Delete-on-Delivery, keine externen LLM-Calls
-python scripts/smoke_prod.py
+docker compose exec -e EKI_API_KEY=eki_... api python scripts/smoke_prod.py --worker-metrics http://worker:9090
+# Paritaet auf dem Golden-Set (16 Szenen) -- im API-Container, weil Ollama nur im Docker-Netz
+# erreichbar ist; Kommandos: docs/OPERATIONS_GUIDE.md §7
 ```
 
 Report-Rahmen und Schwellen: `docs/M11_PARITY_REPORT.md`. Betriebsleitfaden:
 `docs/OPERATIONS_GUIDE.md`. Release-Images werden bei `v*`-Tags nach GHCR gepusht
-(`docker-compose.prod.yml` referenziert sie ueber `GHCR_OWNER`/`EKI_IMAGE_TAG`).
+(`docker-compose.prod.yml` referenziert sie ueber `GHCR_OWNER`/`EKI_IMAGE_TAG`; beide liest
+Docker Compose aus Shell bzw. Projekt-`.env`, nicht aus `.env.local`).
 
 ## UAT-Paket & Uebergabe (M12)
 
 | Artefakt | Pfad |
 |---|---|
-| OpenAPI 1.0.0 (Single Source of Truth, Spectral 0 Errors, Contract-Test) | `openapi/eki-api-v1.0.yaml`, `tests/test_m12_openapi_contract.py` |
+| OpenAPI 1.0.0 (API-Vertrag, Spectral 0 Errors, Contract-Test) | `openapi/eki-api-v1.0.yaml`, `tests/test_m12_openapi_contract.py` |
 | Postman Collection + Environment | `postman/eKI-API-v1.0.postman_collection.json`, `postman/eKI-API.postman_environment.json` |
 | Aenderungsprotokoll | `CHANGELOG.md` |
 | Testplan fuer die 9 Abnahmetests, Protokollvorlage | `docs/UAT/UAT_TESTPLAN.md`, `docs/UAT/UAT_PROTOCOL_TEMPLATE.md` |
@@ -490,11 +574,21 @@ Report-Rahmen und Schwellen: `docs/M11_PARITY_REPORT.md`. Betriebsleitfaden:
 | Prod-Cutover-Smoke, Paritaetslauf | `scripts/smoke_prod.py`, `scripts/run_parity.py` |
 
 ```bash
-python scripts/uat/mock_epro_server.py --port 9999        # Terminal 1 (ePro-Attrappe)
+python scripts/uat/mock_epro_server.py --port 9999        # Terminal 1 (ePro-Attrappe auf dem Host)
+# .env.local: EPRO_BASE_URL=http://host.docker.internal:9999/api
+#             EPRO_WEBHOOK_URL=http://host.docker.internal:9999/api/eki/scl/delivery-failed
+# Linux: zusaetzlich extra_hosts "host.docker.internal:host-gateway" fuer api/worker (TESTING_GUIDE §6.1)
+docker compose up -d --force-recreate api worker
 export EKI_API_URL=http://localhost:8000 EKI_API_KEY=eki_... EKI_ADMIN_KEY=eki_... MOCK_URL=http://localhost:9999
-python scripts/uat/run_acceptance_tests.py --redis-url redis://localhost:6379/0 --log-cmd "docker compose logs api worker"
+python scripts/uat/run_acceptance_tests.py --log-cmd "docker compose logs api worker"
 # -> tests/reports/uat_<timestamp>.md (inhaltsfreies Protokoll)
 ```
+
+**Achtung:** Ohne Umstellung von `EPRO_BASE_URL`/`EPRO_WEBHOOK_URL` gehen Push-Jobs an die echte
+Stage -- `docker-compose.yml` bildet `staging.epro.filmakademie.de` per `extra_hosts` auf
+`193.196.129.23` ab. Redis ist nicht auf den Host veroeffentlicht; den Buffer-Check daher per
+`docker compose exec redis redis-cli --scan --pattern 'eki:buf:*' | wc -l` (Erwartung `0`).
+Vollstaendige Anleitung: `docs/TESTING_GUIDE.md` §6.1.
 
 Abnahmetests 1, 8 und 9 (Stage-ePro, Prod-Cutover) sind im Testplan als manuelle Schritte mit
 Protokollvorlage beschrieben.
@@ -588,10 +682,10 @@ eKI_API/
 │   ├── parity.py                 # Cloud<->Lokal Paritaets-Harness (M11)
 ├── workflows/                    # Temporal Workflows
 │   ├── security_check.py         # FDX/PDF Workflow-Router (M03)
-│   ├── maintenance.py            # KB-TTL-Cleanup als Temporal-Schedule (M09)
-│   └── activities.py             # 11 Activities inkl. LLM-Risikoanalyse (M03-M08)
+│   ├── maintenance.py            # KB-TTL-Cleanup als Temporal-Schedule (M09, 1 Activity)
+│   └── activities.py             # 13 Activities inkl. LLM-Risikoanalyse und Zustellung (M03-M10)
 ├── worker/
-│   └── main.py                   # Temporal Worker (8 Activities registriert)
+│   └── main.py                   # Temporal Worker (2 Workflows, 14 Activities registriert)
 ├── llm/                          # LLM Provider Abstraktion
 │   ├── base.py                   # BaseLLMProvider Interface (+ embed() M06)
 │   ├── factory.py                # Provider Factory
@@ -603,26 +697,22 @@ eKI_API/
 │   ├── session.py                # Async Session Management
 │   └── migrations/               # Alembic Migrations
 ├── tests/
-│   ├── test_fdx_parser.py        # 41 FDX/Security/Buffer Tests
-│   ├── test_pdf_parser.py        # 32 PDF/Splitter/LLM/PromptManager Tests
-│   ├── test_taxonomy.py          # 38 Taxonomie/Scoring/Measures/Validation Tests (M04)
-│   ├── test_reports.py           # 13 Report-Generator/PDF/Delivery/Idempotenz Tests (M05)
-│   ├── test_kb_service.py        # KB-Chunker/Frontmatter/Dedup Tests (M06)
-│   ├── test_kb_endpoints.py      # /v1/kb/* Routen-Contract Tests (M06)
-│   ├── test_mistral_cloud_structured.py  # Mistral JSON-Mode + Schema Retry (M06)
-│   ├── test_prompt_manager_fix.py        # System-Prompt-Format-Regression (M06)
-│   ├── test_risk_with_kb.py      # Feature-Flag default OFF Regression (M06)
-│   ├── test_seed_kb.py           # CLI Wipe/Reseed/Status Idempotenz (M06)
-│   ├── test_api.py               # API Endpoint Tests
-│   ├── test_security.py          # Security Feature Tests
-│   ├── test_config.py            # Config Parsing Tests
+│   ├── conftest.py               # Fixtures: SQLite/PostgreSQL-Engine, MockRedis, MockTemporal, API-Keys
+│   ├── test_*.py                 # pytest-Suite (Ebenen und Dateien: docs/TESTING_GUIDE.md)
+│   ├── run_*.py                  # Runner gegen einen laufenden Stack (keine pytest-Tests)
+│   ├── parity/                   # Golden-Set fuer den Paritaetslauf (M11)
 │   ├── fixtures/fdx/             # 12 synthetische FDX-Testdateien
-│   └── fixtures/pdf/             # 5 synthetische PDF-Testdateien
-├── scripts/                      # Utilities (inkl. seed_kb.py fuer KB-Befuellung)
-├── openapi/                      # OpenAPI 3.1.1 Spezifikation
-├── postman/                      # Postman Collection
-├── docker/                       # Dockerfiles (API + Worker)
-└── docker-compose.yml            # 7 Services
+│   └── fixtures/pdf/             # synthetische PDFs UND echte Drehbuecher (siehe "Bekannte Grenzen")
+├── scripts/                      # create_api_key, generate_secrets, seed_kb, smoke_prod, run_parity, test_llm, uat/
+├── openapi/                      # OpenAPI 3.1.1 Vertrag
+├── postman/                      # Postman Collection + Environment
+├── secrets/                      # lokal erzeugte Secrets (git-ignoriert), siehe secrets/README.md
+├── docker/                       # Dockerfiles (API + Worker), Temporal-Dynamic-Config, Observability
+├── requirements.lock             # gepinnte Laufzeit-Abhaengigkeiten (Dockerfiles)
+├── requirements-dev.lock         # gepinnte Dev-Abhaengigkeiten (CI, Entwicklung)
+├── docker-compose.yml            # 7 Services (Entwicklung; Basis fuer die Overlays)
+├── docker-compose.prod.yml       # Prod-Overlay: GHCR-Images, nur Port 8000, Gunicorn, GPU
+└── docker-compose.observability.yml  # Prometheus, Alertmanager, Grafana, Jaeger
 ```
 
 ---
@@ -630,60 +720,62 @@ eKI_API/
 ## Tests
 
 ```bash
-# Alle Parser-Tests (FDX + PDF)
-pytest tests/test_fdx_parser.py tests/test_pdf_parser.py -v
-
-# Nur PDF-Tests
-pytest tests/test_pdf_parser.py -v
-
-# Mit Coverage
-pytest tests/ --cov --cov-report=html
+python3.11 -m venv .venv && . .venv/bin/activate
+pip install -c requirements-dev.lock -e ".[dev]"      # Lock-Datei als Constraint, wie die CI
+pytest                                                # SQLite in-memory + Mocks, mit Coverage
+pytest -m "not temporal and not ocr"                  # offline / ohne Tesseract
+TEST_POSTGRES_URL=postgresql+asyncpg://eki_user:eki_password@localhost:5432/eki_test pytest   # echter Dialekt (DB wird geleert!)
 ```
 
-### Testabdeckung
+Die CI laeuft die Suite zweimal: im SQLite-Modus und gegen PostgreSQL + pgvector mit echtem
+Redis und Coverage-Gate 80 %. SQLite allein reicht nicht -- es hat zwei Produktionsfehler
+(`VARCHAR(9)`-Statusspalte, Zeitzonen bei API-Key-Ablauf) verdeckt. Marker: `temporal`
+(Time-Skipping-Testserver, Download beim ersten Lauf) und `ocr` (Tesseract `deu`+`eng`).
 
-| Bereich | Tests | Beschreibung |
-|---|---|---|
-| Scene Heading Parser | 12 | DE/EN Formate, Edge Cases |
-| Secure XML | 5 | XXE, Entity Bomb, Malformed, Oversize |
-| FDX Parser | 12 | Alle Szenarien inkl. 55-Szenen-Performance |
-| PDF Scene Splitter | 12 | INT/EXT Split, Praeambel, DE/EN, reale PDFs |
-| PDF Text Extraction | 5 | pdfplumber, Oversize, Invalid, Benchmark |
-| LLM Structurer | 5 | Schema-Validierung, Fallback, Mock |
-| PromptManager | 6 | YAML laden, Variablen, Fehlerbehandlung |
-| Parser Factory | 5 | FDX + PDF Routing |
-| SecureBuffer | 7 | Encrypt/Decrypt, TTL, Cleanup |
-| Taxonomy Loading | 6 | YAML laden, Klassen pruefen, Zaehlung |
-| Class Lookups | 4 | Rule-IDs, Kategorien, Case-Insensitive |
-| Measures Catalog | 6 | Lookup, Aufloesen, Klassen-Zuordnung |
-| Severity Scoring | 12 | Likelihood x Impact Matrix, Grenzwerte |
-| Finding Validation | 5 | Enrichment, Auto-Fill, Fallbacks |
-| Prompt Context | 4 | Taxonomie-Kontext fuer LLM |
-| Report Builder | 3 | JSON-Report korrekt aggregiert |
-| PDF Generation | 4 | PDF erzeugt, Base64, leere Findings |
-| Report Response | 2 | pdf_base64 Feld, mit/ohne PDF |
-| Request Extensions | 2 | delivery + idempotency_key Felder |
-| DB Extensions | 2 | Neue Spalten in JobMetadata/ReportMetadata |
-| Integration | 5 | Base64-Roundtrip, Serialisierung, Benchmark |
-| **Gesamt (M01-M05)** | **124** | Alle bestanden |
+<!-- TESTZAHLEN -->
 
-Gesamte Suite nach M12: `pytest` -> 460+ Tests, Coverage >= 80 % (CI-Gate). Marker `temporal`
-(Temporal-Testserver) und `ocr` (Tesseract) lassen sich per `-m "not temporal and not ocr"` abwaehlen.
+Testebenen, E2E-Pipeline, Abnahmetests gegen den Stack, CI-Jobs und Konventionen:
+`docs/TESTING_GUIDE.md`.
 
 ---
 
 ## LLM Provider
 
 ```bash
-# Ollama (empfohlen fuer lokale Entwicklung/Produktion)
-LLM_PROVIDER=ollama
-OLLAMA_BASE_URL=http://host.docker.internal:11434
-OLLAMA_MODEL=mistral-small3.2
+# Standard und Produktion (.env.example): lokales Mistral ueber Ollama
+LLM_PROVIDER=local_mistral
+LOCAL_MISTRAL_MODEL=mistral-small3.2
+OLLAMA_BASE_URL=http://ollama:11434            # Compose-Service; eigener GPU-Host: LOCAL_MISTRAL_BASE_URL
 
-# Mistral Cloud (Entwicklung)
+# Alternative lokale Modelle ueber den generischen Ollama-Provider
+LLM_PROVIDER=ollama
+OLLAMA_MODEL=gemma4:31b
+
+# Mistral Cloud (nur Stage, in ENV=production abgelehnt, keine KB-Embeddings)
 LLM_PROVIDER=mistral_cloud
 MISTRAL_API_KEY=your-key
 ```
+
+Ollama direkt auf dem Docker-Host (`OLLAMA_BASE_URL=http://host.docker.internal:11434`) braucht unter
+Linux `extra_hosts: ["host.docker.internal:host-gateway"]` fuer `api` und `worker`. Im Prod-Overlay
+setzt Docker Compose `LLM_PROVIDER` selbst (Default `local_mistral`); Abweichungen per `export` oder
+Projekt-`.env`, nicht per `.env.local` (`docs/CONFIGURATION.md` §2).
+
+---
+
+## Bekannte Grenzen (Release 1.0.0)
+
+- **Echte Drehbuecher im Repository:** `tests/fixtures/pdf/` enthaelt neben synthetischen Dateien
+  echte Drehbuecher und Projektmappen; beide Docker-Images kopieren `tests/fixtures` mit, sie stecken
+  also auch in den GHCR-Images. Ob sie bleiben duerfen (Rechte/Einwilligung), muss der Auftraggeber
+  entscheiden -- bis dahin Images nicht ausserhalb der Filmakademie verteilen.
+- `POST /v1/security/check` (synchron) ist ein M01-Stub ohne Analyse; `callback_url` wird nicht
+  verwendet; `priority` beeinflusst die Abarbeitung nicht; der Jobstatus `cancelled` wird nie gesetzt.
+- Die Tabelle `audit_logs` wird nicht beschrieben; `job_metadata`, `report_metadata`,
+  `delivery_dead_letters` und `api_keys` werden nie automatisch bereinigt (`docs/DATENSCHUTZ.md`).
+- Knowledge Base nur mit `local_mistral`/`ollama` (Mistral Cloud hat kein `embed()`).
+- Ungenutzte Abhaengigkeiten in `pyproject.toml` (u. a. `python-jose` mit bekannten CVEs, `PyJWT`,
+  `passlib`, `bcrypt`, `aiohttp`) -- Entfernen empfohlen; mypy (strict) laeuft in der CI nur beratend.
 
 ---
 
