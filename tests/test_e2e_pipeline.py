@@ -1274,13 +1274,6 @@ async def test_pull_report_not_fetched_within_ttl_is_dead_lettered(
     assert report_row.is_retrieved is False
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: _record_attempt (workflows/activities.py) sets delivered_at when a pull report "
-        "merely becomes ready; it stays set even if the report is never fetched (dead letter)"
-    ),
-)
 async def test_pull_report_is_not_marked_delivered_before_retrieval(
     pipeline: Pipeline, auth_headers: dict[str, str]
 ) -> None:
@@ -1728,13 +1721,6 @@ async def test_malformed_fdx_fails_job_with_sanitized_error(
         assert text.encode() not in history, text
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: on a processing failure the uploaded script stays encrypted in the "
-        "SecureBuffer until its 6h TTL (no cleanup in SecurityCheckWorkflow.run's except branch)"
-    ),
-)
 async def test_malformed_fdx_leaves_no_content_in_buffer(
     pipeline: Pipeline, auth_headers: dict[str, str]
 ) -> None:
@@ -1748,14 +1734,6 @@ async def test_malformed_fdx_leaves_no_content_in_buffer(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: analyze_scene_risk_activity returns the findings (descriptions and evidence "
-        "quotes from the script) as plain activity results, so they are persisted in "
-        "Temporal history instead of travelling as SecureBuffer reference keys"
-    ),
-)
 async def test_findings_do_not_travel_through_temporal_history(
     pipeline: Pipeline, auth_headers: dict[str, str]
 ) -> None:
