@@ -26,6 +26,7 @@ from uuid import UUID, uuid4
 
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db_models import KnowledgeDocument, KnowledgeEmbedding
@@ -54,6 +55,13 @@ _CHUNK_CHARS_MIN = 3200  # ~800 tokens
 _CHUNK_CHAR_OVERLAP = 400  # ~100 tokens of overlap between chunks
 
 _MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB, mirrors security check upload
+
+
+def _duplicate(content_hash: str) -> ConflictException:
+    return ConflictException(
+        "Document with identical content already exists",
+        details={"content_hash": content_hash},
+    )
 
 
 @dataclass
@@ -156,10 +164,7 @@ class KnowledgeBaseService:
             )
         )
         if existing.scalar_one_or_none() is not None:
-            raise ConflictException(
-                "Document with identical content already exists",
-                details={"content_hash": content_hash},
-            )
+            raise _duplicate(content_hash)
 
         chunks = self._chunk_text(text)
         if not chunks:
@@ -179,7 +184,13 @@ class KnowledgeBaseService:
             expires_at=now + timedelta(hours=int(ttl_hours)),
         )
         self._db.add(doc)
-        await self._db.flush()
+        try:
+            await self._db.flush()
+        except IntegrityError as exc:
+            # Lost the race against a concurrent identical upload (the lookup
+            # above ran before the winner committed): same answer as above.
+            await self._db.rollback()
+            raise _duplicate(content_hash) from exc
 
         for idx, (offset, chunk_text) in enumerate(chunks):
             vector = await self._llm.embed(chunk_text)
@@ -197,7 +208,11 @@ class KnowledgeBaseService:
                 )
             )
 
-        await self._db.commit()
+        try:
+            await self._db.commit()
+        except IntegrityError as exc:
+            await self._db.rollback()
+            raise _duplicate(content_hash) from exc
         logger.info(
             "KB ingest: doc_id=%s title=%r chunks=%d source=%s",
             doc.doc_id,

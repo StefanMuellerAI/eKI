@@ -228,7 +228,8 @@ class KnowledgeDocument(Base):
         JSONB, nullable=False, default=list, server_default="[]"
     )
     original_text_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    # Dedupe is per tenant (services/knowledge_base.py), see __table_args__.
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     uploaded_by: Mapped[str] = mapped_column(String(255), nullable=False)
     ttl_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=720)
     created_at: Mapped[datetime] = mapped_column(
@@ -236,6 +237,10 @@ class KnowledgeDocument(Base):
     )
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "content_hash", name="uq_kb_documents_tenant_content_hash"),
     )
 
     def __repr__(self) -> str:
