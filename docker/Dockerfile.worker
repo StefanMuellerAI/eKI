@@ -12,13 +12,15 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements (core/version.py is read by setuptools for the dynamic version)
-COPY pyproject.toml ./
+# Copy requirements (core/version.py is read by setuptools for the dynamic version).
+# requirements.lock pins every transitive dependency so image builds are
+# reproducible (unpinned builds once pulled SQLAlchemy 2.1 without greenlet).
+COPY pyproject.toml requirements.lock ./
 COPY core/version.py ./core/version.py
 
 # Install dependencies
 RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -e .
+    pip install --no-cache-dir -c requirements.lock -e .
 
 # Stage 2: Runtime
 FROM python:3.11-slim

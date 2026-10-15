@@ -9,7 +9,7 @@ import base64
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import redis.asyncio as aioredis
@@ -525,7 +525,7 @@ async def get_report(
     After the first successful 2xx response, the report URL is invalidated.
     """
     # Atomically enforce one-shot retrieval
-    retrieved_at = datetime.utcnow()
+    retrieved_at = datetime.now(UTC)
     update_stmt = (
         update(ReportMetadata)
         .where(

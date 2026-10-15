@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy import func, select, update
@@ -265,7 +265,7 @@ async def acknowledge_dead_letter(
             status_code=status.HTTP_409_CONFLICT, detail="Dead letter already acknowledged"
         )
 
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     await db.execute(
         update(DeliveryDeadLetter)
         .where(DeliveryDeadLetter.id == dead_letter_id)

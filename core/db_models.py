@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     String,
@@ -102,8 +103,10 @@ class JobMetadata(Base):
     script_format: Mapped[ScriptFormat] = mapped_column(
         Enum(ScriptFormat, native_enum=False), nullable=False
     )
+    # ``length=20`` (not the auto-derived 9) so ``DELIVERING`` fits; see
+    # migration 20261015_m13_widen_job_status.
     status: Mapped[JobStatus] = mapped_column(
-        Enum(JobStatus, native_enum=False), nullable=False, default=JobStatus.PENDING
+        Enum(JobStatus, native_enum=False, length=20), nullable=False, default=JobStatus.PENDING
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -263,6 +266,18 @@ class KnowledgeEmbedding(Base):
     chunk_offset: Mapped[int] = mapped_column(Integer, nullable=False)
     length: Mapped[int] = mapped_column(Integer, nullable=False)
     hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # Declared here (created by the M06 migration) so ``alembic check`` and
+    # ``--autogenerate`` do not propose dropping the ANN index.
+    __table_args__ = (
+        Index(
+            "ix_kb_embeddings_vector",
+            "vector",
+            postgresql_using="ivfflat",
+            postgresql_with={"lists": 100},
+            postgresql_ops={"vector": "vector_cosine_ops"},
+        ),
+    )
 
     def __repr__(self) -> str:
         return (

@@ -1,6 +1,7 @@
 """Pytest configuration and fixtures."""
 
 import hashlib
+import os
 import secrets
 from collections.abc import AsyncGenerator
 from datetime import datetime, timedelta
@@ -9,8 +10,10 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 
 from api.dependencies import get_db, get_redis, get_temporal_client
 from api.main import app
@@ -82,16 +85,40 @@ class MockRedis:
         pass
 
 
+# Opt-in: point the whole suite at a real PostgreSQL (+pgvector) database.
+# The database is wiped (drop_all/create_all) at session start, so never point
+# this at anything but a throwaway test database.  CI sets it; locally e.g.
+#   TEST_POSTGRES_URL=postgresql+asyncpg://eki_user:eki_password@localhost:5432/eki_test
+TEST_POSTGRES_URL = os.environ.get("TEST_POSTGRES_URL", "")
+
+requires_postgres = pytest.mark.skipif(
+    not TEST_POSTGRES_URL, reason="TEST_POSTGRES_URL not set (PostgreSQL integration test)"
+)
+
+
 @pytest.fixture(scope="session")
 async def test_engine():
     """Create test database engine.
 
-    SQLite cannot render Postgres-specific column types (JSONB, pgvector
-    ``Vector(1024)``).  We therefore exclude the M06 ``kb_*`` tables from
-    the in-memory schema; their Postgres-level correctness is covered by
-    the Alembic migration and dedicated integration tests, not by the
-    unit suite.
+    Default: SQLite in-memory.  SQLite cannot render Postgres-specific column
+    types (JSONB, pgvector ``Vector(1024)``), so the M06 ``kb_*`` tables are
+    excluded there.  SQLite also ignores ``VARCHAR(n)`` lengths, which once
+    hid a production bug -- hence the optional PostgreSQL mode
+    (``TEST_POSTGRES_URL``), which runs the same tests against the real
+    dialect with every table.
     """
+    if TEST_POSTGRES_URL:
+        # NullPool: pytest-asyncio gives each test its own event loop and
+        # asyncpg connections must not be shared across loops.
+        engine = create_async_engine(TEST_POSTGRES_URL, echo=False, poolclass=NullPool)
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.create_all)
+        yield engine
+        await engine.dispose()
+        return
+
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
         echo=False,
@@ -125,11 +152,25 @@ async def db_session(test_engine) -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-def override_get_db(db_session):
-    """Override get_db dependency."""
+def override_get_db(db_session, test_engine):
+    """Override get_db dependency.
 
-    async def _override():
-        yield db_session
+    SQLite: every request shares the test's session (the in-memory database
+    lives on that connection).  PostgreSQL: one fresh session per request,
+    because the sync ``TestClient`` runs each request on its own event loop and
+    an asyncpg connection cannot cross loops.
+    """
+    if TEST_POSTGRES_URL:
+        factory = sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+
+        async def _override():
+            async with factory() as session:
+                yield session
+
+    else:
+
+        async def _override():
+            yield db_session
 
     app.dependency_overrides[get_db] = _override
     yield

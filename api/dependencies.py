@@ -2,7 +2,7 @@
 
 import hashlib
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 import redis.asyncio as aioredis
 from fastapi import Depends, Header, HTTPException, status
@@ -103,7 +103,7 @@ async def verify_api_key(
     stmt = select(ApiKeyModel).where(
         ApiKeyModel.key_hash == token_hash,
         ApiKeyModel.is_active == True,  # noqa: E712
-        ApiKeyModel.expires_at > datetime.utcnow(),
+        ApiKeyModel.expires_at > datetime.now(UTC),
     )
 
     result = await db.execute(stmt)
@@ -117,7 +117,7 @@ async def verify_api_key(
         )
 
     # Update last_used_at and usage_count for monitoring
-    api_key.last_used_at = datetime.utcnow()
+    api_key.last_used_at = datetime.now(UTC)
     api_key.usage_count += 1
     await db.commit()
 

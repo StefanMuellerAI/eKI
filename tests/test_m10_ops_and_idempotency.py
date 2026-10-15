@@ -9,7 +9,6 @@ from uuid import uuid4
 
 import pytest
 from fastapi import status
-from sqlalchemy.exc import IntegrityError
 
 from core.db_models import DeliveryDeadLetter, JobMetadata, ReportMetadata
 from tests.conftest import MINIMAL_PDF_BYTES
@@ -187,7 +186,15 @@ class TestUserScopedIdempotency:
     async def test_lost_race_returns_existing_job(
         self, client, db_session, auth_headers, mock_temporal
     ):
-        """Simulate two concurrent POSTs: the second commit hits the unique constraint."""
+        """Simulate two concurrent POSTs: the second commit hits the unique constraint.
+
+        The winner is already committed, but our fast-path lookup "missed" it
+        (it ran before the winner's COMMIT).  The INSERT then violates the real
+        ``(user_id, idempotency_key)`` constraint -- in SQLite and PostgreSQL
+        alike -- and the handler must return the winner instead of a 500.
+        """
+        from api.routers import security as security_router
+
         key = f"k-{uuid4().hex}"
         winner = _job(
             "test-user-123",
@@ -198,28 +205,26 @@ class TestUserScopedIdempotency:
             project_id="idem-project",
             script_format="pdf",
         )
+        db_session.add(winner)
+        await db_session.commit()
 
-        real_commit = db_session.commit
-        state = {"raised": False}
+        real_find = security_router._find_idempotent_job
+        calls = {"n": 0}
 
-        async def racing_commit():
-            pending_job = any(isinstance(o, JobMetadata) for o in db_session.new)
-            if pending_job and not state["raised"]:
-                state["raised"] = True
-                # The "other" request wins the race between our SELECT and COMMIT.
-                db_session.expunge_all()
-                db_session.add(winner)
-                await real_commit()
-                raise IntegrityError("INSERT job_metadata", {}, Exception("unique violation"))
-            await real_commit()
+        async def find_misses_first_time(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return None
+            return await real_find(*args, **kwargs)
 
-        with patch.object(db_session, "commit", new=AsyncMock(side_effect=racing_commit)):
+        with patch.object(security_router, "_find_idempotent_job", new=find_misses_first_time):
             response = client.post(
                 "/v1/security/check:async", json=self._payload(key), headers=auth_headers
             )
 
         assert response.status_code == status.HTTP_202_ACCEPTED
         assert response.json()["job_id"] == str(winner.job_id)
+        assert calls["n"] == 2
         assert len(mock_temporal.started) == 0
 
     @pytest.mark.asyncio

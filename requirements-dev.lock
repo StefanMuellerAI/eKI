@@ -1,0 +1,510 @@
+aiohappyeyeballs==2.7.1
+    # via aiohttp
+aiohttp==3.14.5
+    # via eki-api (pyproject.toml)
+aiosignal==1.4.0
+    # via aiohttp
+aiosqlite==0.22.1
+    # via eki-api (pyproject.toml)
+alembic==1.20.0
+    # via eki-api (pyproject.toml)
+annotated-doc==0.0.5
+    # via
+    #   fastapi
+    #   typer
+annotated-types==0.8.0
+    # via pydantic
+anyio==4.15.1
+    # via
+    #   httpx
+    #   starlette
+    #   watchfiles
+asgiref==3.12.1
+    # via opentelemetry-instrumentation-asgi
+ast-serialize==0.13.0
+    # via mypy
+async-timeout==5.0.1 ; python_full_version < '3.11.3'
+    # via redis
+asyncpg==0.32.0
+    # via eki-api (pyproject.toml)
+attrs==26.1.0
+    # via
+    #   aiohttp
+    #   jsonschema
+    #   referencing
+authlib==1.9.1
+    # via safety
+babel==2.18.0
+    # via mkdocs-material
+backrefs==8.1
+    # via mkdocs-material
+bandit==1.9.4
+    # via eki-api (pyproject.toml)
+bcrypt==5.0.0
+    # via
+    #   eki-api (pyproject.toml)
+    #   passlib
+certifi==2026.7.22
+    # via
+    #   httpcore
+    #   httpx
+    #   requests
+    #   safety
+cffi==2.1.1 ; platform_python_implementation != 'PyPy'
+    # via cryptography
+charset-normalizer==3.5.2
+    # via
+    #   pdfminer-six
+    #   reportlab
+    #   requests
+click==8.5.0
+    # via
+    #   mkdocs
+    #   nltk
+    #   safety
+    #   typer
+    #   uvicorn
+cloudpickle==3.1.2
+    # via joblib
+colorama==0.4.6
+    # via
+    #   bandit
+    #   mkdocs
+    #   mkdocs-material
+    #   pytest
+    #   tqdm
+coverage==7.16.2
+    # via pytest-cov
+cryptography==50.0.2
+    # via
+    #   eki-api (pyproject.toml)
+    #   authlib
+    #   joserfc
+    #   pdfminer-six
+    #   python-jose
+    #   types-pyopenssl
+    #   types-redis
+defusedxml==0.7.1
+    # via
+    #   eki-api (pyproject.toml)
+    #   nltk
+dnspython==2.9.0
+    # via email-validator
+dparse==0.6.4
+    # via
+    #   safety
+    #   safety-schemas
+ecdsa==0.19.2
+    # via python-jose
+email-validator==2.3.0
+    # via eki-api (pyproject.toml)
+faker==40.43.0
+    # via eki-api (pyproject.toml)
+fastapi==0.143.2
+    # via eki-api (pyproject.toml)
+filelock==3.32.7
+    # via safety
+frozenlist==1.8.0
+    # via
+    #   aiohttp
+    #   aiosignal
+ghp-import==2.1.0
+    # via mkdocs
+googleapis-common-protos==1.75.5
+    # via opentelemetry-exporter-otlp-proto-http
+greenlet==3.5.6
+    # via sqlalchemy
+gunicorn==26.2.0
+    # via eki-api (pyproject.toml)
+h11==0.16.0
+    # via
+    #   httpcore
+    #   uvicorn
+hiredis==3.5.0
+    # via eki-api (pyproject.toml)
+httpcore==1.0.9
+    # via httpx
+httptools==0.9.0
+    # via uvicorn
+httpx==0.28.1
+    # via
+    #   eki-api (pyproject.toml)
+    #   safety
+idna==3.20
+    # via
+    #   anyio
+    #   email-validator
+    #   httpx
+    #   requests
+    #   yarl
+iniconfig==2.3.1
+    # via pytest
+jinja2==3.1.6
+    # via
+    #   mkdocs
+    #   mkdocs-material
+    #   safety
+joblib==1.6.0
+    # via nltk
+joserfc==1.7.5
+    # via authlib
+jsonschema==4.26.0
+    # via eki-api (pyproject.toml)
+jsonschema-specifications==2025.9.1
+    # via jsonschema
+librt==0.16.0 ; platform_python_implementation != 'PyPy'
+    # via mypy
+mako==1.4.3
+    # via alembic
+markdown==3.11.1
+    # via
+    #   mkdocs
+    #   mkdocs-material
+    #   pymdown-extensions
+markdown-it-py==4.2.0
+    # via rich
+markupsafe==3.0.4
+    # via
+    #   jinja2
+    #   mako
+    #   mkdocs
+marshmallow==4.3.1
+    # via safety
+mdurl==0.1.2
+    # via markdown-it-py
+mergedeep==1.3.4
+    # via
+    #   mkdocs
+    #   mkdocs-get-deps
+mkdocs==1.6.1
+    # via
+    #   eki-api (pyproject.toml)
+    #   mkdocs-material
+mkdocs-get-deps==0.2.2
+    # via mkdocs
+mkdocs-material==9.7.7
+    # via eki-api (pyproject.toml)
+mkdocs-material-extensions==1.3.1
+    # via mkdocs-material
+multidict==7.1.0
+    # via
+    #   aiohttp
+    #   yarl
+mypy==2.4.0
+    # via eki-api (pyproject.toml)
+mypy-extensions==1.1.0
+    # via mypy
+nexus-rpc==1.4.0
+    # via temporalio
+nltk==3.10.3
+    # via safety
+opentelemetry-api==1.45.1
+    # via
+    #   eki-api (pyproject.toml)
+    #   fastapi
+    #   opentelemetry-exporter-http-transport
+    #   opentelemetry-exporter-otlp-proto-http
+    #   opentelemetry-exporter-prometheus
+    #   opentelemetry-instrumentation
+    #   opentelemetry-instrumentation-asgi
+    #   opentelemetry-instrumentation-fastapi
+    #   opentelemetry-instrumentation-httpx
+    #   opentelemetry-instrumentation-sqlalchemy
+    #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
+    #   temporalio
+opentelemetry-exporter-http-transport==0.66b1
+    # via opentelemetry-exporter-otlp-proto-http
+opentelemetry-exporter-otlp-common==0.66b1
+    # via opentelemetry-exporter-otlp-proto-http
+opentelemetry-exporter-otlp-proto-common==1.45.1
+    # via opentelemetry-exporter-otlp-proto-http
+opentelemetry-exporter-otlp-proto-http==1.45.1
+    # via eki-api (pyproject.toml)
+opentelemetry-exporter-prometheus==0.66b1
+    # via eki-api (pyproject.toml)
+opentelemetry-instrumentation==0.66b1
+    # via
+    #   opentelemetry-instrumentation-asgi
+    #   opentelemetry-instrumentation-fastapi
+    #   opentelemetry-instrumentation-httpx
+    #   opentelemetry-instrumentation-sqlalchemy
+opentelemetry-instrumentation-asgi==0.66b1
+    # via opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-fastapi==0.66b1
+    # via eki-api (pyproject.toml)
+opentelemetry-instrumentation-httpx==0.66b1
+    # via eki-api (pyproject.toml)
+opentelemetry-instrumentation-sqlalchemy==0.66b1
+    # via eki-api (pyproject.toml)
+opentelemetry-proto==1.45.1
+    # via
+    #   opentelemetry-exporter-otlp-proto-common
+    #   opentelemetry-exporter-otlp-proto-http
+opentelemetry-sdk==1.45.1
+    # via
+    #   eki-api (pyproject.toml)
+    #   opentelemetry-exporter-otlp-common
+    #   opentelemetry-exporter-otlp-proto-http
+    #   opentelemetry-exporter-prometheus
+    #   temporalio
+opentelemetry-semantic-conventions==0.66b1
+    # via
+    #   opentelemetry-instrumentation
+    #   opentelemetry-instrumentation-asgi
+    #   opentelemetry-instrumentation-fastapi
+    #   opentelemetry-instrumentation-httpx
+    #   opentelemetry-instrumentation-sqlalchemy
+    #   opentelemetry-sdk
+opentelemetry-util-http==0.66b1
+    # via
+    #   opentelemetry-instrumentation-asgi
+    #   opentelemetry-instrumentation-fastapi
+    #   opentelemetry-instrumentation-httpx
+packaging==26.3
+    # via
+    #   dparse
+    #   mkdocs
+    #   opentelemetry-instrumentation
+    #   opentelemetry-instrumentation-sqlalchemy
+    #   pytesseract
+    #   pytest
+    #   safety
+    #   safety-schemas
+paginate==0.5.7
+    # via mkdocs-material
+passlib==1.7.4
+    # via eki-api (pyproject.toml)
+pathspec==1.1.1
+    # via
+    #   mkdocs
+    #   mypy
+pdfminer-six==20260107
+    # via pdfplumber
+pdfplumber==0.11.10
+    # via eki-api (pyproject.toml)
+pgvector==0.5.1
+    # via eki-api (pyproject.toml)
+pillow==12.3.0
+    # via
+    #   eki-api (pyproject.toml)
+    #   pdfplumber
+    #   pytesseract
+    #   reportlab
+platformdirs==4.13.0
+    # via mkdocs-get-deps
+pluggy==1.7.0
+    # via
+    #   pytest
+    #   pytest-cov
+prometheus-client==0.26.0
+    # via
+    #   eki-api (pyproject.toml)
+    #   opentelemetry-exporter-prometheus
+propcache==0.5.4
+    # via
+    #   aiohttp
+    #   yarl
+protobuf==7.36.2
+    # via
+    #   googleapis-common-protos
+    #   opentelemetry-proto
+    #   temporalio
+psycopg2-binary==2.9.13
+    # via eki-api (pyproject.toml)
+pyasn1==0.6.4
+    # via
+    #   python-jose
+    #   rsa
+pycparser==3.11 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'
+    # via cffi
+pydantic==2.14.1
+    # via
+    #   eki-api (pyproject.toml)
+    #   fastapi
+    #   pydantic-settings
+    #   safety
+    #   safety-schemas
+pydantic-core==2.50.1
+    # via pydantic
+pydantic-settings==2.16.0
+    # via eki-api (pyproject.toml)
+pygments==2.21.0
+    # via
+    #   mkdocs-material
+    #   pytest
+    #   rich
+pyjwt==2.15.1
+    # via eki-api (pyproject.toml)
+pymdown-extensions==12.3
+    # via mkdocs-material
+pypdfium2==5.14.0
+    # via pdfplumber
+pytesseract==0.3.13
+    # via eki-api (pyproject.toml)
+pytest==9.1.1
+    # via
+    #   eki-api (pyproject.toml)
+    #   pytest-asyncio
+    #   pytest-cov
+    #   pytest-mock
+pytest-asyncio==1.4.0
+    # via eki-api (pyproject.toml)
+pytest-cov==7.1.0
+    # via eki-api (pyproject.toml)
+pytest-mock==3.16.0
+    # via eki-api (pyproject.toml)
+python-dateutil==2.9.0.post0
+    # via
+    #   eki-api (pyproject.toml)
+    #   ghp-import
+python-dotenv==1.2.4
+    # via
+    #   pydantic-settings
+    #   uvicorn
+python-jose==3.5.0
+    # via eki-api (pyproject.toml)
+python-json-logger==4.2.0
+    # via eki-api (pyproject.toml)
+python-multipart==0.0.32
+    # via eki-api (pyproject.toml)
+pytz==2026.5
+    # via eki-api (pyproject.toml)
+pyyaml==6.0.3
+    # via
+    #   eki-api (pyproject.toml)
+    #   bandit
+    #   mkdocs
+    #   mkdocs-get-deps
+    #   pymdown-extensions
+    #   pyyaml-env-tag
+    #   uvicorn
+pyyaml-env-tag==1.1
+    # via mkdocs
+redis==8.1.0
+    # via eki-api (pyproject.toml)
+referencing==0.37.0
+    # via
+    #   jsonschema
+    #   jsonschema-specifications
+regex==2026.9.29
+    # via nltk
+reportlab==5.0.1
+    # via eki-api (pyproject.toml)
+requests==2.34.2
+    # via
+    #   mkdocs-material
+    #   opentelemetry-exporter-http-transport
+    #   opentelemetry-exporter-otlp-proto-http
+rich==15.0.0
+    # via
+    #   bandit
+    #   typer
+rpds-py==2026.9.1
+    # via
+    #   jsonschema
+    #   referencing
+rsa==4.9.1
+    # via python-jose
+ruamel-yaml==0.19.1
+    # via
+    #   safety
+    #   safety-schemas
+ruff==0.17.1
+    # via eki-api (pyproject.toml)
+safety==3.8.1
+    # via eki-api (pyproject.toml)
+safety-schemas==0.0.16
+    # via safety
+shellingham==1.5.4
+    # via typer
+six==1.17.0
+    # via
+    #   ecdsa
+    #   python-dateutil
+sqlalchemy==2.1.4
+    # via
+    #   eki-api (pyproject.toml)
+    #   alembic
+starlette==1.8.0
+    # via fastapi
+stevedore==5.9.1
+    # via bandit
+structlog==26.1.0
+    # via eki-api (pyproject.toml)
+temporalio==1.34.0
+    # via eki-api (pyproject.toml)
+tenacity==9.2.1
+    # via safety
+tomli==2.5.0 ; python_full_version <= '3.11'
+    # via coverage
+tomlkit==0.15.1
+    # via safety
+tqdm==4.70.1
+    # via nltk
+truststore==0.10.5
+    # via safety
+typer==0.25.1
+    # via safety
+types-cffi==2.1.0.20260827
+    # via types-pyopenssl
+types-protobuf==7.35.1.20260906
+    # via temporalio
+types-pyopenssl==24.1.0.20240722
+    # via types-redis
+types-python-dateutil==2.9.0.20260807
+    # via eki-api (pyproject.toml)
+types-redis==4.6.0.20241004
+    # via eki-api (pyproject.toml)
+types-setuptools==84.0.0.20261006
+    # via types-cffi
+typing-extensions==4.16.0
+    # via
+    #   aiohttp
+    #   aiosignal
+    #   alembic
+    #   anyio
+    #   fastapi
+    #   mypy
+    #   nexus-rpc
+    #   opentelemetry-api
+    #   opentelemetry-exporter-otlp-proto-http
+    #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
+    #   pydantic
+    #   pydantic-core
+    #   pydantic-settings
+    #   pytest-asyncio
+    #   referencing
+    #   safety
+    #   safety-schemas
+    #   sqlalchemy
+    #   starlette
+    #   temporalio
+    #   typing-inspection
+typing-inspection==0.4.4
+    # via
+    #   fastapi
+    #   pydantic
+    #   pydantic-settings
+tzdata==2026.5 ; sys_platform == 'win32'
+    # via faker
+urllib3==2.8.0
+    # via requests
+uvicorn==0.54.0
+    # via eki-api (pyproject.toml)
+uvloop==0.23.0 ; platform_python_implementation != 'PyPy' and sys_platform != 'cygwin' and sys_platform != 'win32'
+    # via uvicorn
+watchdog==6.0.0
+    # via mkdocs
+watchfiles==1.3.0
+    # via uvicorn
+websockets==17.2
+    # via uvicorn
+wrapt==2.5.1
+    # via
+    #   opentelemetry-instrumentation
+    #   opentelemetry-instrumentation-httpx
+    #   opentelemetry-instrumentation-sqlalchemy
+yarl==1.25.1
+    # via aiohttp

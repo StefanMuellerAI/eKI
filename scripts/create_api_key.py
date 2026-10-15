@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import os
 import secrets
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -46,7 +46,7 @@ async def insert_api_key(
                 description=description,
                 is_active=True,
                 is_admin=is_admin,
-                created_at=datetime.utcnow(),
+                created_at=datetime.now(UTC),
                 expires_at=expires_at,
                 usage_count=0,
             )
@@ -98,7 +98,7 @@ def main() -> None:
     api_key, key_hash = generate_api_key()
 
     # Calculate expiration
-    expires_at = datetime.utcnow() + timedelta(days=days_valid)
+    expires_at = datetime.now(UTC) + timedelta(days=days_valid)
 
     print("\n" + "=" * 60)
     print("API key generated")
