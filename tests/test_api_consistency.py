@@ -16,6 +16,9 @@ from fastapi import status
 
 from api import dependencies
 from api.config import get_settings
+from api.dependencies import get_db
+from api.main import app
+from core import metrics
 from core.version import __version__
 from services.report_generator import build_report_dict
 
@@ -38,6 +41,42 @@ class TestErrorBodyRequestId:
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert response.headers["X-Request-ID"] == "epro-trace-4711"
         assert response.json()["request_id"] == "epro-trace-4711"
+
+    @pytest.mark.parametrize(
+        ("exc", "expected_status"),
+        [
+            (RuntimeError("boom"), status.HTTP_500_INTERNAL_SERVER_ERROR),
+            (ConnectionRefusedError("db down"), status.HTTP_503_SERVICE_UNAVAILABLE),
+        ],
+        ids=["unexpected-500", "infrastructure-503"],
+    )
+    def test_unhandled_error_carries_request_id_and_metric_status(
+        self, client, exc, expected_status
+    ):
+        """Unhandled errors used to be rendered outside the request-id middleware:
+        no header, ``request_id: null`` and the metrics counted every 503 as 500."""
+
+        async def broken_db():
+            raise exc
+            yield  # pragma: no cover - makes this an async generator
+
+        app.dependency_overrides[get_db] = broken_db
+        before = metrics.HTTP_REQUESTS_TOTAL.labels(
+            method="GET", route="/v1/security/jobs/{job_id}", status=str(expected_status)
+        )._value.get()
+
+        response = client.get(
+            f"/v1/security/jobs/{uuid4()}", headers={"Authorization": "Bearer eki_x"}
+        )
+
+        assert response.status_code == expected_status
+        header_id = response.headers["X-Request-ID"]
+        assert response.json()["request_id"] == header_id
+        assert "boom" not in response.text and "db down" not in response.text
+        after = metrics.HTTP_REQUESTS_TOTAL.labels(
+            method="GET", route="/v1/security/jobs/{job_id}", status=str(expected_status)
+        )._value.get()
+        assert after == before + 1
 
     def test_validation_error_carries_request_id(self, client, auth_headers):
         response = client.get("/v1/security/jobs/not-a-uuid", headers=auth_headers)

@@ -18,7 +18,7 @@ from api.dependencies import verify_api_key
 from api.routers import health, knowledge_base, ops, security
 from core.db_models import ApiKeyModel
 from core.exceptions import EKIException
-from core.logging_config import configure_logging, get_request_id, set_request_id
+from core.logging_config import configure_logging, set_request_id
 from core.metrics import (
     HTTP_REQUEST_DURATION,
     HTTP_REQUESTS_IN_FLIGHT,
@@ -99,13 +99,18 @@ app.add_middleware(
 async def request_id_middleware(request: Request, call_next):
     incoming = request.headers.get("X-Request-ID")
     request_id = set_request_id(incoming)
+    # request.state lives in the ASGI scope, so every exception handler sees
+    # it -- unlike the ContextVar, which does not reach handlers that run
+    # outside this middleware's task.
+    request.state.request_id = request_id
     try:
         response: Response = await call_next(request)
-    except Exception:
-        # Selbst bei Exception soll der Header gesetzt sein, falls ein
-        # Exception-Handler die Response noch produziert. set_request_id
-        # bleibt in der ContextVar erhalten.
-        raise
+    except Exception as exc:
+        # Unbehandelte Fehler wuerde sonst Starlettes ServerErrorMiddleware
+        # *ausserhalb* dieser Middleware rendern: ohne X-Request-ID-Header,
+        # ohne request_id im Body, und die Metrics-Middleware zaehlte jede
+        # Infrastruktur-503 als 500. Deshalb hier rendern.
+        response = await general_exception_handler(request, exc)
     response.headers.setdefault("X-Request-ID", request_id)
     return response
 
@@ -182,7 +187,7 @@ def _error_request_id(request: Request) -> str | None:
     Before, only a client-supplied ``X-Request-ID`` was echoed, so callers that
     did not send one got ``request_id: null`` and had nothing to quote to ops.
     """
-    return get_request_id() or request.headers.get("X-Request-ID") or None
+    return getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID") or None
 
 
 @app.exception_handler(EKIException)
