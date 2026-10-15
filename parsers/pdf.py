@@ -16,9 +16,11 @@ from uuid import uuid4
 from core.exceptions import ParsingException
 from core.models import (
     CharacterInfo,
+    LocationType,
     ParsedScene,
     ParsedScript,
     ScriptFormat,
+    TimeOfDay,
 )
 from parsers.base import ParserBase
 from parsers.pdf_llm_structurer import (
@@ -245,6 +247,10 @@ class PDFParser(ParserBase):
 
             scene_counter += 1
             is_page_fallback = block.heading_line.startswith("PAGE ")
+            parse_method = "pdf_page_fallback" if is_page_fallback else "pdf_llm"
+            # Everything that touches LLM output -- including the ParsedScene
+            # validation -- stays inside the try: one malformed answer degrades
+            # this scene only and never aborts the whole parse.
             try:
                 llm_result = await structure_scene_with_llm(block.text, self._llm)
                 fields = llm_result_to_parsed_scene_fields(llm_result)
@@ -255,28 +261,37 @@ class PDFParser(ParserBase):
                 # OCR'd pages: recognised text is less reliable than a text layer.
                 if ocr_page_set and _block_touches_pages(block, page_texts, ocr_page_set):
                     confidence = round(confidence * 0.7, 3)
+                scene = ParsedScene(
+                    scene_id=uuid4(),
+                    number=str(scene_counter),
+                    heading=block.heading_line,
+                    text=block.text,
+                    parse_confidence=confidence,
+                    parse_method=parse_method,
+                    **fields,
+                )
             except Exception as exc:
-                logger.warning("Scene %d LLM structuring failed: %s", scene_counter, exc)
-                fields = {
-                    "location": "UNKNOWN",
-                    "location_type": "UNKNOWN",
-                    "time_of_day": "UNKNOWN",
-                    "characters": [],
-                    "action_text": "",
-                    "dialogue": [],
-                }
-                confidence = 0.0
+                # Log the exception type only: validation errors echo the
+                # offending (script-derived) input values.
+                logger.warning(
+                    "Scene %d LLM structuring failed: %s", scene_counter, type(exc).__name__
+                )
                 warnings.append(f"Scene {scene_counter}: LLM structuring failed")
+                scene = ParsedScene(
+                    scene_id=uuid4(),
+                    number=str(scene_counter),
+                    heading=block.heading_line,
+                    text=block.text,
+                    location="UNKNOWN",
+                    location_type=LocationType.UNKNOWN,
+                    time_of_day=TimeOfDay.UNKNOWN,
+                    characters=[],
+                    action_text="",
+                    dialogue=[],
+                    parse_confidence=0.0,
+                    parse_method=parse_method,
+                )
 
-            scene = ParsedScene(
-                scene_id=uuid4(),
-                number=str(scene_counter),
-                heading=block.heading_line,
-                text=block.text,
-                parse_confidence=confidence,
-                parse_method="pdf_page_fallback" if is_page_fallback else "pdf_llm",
-                **fields,
-            )
             scenes.append(scene)
 
         # 4. Programmatic aggregation

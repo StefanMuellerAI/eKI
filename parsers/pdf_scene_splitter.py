@@ -9,19 +9,20 @@ from dataclasses import dataclass
 
 # Matches lines that begin a new scene (DE + EN).
 # Anchored to start-of-line via MULTILINE.
-# Allows optional leading scene numbers (e.g. "42 INNEN. WOHNZIMMER - TAG").
+# Allows optional leading scene numbers: "42 ", "42A ", "1. ", "12.1 ",
+# "12.1A. " (e.g. "42 INNEN. WOHNZIMMER - TAG", "1. EXT. FELD - TAG").
 SCENE_MARKER_RE = re.compile(
-    r"^[ \t]*(?:\d+[A-Za-z]?\s+)?("
+    r"^[ \t]*(?:\d+[A-Za-z]?(?:\.\d+[A-Za-z]?)*\.?\s+)?("
     r"INT\.\s*/\s*EXT\.|"
     r"INT/EXT\.|"
     r"EXT\.\s*/\s*INT\.|"
     r"EXT/INT\.|"
+    r"I\.?\s*/\s*E\.|"
+    r"E\.?\s*/\s*I\.|"
     r"INT\.|"
     r"EXT\.|"
-    r"INNEN\s*/\s*AUSSEN|"
-    r"INNEN/AUSSEN|"
-    r"AUSSEN\s*/\s*INNEN|"
-    r"AUSSEN/INNEN|"
+    r"INNEN\s*[-–—/]\s*AUSSEN|"
+    r"AUSSEN\s*[-–—/]\s*INNEN|"
     r"INNEN[\.\s]|"
     r"AUSSEN[\.\s]"
     r")",
