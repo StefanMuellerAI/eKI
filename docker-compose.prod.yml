@@ -14,8 +14,17 @@
 # * local inference only: LLM_PROVIDER=local_mistral, cloud providers are rejected at startup
 # * all secrets via .env.local / *_FILE (secrets/), see secrets/README.md
 
+# Docker's json-file driver does not rotate by default; the API access log
+# contains client IPs (see docs/DATENSCHUTZ.md), so cap size and age.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 services:
   postgres:
+    logging: *default-logging
     # POSTGRES_PASSWORD comes from .env.local (env_file in base compose)
     ports: !reset []
     deploy:
@@ -24,6 +33,7 @@ services:
           memory: 2g
 
   redis:
+    logging: *default-logging
     ports: !reset []
     # Persist the encrypted buffer across restarts (delivery retries up to 6h)
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "1gb", "--maxmemory-policy", "noeviction"]
@@ -33,13 +43,16 @@ services:
           memory: 1500m
 
   temporal:
+    logging: *default-logging
     ports: !reset []
 
   temporal-ui:
+    logging: *default-logging
     # Operator UI stays internal; reach it via SSH tunnel if needed.
     ports: !reset []
 
   ollama:
+    logging: *default-logging
     ports: !reset []
     # NVIDIA GPU (Pflichtenheft 8: >= 24 GB VRAM recommended). Requires nvidia-container-toolkit.
     deploy:
@@ -54,6 +67,7 @@ services:
       - OLLAMA_NUM_PARALLEL=1
 
   api:
+    logging: *default-logging
     # `build:` from the base file stays declared; run `docker compose ... pull`
     # before `up -d --no-build` so the released image is used, not a local build.
     image: ghcr.io/${GHCR_OWNER:-stefanmuellerai}/eki-api:${EKI_IMAGE_TAG:-latest}
@@ -87,6 +101,7 @@ services:
           cpus: "2"
 
   worker:
+    logging: *default-logging
     image: ghcr.io/${GHCR_OWNER:-stefanmuellerai}/eki-worker:${EKI_IMAGE_TAG:-latest}
     environment:
       - ENV=production

@@ -666,28 +666,59 @@ class TestAsyncFailureBranches:
         assert mock_temporal.started == []
         assert not [k for k in mock_redis._store if str(k).startswith("eki:buf")]
 
+    @pytest.mark.parametrize(
+        ("failure", "message"),
+        [
+            (
+                "workflow_start",
+                "Security check could not be started. "
+                "The workflow engine is temporarily unavailable.",
+            ),
+            (
+                "buffer_store",
+                "Security check could not be started. "
+                "The secure buffer is temporarily unavailable.",
+            ),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_service_unavailable_from_workflow_start_is_passed_through(
-        self, client, auth_headers, mock_temporal
+    async def test_failed_start_releases_idempotency_key_for_retry(
+        self, client, db_session, auth_headers, mock_temporal, mock_redis, failure, message
     ):
-        mock_temporal.start_workflow = AsyncMock(
-            side_effect=ServiceUnavailableException(
-                "Temporal frontend overloaded", details={"service": "temporal"}
-            )
-        )
-        response = client.post(
-            "/v1/security/check:async",
-            json={
-                "script_content": _b64(MINIMAL_PDF_BYTES),
-                "script_format": "pdf",
-                "project_id": "overloaded",
-            },
-            headers=auth_headers,
-        )
+        """A job that never started used to keep its Idempotency-Key, so the
+        client's retry after the 503 got the dead job back forever."""
+        key = f"retry-after-503-{uuid4().hex}"
+        payload = {
+            "script_content": _b64(MINIMAL_PDF_BYTES),
+            "script_format": "pdf",
+            "project_id": "retry",
+            "idempotency_key": key,
+        }
+        real_start, real_setex = mock_temporal.start_workflow, mock_redis.setex
+        if failure == "workflow_start":
+            mock_temporal.start_workflow = AsyncMock(side_effect=RuntimeError("temporal down"))
+        else:
+            mock_redis.setex = AsyncMock(side_effect=RedisConnectionError("redis gone"))
 
-        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
-        assert response.json()["error"] == "ServiceUnavailableException"
-        assert response.json()["message"] == "Temporal frontend overloaded"
+        first = client.post("/v1/security/check:async", json=payload, headers=auth_headers)
+
+        assert first.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert first.json()["message"] == message
+        failed_id = UUID(first.json()["details"][0]["message"])
+        db_session.expire_all()
+        failed = (
+            await db_session.execute(select(JobMetadata).where(JobMetadata.job_id == failed_id))
+        ).scalar_one()
+        assert failed.status == JobStatus.FAILED
+        assert failed.idempotency_key is None
+        assert not [k for k in mock_redis._store if str(k).startswith("eki:buf")]
+
+        mock_temporal.start_workflow, mock_redis.setex = real_start, real_setex
+        retry = client.post("/v1/security/check:async", json=payload, headers=auth_headers)
+
+        assert retry.status_code == status.HTTP_202_ACCEPTED
+        assert retry.json()["job_id"] != str(failed_id)
+        assert len(mock_temporal.started) == 1
 
     @pytest.mark.asyncio
     async def test_failed_buffer_cleanup_still_fails_job_cleanly(

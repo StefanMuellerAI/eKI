@@ -426,7 +426,15 @@ async def security_check_async(
         raise
 
     # Store script content encrypted in Redis -- NOT in Temporal
-    ref_key = await buffer.store({"script_content": resolved.b64_content})
+    try:
+        ref_key = await buffer.store({"script_content": resolved.b64_content})
+    except Exception as exc:
+        logger.error("Buffering script for job %s failed: %s", job_id, type(exc).__name__)
+        await _fail_unstarted_job(db, job_id, "Secure buffer temporarily unavailable.")
+        raise ServiceUnavailableException(
+            "Security check could not be started. The secure buffer is temporarily unavailable.",
+            details={"job_id": str(job_id)},
+        ) from exc
 
     # Temporal receives only metadata + ref_key.  Die M07-Konfiguration wird
     # beim Workflow-Start in job_data eingefroren, damit der Workflow rein
@@ -459,8 +467,6 @@ async def security_check_async(
             task_queue=settings.temporal_task_queue,
             execution_timeout=timedelta(seconds=settings.temporal_workflow_execution_timeout),
         )
-    except ServiceUnavailableException:
-        raise
     except Exception as exc:
         logger.error(f"Failed to start workflow for job {job_id}: {exc}", exc_info=True)
         # M10: no orphaned script content in Redis when the workflow never starts.
@@ -469,15 +475,7 @@ async def security_check_async(
             metrics.BUFFER_DELETES_TOTAL.labels(source="cleanup").inc()
         except Exception:
             logger.warning("Buffer cleanup after failed workflow start failed (TTL will reap)")
-        await db.execute(
-            update(JobMetadata)
-            .where(JobMetadata.job_id == job_id)
-            .values(
-                status=JobStatus.FAILED,
-                error_message="Workflow engine temporarily unavailable.",
-            )
-        )
-        await db.commit()
+        await _fail_unstarted_job(db, job_id, "Workflow engine temporarily unavailable.")
         raise ServiceUnavailableException(
             "Security check could not be started. The workflow engine is temporarily unavailable.",
             details={"job_id": str(job_id)},
@@ -490,6 +488,24 @@ async def security_check_async(
         status_url=f"/v1/security/jobs/{job_id}",
         estimated_completion_seconds=120,
     )
+
+
+async def _fail_unstarted_job(db: AsyncSession, job_id: uuid.UUID, message: str) -> None:
+    """Mark a job that never started as FAILED and release its idempotency key.
+
+    Without releasing the key, a client retrying after the 503 with the same
+    Idempotency-Key got this dead job back forever instead of a new one.  The
+    row itself stays for operators.
+    """
+    try:
+        await db.execute(
+            update(JobMetadata)
+            .where(JobMetadata.job_id == job_id)
+            .values(status=JobStatus.FAILED, error_message=message, idempotency_key=None)
+        )
+        await db.commit()
+    except Exception as exc:
+        logger.error("Could not mark unstarted job %s as failed: %s", job_id, type(exc).__name__)
 
 
 # ---------------------------------------------------------------------------
