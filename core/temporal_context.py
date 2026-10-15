@@ -98,7 +98,13 @@ class _WorkflowInbound(worker.WorkflowInboundInterceptor):
         try:
             return await self.next.execute_workflow(input)
         finally:
-            _WORKFLOW_REQUEST_ID.reset(token)
+            try:
+                _WORKFLOW_REQUEST_ID.reset(token)
+            except ValueError:
+                # The worker may close an evicted workflow coroutine from a
+                # different Context (e.g. on shutdown); there is nothing left
+                # to restore then.
+                pass
 
 
 class _WorkflowOutbound(worker.WorkflowOutboundInterceptor):
