@@ -113,6 +113,8 @@ class TestEnumParity:
             "hard_4xx",
             "pull_ttl_expired",
             "delivery_failed",
+            "report_expired",
+            "invalid_project_id",
         }
 
 

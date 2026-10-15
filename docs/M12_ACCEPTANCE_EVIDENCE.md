@@ -1,3 +1,8 @@
+> **Historischer Nachweis** (Stand 16.09.2026, M12). Beschreibt den damaligen Stand und wird
+> nicht fortgeschrieben. Aktueller Stand: [UAT/HANDOVER.md](UAT/HANDOVER.md),
+> [UAT/UAT_TESTPLAN.md](UAT/UAT_TESTPLAN.md), [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md),
+> [TESTING_GUIDE.md](TESTING_GUIDE.md).
+
 # M12 Acceptance Evidence – UAT-Paket & Übergabe
 
 Belegsammlung für die Trello-Karte „M12 – UAT-Paket & Übergabe". Pflichtenheft v1,
@@ -14,7 +19,7 @@ Go-Live-Checkliste, Schulungsunterlagen), §10 PT-Tabelle (4 PT), §12 Rechte & 
 |---|---|---|
 | §2 / §5 Design-First | OpenAPI 3.1.1 als Single Source of Truth | `openapi/eki-api-v1.0.yaml` (1.0.0), Spectral 0 Errors/0 Warnings (CI-Gate), `tests/test_m12_openapi_contract.py` prüft Routen ⇄ Spec, Enums, Version, Webhook-Payload |
 | §5 Doku | Swagger/Redoc, Beispielanfragen, Postman-Sammlung, versioniertes Änderungsprotokoll | Swagger/ReDoc im Dev-Modus, Postman v1.0 + Environment, `CHANGELOG.md` (M01–M12) |
-| §5 Qualität | ≥ 80 % Testabdeckung in der Kernlogik | Gesamt-Coverage 81 % (`api`, `core`, `services`, `workflows`, `parsers`, `llm`, `worker`); CI `--cov-fail-under=80` |
+| §5 Qualität | ≥ 80 % Testabdeckung in der Kernlogik | Gesamt-Coverage 81 % (`api`, `core`, `services`, `workflows`, `parsers`, `llm`; `worker` wird über die `--cov`-Optionen in `addopts` nicht gemessen); CI `--cov-fail-under=80` |
 | §7 Testumfang 1 | Unit, Contract, Integration Push/Pull/Idempotenz, Security, Last | 460+ Tests inkl. Contract-Test, Failover-Tests auf Temporal-Testserver, Security-Suite, Benchmark-Runner |
 | §7 Testumfang 2–3 | Stage-Betrieb (Mistral-API), Produktionsbetrieb (lokal) | `UAT_TESTPLAN.md` AT8/AT9, `scripts/run_parity.py`, `scripts/smoke_prod.py` |
 | §7 Testumfang 4 | KB: TTL und nur freigegebene Quellen | Temporal-Schedule `eki-kb-cleanup` (M09), Tenant-Scoping + Tag-Filter (M06), Training Modul C |
@@ -33,8 +38,8 @@ Go-Live-Checkliste, Schulungsunterlagen), §10 PT-Tabelle (4 PT), §12 Rechte & 
 | OpenAPI gültig | erfüllt | `spectral lint openapi/eki-api-v1.0.yaml --fail-severity=error` → „No results with a severity of 'error' found" |
 | Authentifizierung läuft | erfüllt | `tests/test_security.py`, `tests/test_m10_ops_and_idempotency.py::TestOpsAuthorization`, Postman „5. Security Tests" |
 | Monitoring läuft | erfüllt | M09-Stack, `tests/test_m09_*`, Dashboards/Alerts validiert in CI |
-| Alle 9 Tests bestanden | 2–7 automatisiert bestanden (lokal); 1, 8, 9 vorbereitet (Stage/Prod-abhängig) | `run_acceptance_tests.py`, Protokollvorlage |
-| Betriebsdoku liegt vor | erfüllt | `OPERATIONS_GUIDE.md`, `DEPLOYMENT_GUIDE.md`, `M09_SLO.md`, `M10_FAILOVER_RUNBOOK.md`, `M06_KB_GUIDE.md`, `EPRO_INTEGRATION_GUIDE.md` |
+| Alle 9 Tests bestanden | 2–7 automatisiert bestanden (lokal); 1, 8, 9 vorbereitet (Stage/Prod-abhängig). **Nachtrag 15.10.2026:** Auf einem per `alembic` aufgebauten PostgreSQL-Stack scheiterte die Zustellphase bis zur Migration `a7c9e1f3b5d2` (`delivering` passte nicht in `job_metadata.status`); AT2–AT7 sind auf dem korrigierten Stand (Migrations-Head `b8d0f2a4c6e3`) erneut auszuführen | `run_acceptance_tests.py`, Protokollvorlage |
+| Betriebsdoku liegt vor | erfüllt | `OPERATIONS_GUIDE.md`, `M09_SLO.md`, `M10_FAILOVER_RUNBOOK.md`, `M06_KB_GUIDE.md`, `EPRO_INTEGRATION_GUIDE.md` |
 | Postman-Collection liegt vor | erfüllt | `postman/eKI-API-v1.0.postman_collection.json` + Environment |
 
 ---
@@ -58,7 +63,7 @@ Go-Live-Checkliste, Schulungsunterlagen), §10 PT-Tabelle (4 PT), §12 Rechte & 
 - OpenAPI 1.0.0: neue `Operations`-Endpunkte, `X-One-Shot`- und `X-Request-ID`-Header,
   `JobStatus.delivering`, `DeliveryStatus`, `JobDeliveryMetadata`, Dead-Letter-Schemata,
   `Forbidden`-Response, `RiskCategory` referenziert, Webhook-Gründe vollständig, KB-Parameter beschrieben.
-- Contract-Test (`tests/test_m12_openapi_contract.py`, 12 Tests): jede FastAPI-Route dokumentiert und jede
+- Contract-Test (`tests/test_m12_openapi_contract.py`, 13 Tests): jede FastAPI-Route dokumentiert und jede
   dokumentierte Route implementiert; Enums `JobStatus`/`RiskLevel`/`ScriptFormat`/`DeliveryStatus` identisch;
   Version ⇄ `core/version.py`; Webhook-Payload inhaltsfrei; Fehlerformat `ErrorResponse` zur Laufzeit.
 - Postman v1.0: Ordner 9 (Operations, Admin-Key) und 10 (Abnahmetests AT3/AT5/AT7), `X-One-Shot`-Assertion,

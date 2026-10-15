@@ -1,3 +1,15 @@
+# Beispielausgabe des Parsers: `ParsedScene` und `ParsedScript`
+
+> **Beispieldaten, kein Betriebsdokument.** Zeigt die Struktur, die der FDX-Parser
+> (`parsers/fdx.py`) bzw. der PDF-Pfad aus einem Drehbuch erzeugt (Modelle `ParsedScene` und
+> `ParsedScript` in `core/models.py`). Die Werte sind synthetisch und gekürzt (`"..."`).
+> Diese Objekte sind transient: Sie liegen nur verschlüsselt im Redis-Buffer und werden nie in
+> der Datenbank gespeichert ([DATENSCHUTZ.md](DATENSCHUTZ.md)). Bei Abweichungen gilt
+> `core/models.py`.
+
+## Eine Szene (`ParsedScene`)
+
+```json
 {
   "scene_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "number": "3",
@@ -23,7 +35,13 @@
   "parse_confidence": 1.0,
   "parse_method": "fdx"
 }
+```
 
+## Ein geparstes Drehbuch (`ParsedScript`, Ausschnitt)
+
+`total_scenes` nennt die Gesamtzahl; die Liste `scenes` ist hier auf zwei Einträge gekürzt.
+
+```json
 {
   "script_id": "f0e1d2c3-b4a5-6789-0fed-cba987654321",
   "title": "Testfilm - Stunt Heavy",
@@ -86,3 +104,4 @@
   "overall_confidence": 1.0,
   "warnings": []
 }
+```

@@ -1,3 +1,8 @@
+> **Historischer Nachweis** (Stand 25.05.2026, M08). Beschreibt den damaligen Stand und wird
+> nicht fortgeschrieben. Aktueller Stand: [DATENSCHUTZ.md](DATENSCHUTZ.md),
+> [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md). Ueberholt: Der KB-TTL-Cleanup laeuft seit M09 als
+> Temporal-Schedule `eki-kb-cleanup` (§11).
+
 # M08 Acceptance Evidence -- Security/Privacy & Delete-on-Delivery
 
 Belegsammlung fuer die Trello-Karte "M08 -- Security/Privacy &

@@ -1,3 +1,9 @@
+> **Veraltet** – Stand Januar 2026 (M01), wird nicht mehr gepflegt. Maßgeblich sind die
+> Schnellstart-Anleitung im [README](../README.md) und [LLM_INTEGRATION.md](LLM_INTEGRATION.md).
+> **Widerspricht den Produktionsregeln:** Der Wechsel auf `mistral_cloud` ist nur für Stage/Test
+> zulässig; die eKI liest außerdem in Docker `.env.local` (nicht `.env`), und `docker compose
+> restart` übernimmt geänderte Werte nicht (`up -d --force-recreate api worker`).
+
 # 🚀 Ollama Quick Start - 5 Minuten Setup
 
 ## Schritt 1: Services starten
@@ -117,6 +123,6 @@ Sie können jetzt:
 - ✅ Die API mit echten LLMs entwickeln
 
 Weitere Infos:
-- 📖 [docs/OLLAMA_SETUP.md](docs/OLLAMA_SETUP.md) - Ausführliche Anleitung
-- 📖 [docs/LLM_INTEGRATION.md](docs/LLM_INTEGRATION.md) - API-Dokumentation
-- 🔧 [scripts/test_llm.py](scripts/test_llm.py) - Test-Script
+- 📖 [docs/OLLAMA_SETUP.md](OLLAMA_SETUP.md) - Ausführliche Anleitung
+- 📖 [docs/LLM_INTEGRATION.md](LLM_INTEGRATION.md) - API-Dokumentation
+- 🔧 [scripts/test_llm.py](../scripts/test_llm.py) - Test-Script

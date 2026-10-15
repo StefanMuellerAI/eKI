@@ -1,3 +1,7 @@
+> **Historischer Nachweis** (Stand 30.01.2026, M01). Beschreibt den damaligen Stand und wird
+> nicht fortgeschrieben. Aktueller Stand: [README](../README.md),
+> [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md), [openapi/eki-api-v1.0.yaml](../openapi/eki-api-v1.0.yaml).
+
 # M01 Completion Report - eKI API
 
 **Datum:** 30. Januar 2026

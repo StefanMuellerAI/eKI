@@ -1,6 +1,9 @@
 # eProjekt-Integration: eKI API Anbindung
 
-**Stand:** Februar 2026 | **API-Version:** 0.5.0 | **Zielgruppe:** eProjekt-Entwicklungsteam
+**Stand:** Oktober 2026 | **API-Version:** 1.0.0 | **Zielgruppe:** eProjekt-Entwicklungsteam
+
+Verbindlicher Schnittstellenvertrag: `openapi/eki-api-v1.0.yaml`. Datenhaltung und Loeschfristen:
+`docs/DATENSCHUTZ.md`.
 
 ---
 
@@ -23,11 +26,18 @@ keine direkten Datenbankzugriffe.
 **Wichtig:** Der Report kann nur **einmal** abgeholt werden. Nach dem
 ersten erfolgreichen Abruf (HTTP 200) wird er sofort geloescht.
 
+Der Endpoint `POST /v1/security/check` (synchron) ist ein **Stub aus M01**: Er
+validiert die Anfrage, analysiert aber nichts und liefert immer ein einzelnes
+`info`-Finding mit `category=stub` und `metadata.stub=true`. Fuer echte Pruefungen
+ausschliesslich `POST /v1/security/check:async` verwenden.
+
 ---
 
 ## 1. Authentifizierung
 
 Alle /v1/security/ Endpunkte erfordern einen API-Key als Bearer-Token.
+Fehlt der Header oder ist der Key ungueltig, abgelaufen oder deaktiviert, antwortet
+die eKI mit 401.
 
 ```
 Authorization: Bearer eki_<api_key>
@@ -35,9 +45,18 @@ Authorization: Bearer eki_<api_key>
 
 ### API-Key erhalten
 
-Der API-Key wird vom eKI-Administrator erstellt und sicher uebergeben.
-Der Key ist an einen user_id gebunden -- alle Jobs und Reports
-sind diesem User zugeordnet (Ownership-Check).
+Der API-Key wird vom eKI-Administrator erstellt und sicher uebergeben
+(Standard-Gueltigkeit 365 Tage). Der Key ist an eine `user_id` gebunden --
+alle Jobs und Reports sind diesem User zugeordnet (Ownership-Check: fremde
+Job-/Report-IDs liefern 404).
+
+Optionale Header:
+
+| Header | Bedeutung |
+|--------|-----------|
+| `X-Request-ID` | Korrelations-ID; wird uebernommen und in der Antwort zurueckgegeben. Fehlt sie, erzeugt die eKI eine. |
+| `X-Actor-User-Id` | Muss, falls gesetzt, der `user_id` des API-Keys entsprechen -- sonst **403** |
+| `X-Actor-Project-Id` | Nur informativ, wird nicht gespeichert |
 
 ### Beispiel
 
@@ -91,12 +110,21 @@ delivery: pull
 |------|---------|-----|--------------|
 | script_content | Ja (JSON) | string | Base64-kodierter Dateiinhalt |
 | file | Ja (Multipart) | binary | Drehbuch-Datei (.fdx oder .pdf) |
-| script_format | Ja | "fdx" / "pdf" | Format des Drehbuchs |
+| script_format | Ja (JSON) | "fdx" / "pdf" | Format des Drehbuchs; bei Multipart optional (sonst aus der Dateiendung) |
 | project_id | Ja | string | eProjekt Projekt-ID (poAllgemeinId, alphanumerisch, max 100 Zeichen) |
-| script_id | Nein | int | eProjekt Drehbuch-Dokument-ID. Wird bei Push an ePro zurueckgegeben, damit ePro das Assessment dem korrekten Dokument zuordnen kann. -1 wenn unbekannt. |
-| delivery | Nein | "pull" / "push" | Delivery-Modus (Default: "pull") |
-| idempotency_key | Nein | string | Verhindert doppelte Jobs bei Retry |
-| metadata | Nein | object | Zusaetzliche Metadaten fuer Audit |
+| script_id | Nein | int (32 Bit) | eProjekt Drehbuch-Dokument-ID. Wird bei Push an ePro zurueckgegeben, damit ePro das Assessment dem korrekten Dokument zuordnen kann. -1 wenn unbekannt. |
+| delivery | Nein | "pull" / "push" | Delivery-Modus (Default: "pull"); Gross-/Kleinschreibung egal, leer = "pull", jeder andere Wert → 422 |
+| idempotency_key | Nein | string (max 255) | Verhindert doppelte Jobs bei Retry (gilt pro API-Key-User); leer = kein Key, Steuerzeichen → 422 |
+| priority | Nein | int 1-10 | Wird gespeichert, beeinflusst die Abarbeitung derzeit **nicht** |
+| callback_url | Nein | string (HTTPS) | Wird validiert (nur `epro.filmakademie.de` / `staging.epro.filmakademie.de`, sonst 422), aber **nicht verwendet**. Das Push-Ziel ist immer `EPRO_BASE_URL/eki/scl/set-risk-assessment/{project_id}` aus der eKI-Konfiguration. |
+| metadata | Nein (nur JSON) | object | Max. 50 Schluessel, Werte max. 1000 Zeichen. Wird nicht in der Datenbank gespeichert, laeuft aber unverschluesselt durch die Workflow-Historie -- keine Drehbuchinhalte oder Personendaten hineinschreiben. |
+
+Groessenlimits: Bei JSON gilt das Limit von 10 485 760 Zeichen fuer den
+**Base64-String**, also Dateien bis ca. 7,5 MB (darueber 422). Per Multipart sind
+Dateien bis `MAX_UPLOAD_SIZE_BYTES` (Standard 10 MB) moeglich (darueber 413).
+Im Multipart-Pfad gelten fuer alle Felder dieselben Regeln wie bei JSON
+(`project_id` z. B. `^[a-zA-Z0-9_-]+$`, max. 100 Zeichen; fehlt sie, speichert die
+eKI `unknown`). Ein Textfeld, das als Datei-Teil gesendet wird, ergibt 422.
 
 ### Response (HTTP 202 Accepted)
 
@@ -114,8 +142,9 @@ delivery: pull
 
 ### Idempotenz
 
-Wenn idempotency_key gesetzt ist und ein Job mit diesem Key bereits
-existiert, wird der bestehende Job zurueckgegeben (kein neuer Workflow).
+Wenn idempotency_key gesetzt ist und fuer denselben API-Key-User bereits ein
+Job mit diesem Key existiert, wird der bestehende Job zurueckgegeben (HTTP 202,
+gleiche `job_id`, kein neuer Workflow) -- auch bei gleichzeitigen Requests.
 Das ist wichtig fuer Retry-Szenarien, damit keine Duplikate entstehen.
 
 ---
@@ -142,12 +171,17 @@ Authorization: Bearer eki_<api_key>
   "metadata": {
     "delivery_mode": "pull",
     "delivery_status": "pending",
-    "delivery_attempts": 0,
+    "delivery_attempts": 1,
     "delivery_last_status_code": null,
-    "delivered_at": null
+    "delivered_at": "2026-02-08T11:12:06.039089Z"
   }
 }
 ```
+
+Im Pull-Modus bedeutet das: Report liegt bereit (`delivery_attempts=1`,
+`delivered_at` = Bereitstellungszeit), ist aber noch nicht abgeholt
+(`delivery_status=pending`). Nach dem One-Shot-GET steht `delivery_status=delivered`
+und `delivered_at` auf dem Abrufzeitpunkt.
 
 ### Status-Werte
 
@@ -155,30 +189,71 @@ Authorization: Bearer eki_<api_key>
 |--------|-----------|-------------------|
 | pending | Job angenommen, Verarbeitung steht aus | Weiter pollen |
 | running | Verarbeitung laeuft | Weiter pollen |
-| delivering | Report erzeugt, Zustellung an ePro laeuft (nur Push, M10) | Weiter pollen |
+| delivering | Report erzeugt, Zustellung an ePro laeuft (Push; im Pull-Modus nur kurz, bis der Report bereitliegt) | Weiter pollen |
 | completed | Fertig, report_id vorhanden | Report abholen (Pull) bzw. bereits zugestellt (Push) |
-| failed | Fehlgeschlagen, error_message vorhanden | Fehler pruefen; `delivery_failed:*` = Zustellung endgueltig gescheitert |
-| cancelled | Abgebrochen | -- |
+| failed | Fehlgeschlagen, error_message vorhanden | **Keine automatische Bewertung verfuegbar -- manuelle Pruefung.** Siehe unten. |
+| cancelled | Job wurde vom Betrieb abgebrochen (Workflow-Cancel) | Check bei Bedarf neu ausloesen |
+
+### Wenn ein Job `failed` ist
+
+`failed` bedeutet immer: **Fuer dieses Drehbuch liegt keine automatische
+Sicherheitsbewertung vor.** ePro darf das nie als "kein Risiko" darstellen,
+sondern muss eine manuelle Pruefung anstossen oder den Check erneut ausloesen.
+
+Die Verarbeitung arbeitet fail-closed: Scheitert das Parsen, die KI-Analyse einer
+Szene dauerhaft (LLM nicht erreichbar, Timeout, unbrauchbare Antwort) oder
+blockiert der Prompt-Injection-Filter eine Szene, endet der Job mit `failed`, statt
+die Szene stillschweigend ohne Findings zu bewerten. Alle zwischengespeicherten
+Inhalte werden dabei sofort geloescht. `error_message` ist inhaltsfrei, zum Beispiel:
+
+```
+Parsing fehlgeschlagen: PDF ist passwortgeschützt
+Szene 7: Risikoanalyse fehlgeschlagen (LLMException)
+Szene <nr>: vom Prompt-Injection-Filter blockiert – manuelle Prüfung erforderlich
+```
+
+Der Prompt-Injection-Filter prueft auf gezielte, englischsprachige Muster, die sich
+an das Modell selbst richten (z. B. "ignore previous instructions", Rollenwechsel
+zu einer KI, Chat-Template-Token, eingeschleuste Szenen-Begrenzer). Normale
+Drehbuchsprache loest ihn in der Regel nicht aus; ein Treffer ist trotzdem ein
+Fall fuer die manuelle Pruefung.
+
+Ist `EPRO_WEBHOOK_URL` konfiguriert, meldet die eKI auch diese Verarbeitungsfehler
+ueber den Webhook `security.delivery.failed` (siehe 4b, `reason` =
+`prompt_blocked`, `parsing_failed` oder `processing_failed`, `attempts` = 0).
+
+`error_message` mit Praefix `delivery_failed:` bedeutet dagegen: Die Analyse war
+fertig, die Zustellung ist endgueltig gescheitert (siehe 4b).
 
 ### Zustell-Metadaten (M10)
 
 `metadata.delivery_status` beschreibt den Lieferweg unabhaengig vom Job-Status:
 `pending` (noch nicht zugestellt/abgeholt), `delivering` (Push-Versuche laufen),
-`delivered` (Push 2xx bzw. One-Shot-GET erfolgt), `failed`, `dead_lettered`
-(endgueltig gescheitert, Inhalt geloescht, Webhook gesendet).
-`delivery_attempts` und `delivery_last_status_code` zeigen den letzten Push-Versuch.
+`delivered` (Push 2xx bzw. One-Shot-GET erfolgt), `dead_lettered`
+(endgueltig gescheitert, Inhalt geloescht, Webhook gesendet, sofern konfiguriert).
+`failed` ist im Schema vorgesehen, wird derzeit aber nicht gesetzt.
+`delivery_attempts` und `delivery_last_status_code` zeigen den letzten Push-Versuch
+(im Pull-Modus `delivery_attempts=1` und kein Statuscode, sobald der Report bereitliegt).
 
 ### Empfohlenes Polling-Intervall
 
 ```
 Erste 2 Minuten:  alle 10 Sekunden
 Danach:           alle 30 Sekunden
-Timeout:          nach 60 Minuten abbrechen
+Timeout:          fruehestens nach 2,5 Stunden abbrechen
 ```
+
+Grossdokumente (300-350 Seiten) duerfen laut Pflichtenheft §5 bis zu 120 Minuten
+Verarbeitung brauchen; ein frueherer Abbruch des Pollings verliert fertige Reports.
+Ein Pull-Report bleibt nach Fertigstellung 6 Stunden abrufbar. Alle Polls zaehlen
+gegen die Rate Limits (Abschnitt 8) -- bei vielen parallelen Jobs das Intervall
+entsprechend verlaengern.
 
 ### Wann ist der Report bereit?
 
-Sobald status == "completed" und report_id nicht null ist.
+Sobald status == "completed" und report_id nicht null ist (Pull-Modus).
+Im Push-Modus bedeutet `completed`, dass ePro den Report bereits mit 2xx
+angenommen hat -- dann **nicht** zusaetzlich per GET abholen.
 
 ---
 
@@ -236,12 +311,16 @@ Authorization: Bearer eki_<api_key>
           }
         ],
         "confidence": 0.9,
-        "line_reference": null
+        "line_reference": null,
+        "evidence": "Stunt performer jumps from the 15-meter cliff into the water.",
+        "vulnerability": "stunt doubles",
+        "complexity": "water + height, night shoot",
+        "exposure_duration": "several hours"
       }
     ],
-    "processing_time_seconds": 45.2,
+    "processing_time_seconds": 3445.2,
     "metadata": {
-      "engine_version": "0.5.0",
+      "engine_version": "1.0.0",
       "taxonomy_version": "1.0"
     }
   },
@@ -254,10 +333,10 @@ Authorization: Bearer eki_<api_key>
 
 | Feld | Typ | Beschreibung |
 |------|-----|--------------|
-| report | object | Vollstaendiger JSON-Report (maschinenlesbar) |
+| report | object | Vollstaendiger JSON-Report (maschinenlesbar); `processing_time_seconds` = Sekunden von der Job-Annahme bis zur Report-Erzeugung |
 | report.findings | array | Liste aller Risiko-Findings mit Severity, Klasse, Massnahmen |
 | report.risk_summary | object | Aggregierte Zaehlung nach Severity-Level |
-| pdf_base64 | string | Base64-kodiertes PDF (menschenlesbar, zum Anzeigen/Download) |
+| pdf_base64 | string / null | Base64-kodiertes PDF (menschenlesbar, zum Anzeigen/Download); null, wenn die PDF-Erzeugung fehlschlug |
 | message | string | Status-Nachricht |
 
 ### PDF dekodieren und speichern (PHP)
@@ -277,18 +356,40 @@ Authorization: Bearer eki_<api_key>
 
 ```
 HTTP/1.1 410 Gone
+X-Request-ID: 3f2c9e0a8b7d4c1e9f0a1b2c3d4e5f60
 
-{ "detail": "Report already retrieved. URL is no longer valid." }
+{
+  "error": "Gone",
+  "message": "Report already retrieved. URL is no longer valid.",
+  "details": [],
+  "request_id": "3f2c9e0a8b7d4c1e9f0a1b2c3d4e5f60",
+  "timestamp": "2026-02-08T11:20:00.123456"
+}
 ```
 
 Der Report ist nach dem ersten Abruf unwiderruflich geloescht.
 Bei Verlust muss ein neuer Job gestartet werden.
 
+Die erfolgreiche Antwort traegt den Header `X-One-Shot: true`.
+
 ### Report-Verfuegbarkeit
 
 - Reports sind maximal **6 Stunden** nach Fertigstellung abrufbar
-- Danach werden sie automatisch geloescht (TTL)
-- Reports sind waehrend der Aufbewahrung AES-verschluesselt gespeichert
+  (`BUFFER_TTL_SECONDS`, Standard 21 600 s)
+- Danach werden sie automatisch geloescht (TTL); die eKI markiert den Job als
+  `failed` mit `delivery_failed:pull_ttl_expired` und sendet den Webhook (siehe 4b)
+- Reports sind waehrend der Aufbewahrung verschluesselt gespeichert (Fernet/AES)
+
+### Abgelaufener oder bereits zugestellter Report
+
+Ist der Report nicht mehr im Buffer -- TTL abgelaufen, im Push-Modus bereits an
+ePro uebertragen oder nicht lesbar --, antwortet der GET mit **410** und der
+Meldung `Report is no longer available (expired or already delivered). URL is no
+longer valid.` Es wird kein Report geliefert und nichts als zugestellt markiert;
+es liegt **keine** Bewertung vor (Check neu ausloesen bzw. manuelle Pruefung).
+
+Ist der Buffer (Redis) beim Abruf nicht erreichbar, antwortet die eKI mit **503**;
+der Report bleibt in diesem Fall abrufbar -- spaeter erneut versuchen.
 
 ---
 
@@ -296,7 +397,8 @@ Bei Verlust muss ein neuer Job gestartet werden.
 
 Wenn `delivery=push` beim Einreichen gesetzt wird, sendet eKI den Report
 nach Fertigstellung **automatisch** per `POST` an die eProjekt-API.
-Ein manuelles Abholen (Schritt 4) entfaellt.
+Ein manuelles Abholen (Schritt 4) entfaellt -- ein GET nach erfolgreichem Push
+liefert 410 (siehe 4).
 
 ### Ablauf
 
@@ -309,10 +411,12 @@ Ein manuelles Abholen (Schritt 4) entfaellt.
 
 ### Was eKI an ePro sendet
 
-eKI ruft folgende ePro-Schnittstelle auf:
+eKI ruft folgende ePro-Schnittstelle auf (Basis-URL = `EPRO_BASE_URL` der
+eKI-Konfiguration, z. B. `https://staging.epro.filmakademie.de/api`; ein im
+Request mitgeschicktes `callback_url` wird nicht verwendet):
 
 ```
-POST /api/eki/scl/set-risk-assessment/{project_id}
+POST {EPRO_BASE_URL}/eki/scl/set-risk-assessment/{project_id}
 Content-Type: multipart/form-data
 ```
 
@@ -321,7 +425,7 @@ Content-Type: multipart/form-data
 | script_id | int | Drehbuch-Dokument-ID aus dem urspruenglichen Request (-1 wenn unbekannt) |
 | status | int | 0 = kein hohes Risiko gefunden, 1 = hohe/kritische Risiken vorhanden |
 | assessment | string | Textuelle Zusammenfassung aller Findings |
-| file | PDF | Report als PDF-Datei (max 7 MB) |
+| file | PDF | Report als PDF-Datei `safety-check-result_{project_id}.pdf`. Das 7-MB-Limit setzt nur ePro durch; die eKI prueft die Groesse nicht -- ein 413 von ePro fuehrt zum Hard-Fail. Fehlt das PDF (Erzeugung fehlgeschlagen), wird ohne `file` gesendet. |
 
 Zusaetzlich sendet eKI seit M10 folgende HTTP-Header, damit ePro wiederholte
 Pushes (Temporal-Retry nach Timeout) als Duplikat erkennen kann
@@ -332,15 +436,17 @@ Pushes (Temporal-Retry nach Timeout) als Duplikat erkennen kann
 | `Idempotency-Key` | `report_id` -- pro Job stabil ueber alle Retries |
 | `X-EKI-Job-Id` | `job_id` |
 | `X-EKI-Attempt` | laufende Nummer des Zustellversuchs (1, 2, ...) |
-| `X-Request-ID` | Korrelations-ID des urspruenglichen Requests (falls vorhanden) |
+| `X-Request-ID` | Korrelations-ID des urspruenglichen Einreichungs-Requests (vom Client gesendet oder von der eKI erzeugt) |
 
 Empfehlung fuer ePro: `Idempotency-Key` persistieren und bei erneutem Eingang
 mit demselben Key `200 OK` ohne zweite Speicherung antworten.
 
 ### Autorisierung
 
-Die Autorisierung beim Push zu ePro erfolgt **ausschliesslich per IP-Whitelist**
-(kein Bearer-Token). Der eKI-Server muss von der freigeschalteten IP zugreifen.
+Die Autorisierung beim Push zu ePro erfolgt per **IP-Whitelist**: Der
+eKI-Server muss von der freigeschalteten IP zugreifen. Ist in der eKI
+`EPRO_AUTH_TOKEN` gesetzt, sendet sie zusaetzlich `Authorization: Bearer <Token>`
+(Push und Webhook); Standard ist ohne Token.
 
 ### Status-Mapping
 
@@ -348,6 +454,10 @@ Die Autorisierung beim Push zu ePro erfolgt **ausschliesslich per IP-Whitelist**
 |--------------|-------------|
 | Mindestens 1 Finding mit risk_level critical oder high | 1 |
 | Keine critical/high Findings | 0 |
+
+Scheitert die Analyse selbst (Job `failed`, siehe 3), wird **nichts** gepusht --
+`status=0` bedeutet also immer eine vollstaendig durchgelaufene Analyse ohne
+hohe/kritische Findings. Den Abbruch erkennt ePro am Job-Status.
 
 ### Fehlerverhalten
 
@@ -357,12 +467,22 @@ Die Autorisierung beim Push zu ePro erfolgt **ausschliesslich per IP-Whitelist**
 | 5xx, 408, 425, 429, Netzwerkfehler | Automatischer Retry mit exponentiellem Backoff (2 s ... 10 min) bis zu 6 Stunden |
 | sonstige 4xx | Kein Retry (Hard-Fail): Loeschung, Job `failed`, Dead Letter, Webhook |
 | 6 h ohne Erfolg | Loeschung, Job `failed` (`delivery_failed:retry_window_exhausted`), Dead Letter, Webhook |
+| (vor dem Senden) Report nicht mehr im Buffer, z. B. nach einem One-Shot-GET | Kein Retry: Job `failed` (`delivery_failed:report_expired`), Dead Letter, Webhook |
 
-Waehrend des Retry-Fensters bleibt der Report verschluesselt im Buffer und kann
-alternativ per One-Shot-GET abgeholt werden. Nach endgueltigem Scheitern
-existiert kein Inhalt mehr in der eKI; ePro muss den Check erneut ausloesen.
-Der Metadaten-Webhook `security.delivery.failed` (siehe OpenAPI `webhooks`)
-informiert darueber, sofern `EPRO_WEBHOOK_URL` konfiguriert ist.
+Waehrend des Retry-Fensters bleibt der Report verschluesselt im Buffer.
+Ein One-Shot-GET ist in dieser Zeit technisch moeglich, beendet die Zustellung
+aber als Fehler: Der naechste Push-Versuch findet den Report nicht mehr, der Job
+endet mit `delivery_failed:report_expired` (Dead Letter, Webhook), obwohl der
+Report abgeholt wurde. Deshalb im Push-Modus nicht per GET abholen. Nach
+endgueltigem Scheitern existiert kein Inhalt mehr in der eKI; ePro muss den Check
+erneut ausloesen. Der Metadaten-Webhook `security.delivery.failed` (siehe OpenAPI
+`webhooks`) informiert darueber, sofern `EPRO_WEBHOOK_URL` konfiguriert ist:
+JSON-Body mit `job_id`, `report_id`, `reason` und `attempts`. Gruende bei der
+Zustellung: `retry_window_exhausted`, `hard_4xx`, `pull_ttl_expired`,
+`report_expired`, `invalid_project_id`, `delivery_failed`; bei Verarbeitungsfehlern
+(kein Report entstanden, siehe 3): `prompt_blocked`, `parsing_failed`,
+`processing_failed`. Bei Nicht-2xx-Antwort versucht die eKI den Webhook insgesamt
+hoechstens dreimal.
 
 Im Pull-Modus gilt dieselbe 6-h-Frist: Wird der Report nicht per One-Shot-GET
 abgeholt, wird er geloescht und `delivery_failed:pull_ttl_expired` gemeldet.
@@ -397,12 +517,17 @@ Jedes Finding im Report enthaelt:
 | category | enum | "PHYSICAL" | Hauptkategorie (PHYSICAL/ENVIRONMENTAL/PSYCHOLOGICAL) |
 | risk_class | string | "FIRE" | Risiko-Klasse aus Taxonomie (23 moegliche Werte) |
 | rule_id | string | "SEC-P-008" | Taxonomie Rule-ID |
-| likelihood | int 1-5 | 4 | Eintrittswahrscheinlichkeit |
-| impact | int 1-5 | 5 | Schwere der Auswirkung |
+| likelihood | int 0-5 | 4 | Eintrittswahrscheinlichkeit (0 = nicht bewertet) |
+| impact | int 0-5 | 5 | Schwere der Auswirkung (0 = nicht bewertet) |
 | description | string | "Building fire..." | Beschreibung des Risikos |
 | recommendation | string | "Fire dept on standby" | Konkrete Massnahmenempfehlung |
 | measures | array | siehe unten | Kodifizierte Massnahmen aus dem Katalog |
 | confidence | float 0-1 | 0.9 | Konfidenz der KI-Bewertung |
+| line_reference | string / null | null | derzeit immer null |
+| evidence | string | "Flames engulf the hallway." | Textbeleg (Zitat aus der Szene) oder Regelbegruendung |
+| vulnerability | string | "children" | Verletzlichkeitsfaktoren |
+| complexity | string | "extras, night shoot" | Komplexitaetsfaktoren |
+| exposure_duration | string | "several hours" | Geschaetzte Expositionsdauer |
 
 ### Massnahmen-Objekte
 
@@ -423,18 +548,46 @@ due-Format: "shooting-Xd" = X Tage vor Drehtag, "pre-production" = in der Vorber
 
 ### HTTP-Statuscodes
 
-| Code | Bedeutung | Aktion |
-|------|-----------|--------|
-| 200 | Erfolg | Daten verarbeiten |
-| 202 | Job angenommen | Polling starten |
-| 400 | Ungueltige Anfrage | Request pruefen |
-| 401 | Nicht authentifiziert | API-Key pruefen |
-| 404 | Nicht gefunden / Kein Zugriff | Job-ID/Report-ID pruefen |
-| 410 | Report bereits abgeholt | Report war schon einmal abgerufen |
-| 413 | Datei zu gross | Max 10 MB |
-| 422 | Validierungsfehler | Request-Format pruefen |
-| 429 | Rate Limit ueberschritten | Warten, spaeter erneut versuchen |
-| 500 | Serverfehler | Support kontaktieren |
+Alle Fehler kommen im einheitlichen Format `ErrorResponse`:
+
+```json
+{
+  "error": "ServiceUnavailable",
+  "message": "Database service is temporarily unavailable. Please try again later.",
+  "details": [],
+  "request_id": "3f2c9e0a8b7d4c1e9f0a1b2c3d4e5f60",
+  "timestamp": "2026-10-15T10:00:00.000000"
+}
+```
+
+`request_id` ist immer gesetzt und identisch mit dem Response-Header
+`X-Request-ID` (vom Client uebernommen oder von der eKI erzeugt). Bei
+Support-Anfragen bitte immer die `request_id` angeben.
+
+| Code | `error` | Bedeutung | Aktion |
+|------|---------|-----------|--------|
+| 200 | -- | Erfolg | Daten verarbeiten |
+| 202 | -- | Job angenommen | Polling starten |
+| 400 | `BadRequest` | Ungueltige Anfrage: Body ist kein gueltiges JSON (Syntax, leer, nicht UTF-8, form-urlencoded), Multipart ohne `file`, leere Datei, falscher Dateityp, kein gueltiges PDF | Request pruefen |
+| 401 | `Unauthorized` | Nicht authentifiziert (Key fehlt, ungueltig, abgelaufen, deaktiviert) | API-Key pruefen |
+| 403 | `Forbidden` | `X-Actor-User-Id` passt nicht zur `user_id` des API-Keys | Header korrigieren oder weglassen |
+| 404 | `NotFound` | Nicht gefunden / Kein Zugriff (fremder Job/Report) | Job-ID/Report-ID pruefen |
+| 410 | `Gone` | Report bereits abgeholt | Report war schon einmal abgerufen |
+| 413 | `PayloadTooLarge` | Multipart-Datei groesser als 10 MB | Datei verkleinern |
+| 422 | `ValidationError` | Validierungsfehler: JSON ist kein Objekt, Base64, `project_id`-Format, `delivery`, `script_format`, `script_id` ausserhalb 32 Bit, Steuerzeichen im `idempotency_key`, `callback_url`, `priority`, Base64-String zu lang, Textfeld als Datei-Teil | Request-Format pruefen |
+| 429 | `RateLimitExceeded` | Rate Limit ueberschritten | `Retry-After` abwarten |
+| 500 | `InternalServerError` | Unerwarteter Serverfehler | mit `request_id` an den Support |
+| 503 | `ServiceUnavailable` / `ServiceUnavailableException` | PostgreSQL, Redis oder Temporal voruebergehend nicht erreichbar | spaeter erneut senden (siehe Hinweis unten) |
+
+Auch unbekannte Pfade (404) und falsche Methoden (405) antworten im Format
+`ErrorResponse`.
+
+**503 beim Einreichen und Idempotenz:** Je nach Ausfall kann die eKI den Job bereits
+angelegt haben, bevor der Fehler auftrat. Ein erneuter Aufruf mit demselben
+`idempotency_key` liefert dann diesen Job zurueck (202 mit bestehender `job_id`) --
+bei nicht erreichbarer Workflow-Engine im Status `failed`, bei nicht erreichbarem
+Redis dauerhaft im Status `pending`. In diesen beiden Faellen mit einem **neuen**
+`idempotency_key` erneut einreichen.
 
 ### Retry-Strategie
 
@@ -486,8 +639,9 @@ class EkiClient {
         return $this->get("/v1/security/reports/{$reportId}");
     }
 
-    // Warten und Report abholen
-    public function waitAndGetReport($jobId, $timeoutSec = 3600) {
+    // Warten und Report abholen (Pull-Modus)
+    // Timeout >= 2,5 h: Grossdokumente duerfen bis zu 120 min laufen.
+    public function waitAndGetReport($jobId, $timeoutSec = 9000) {
         $start = time();
         $interval = 10;
 
@@ -495,9 +649,11 @@ class EkiClient {
             $status = $this->getJobStatus($jobId);
 
             if ($status['status'] === 'completed' && !empty($status['report_id'])) {
+                // 410 = bereits abgeholt oder nicht mehr verfuegbar -> keine Bewertung
                 return $this->getReport($status['report_id']);
             }
-            if ($status['status'] === 'failed') {
+            if ($status['status'] === 'failed' || $status['status'] === 'cancelled') {
+                // Keine automatische Bewertung -> manuelle Pruefung, nie "kein Risiko"
                 throw new Exception('eKI Job failed: ' . $status['error_message']);
             }
 
@@ -561,12 +717,21 @@ file_put_contents("/reports/{$jobId}.pdf", $pdf);
 
 ## 8. Rate Limits
 
-| Limit | Wert | Beschreibung |
+| Limit | Wert (Standard) | Beschreibung |
 |-------|------|--------------|
-| IP-basiert | 60 Requests/Minute | DoS-Schutz |
-| API-Key-basiert | 1000 Requests/Stunde | Abuse-Prevention |
+| IP-basiert | 60 Requests/Minute **je Quell-IP** | gilt fuer alle Endpunkte zusammen (Einreichen, Polling, Abruf) |
+| API-Key-basiert | 1000 Requests/Stunde je API-Key | Abuse-Prevention |
 
 Bei Ueberschreitung: HTTP 429 mit Retry-After Header.
+
+Da alle Anfragen des ePro-Servers von derselben IP kommen, teilen sich alle
+parallel gepollten Jobs das Minutenbudget: Zehn Jobs, die alle 10 Sekunden
+gepollt werden, erreichen das Limit bereits. Polling-Intervall an die Zahl
+paralleler Jobs anpassen oder die Limits in der eKI-Konfiguration
+(`RATE_LIMIT_PER_MINUTE`, `RATE_LIMIT_PER_HOUR`) erhoehen lassen. Steht vor der
+eKI ein Reverse-Proxy, muss er mit `TRUST_PROXY_HEADERS=true` und
+`TRUSTED_PROXY_IPS` eingetragen sein -- sonst teilen sich alle Clients die IP
+des Proxys.
 
 ---
 
@@ -579,8 +744,13 @@ Bei Ueberschreitung: HTTP 429 mit Retry-After Header.
   Sofort in der eProjekt-DB persistieren.
 - **Idempotency-Key verwenden**: Bei Retries immer den gleichen Key senden,
   um Duplikate zu vermeiden.
-- Keine Drehbuchinhalte werden in der eKI dauerhaft gespeichert.
-  Nach Abholung/Zustellung werden alle Daten geloescht.
+- Keine Drehbuchinhalte werden in der eKI dauerhaft gespeichert:
+  Drehbuch, Zwischenergebnisse, Findings und Report liegen nur verschluesselt im
+  Buffer und werden nach Abholung/Zustellung bzw. bei einem Fehler sofort,
+  spaetestens nach 6 Stunden geloescht. Metadaten (Job-/Report-IDs, `project_id`,
+  Zeitstempel) bleiben erhalten. Details: `docs/DATENSCHUTZ.md`.
+- **`failed`, `cancelled` und 410 beim Abruf** nie als "kein Risiko" anzeigen --
+  dann liegt keine automatische Bewertung vor.
 
 ---
 

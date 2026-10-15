@@ -1,3 +1,8 @@
+> **Historischer Nachweis** (Stand 22.05.2026, M07). Beschreibt den damaligen Stand und wird
+> nicht fortgeschrieben. Aktueller Stand: [UAT/UAT_TESTPLAN.md](UAT/UAT_TESTPLAN.md) (AT6),
+> [CONFIGURATION.md](CONFIGURATION.md), [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md). Die Befehle in
+> §6.2/§6.3 wurden am 15.10.2026 korrigiert (Container neu erzeugen statt `restart`, portables `sed`).
+
 # M07 Acceptance Evidence – Großdokument-Optimierung
 
 Belegsammlung für die Trello-Karte „M07 -- Großdokument-Optimierung
@@ -141,9 +146,9 @@ Risikoanalyse echte Treffer erzeugt.
 
 ```bash
 export EKI_API_KEY="eki_..."
-sed -i '' 's/^LLM_PARALLEL_ENABLED=.*/LLM_PARALLEL_ENABLED=false/' .env.local
-sed -i '' 's/^OLLAMA_MAX_CONCURRENT_REQUESTS=.*/OLLAMA_MAX_CONCURRENT_REQUESTS=1/' .env.local
-docker compose restart api worker
+sed -i.bak 's/^LLM_PARALLEL_ENABLED=.*/LLM_PARALLEL_ENABLED=false/' .env.local
+sed -i.bak 's/^OLLAMA_MAX_CONCURRENT_REQUESTS=.*/OLLAMA_MAX_CONCURRENT_REQUESTS=1/' .env.local
+docker compose up -d --force-recreate api worker   # "restart" liest .env.local nicht neu ein
 
 python tests/run_pdf_m07_benchmark.py --concurrency 1
 ```
@@ -154,11 +159,11 @@ Ergebnis: `tests/reports/m07_benchmark_<ts>.json` mit
 ### 6.3 Parallel-Lauf (Concurrency 2)
 
 ```bash
-sed -i '' 's/^LLM_PARALLEL_ENABLED=.*/LLM_PARALLEL_ENABLED=true/' .env.local
-sed -i '' 's/^OLLAMA_MAX_CONCURRENT_REQUESTS=.*/OLLAMA_MAX_CONCURRENT_REQUESTS=2/' .env.local
-sed -i '' 's/^PDF_STRUCTURE_CONCURRENCY=.*/PDF_STRUCTURE_CONCURRENCY=2/' .env.local
-sed -i '' 's/^RISK_ANALYSIS_CONCURRENCY=.*/RISK_ANALYSIS_CONCURRENCY=2/' .env.local
-docker compose restart api worker
+sed -i.bak 's/^LLM_PARALLEL_ENABLED=.*/LLM_PARALLEL_ENABLED=true/' .env.local
+sed -i.bak 's/^OLLAMA_MAX_CONCURRENT_REQUESTS=.*/OLLAMA_MAX_CONCURRENT_REQUESTS=2/' .env.local
+sed -i.bak 's/^PDF_STRUCTURE_CONCURRENCY=.*/PDF_STRUCTURE_CONCURRENCY=2/' .env.local
+sed -i.bak 's/^RISK_ANALYSIS_CONCURRENCY=.*/RISK_ANALYSIS_CONCURRENCY=2/' .env.local
+docker compose up -d --force-recreate api worker
 
 python tests/run_pdf_m07_benchmark.py --concurrency 2
 ```

@@ -1,3 +1,11 @@
+> **Historischer Nachweis** (Stand 21.05.2026, M06). Beschreibt den damaligen Stand und wird
+> nicht fortgeschrieben. Aktueller Stand: [M06_KB_GUIDE.md](M06_KB_GUIDE.md),
+> [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md), [CONFIGURATION.md](CONFIGURATION.md).
+> Heute gilt: Migrations-Head ist `b8d0f2a4c6e3` (KB-Dubletten jetzt pro Mandant eindeutig statt
+> global); `docker compose restart` liest `.env.local`
+> nicht neu ein (statt dessen `docker compose up -d --force-recreate api worker`); `sed -i ''`
+> funktioniert nur mit BSD-sed (macOS).
+
 # M06 Acceptance Evidence
 
 Belegsammlung fuer die Trello-Karte „M06 -- LLM-Adapter (Mistral Cloud) & KB-Grundlage". Jeder Punkt korrespondiert zu einem Item aus dem Implementierungsplan.
@@ -13,7 +21,7 @@ docker compose exec api alembic current
 
 Erwartete Ausgabe: `e8f1c2d3a401 (head)` -- das ist die neue M06-Revision.
 
-Migration-Datei: [`db/migrations/versions/20260521_m06_knowledge_base.py`](db/migrations/versions/20260521_m06_knowledge_base.py)
+Migration-Datei: [`db/migrations/versions/20260521_m06_knowledge_base.py`](../db/migrations/versions/20260521_m06_knowledge_base.py)
 
 Erzeugte Objekte (verifiziert via `\d+ kb_documents` und `\d+ kb_embeddings` in psql):
 

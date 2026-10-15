@@ -1,3 +1,10 @@
+> **Veraltet** – Stand Januar 2026 (M01), wird nicht mehr gepflegt. Maßgeblich sind
+> [LLM_INTEGRATION.md](LLM_INTEGRATION.md) und [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md).
+> **Widerspricht den Produktionsregeln:** Cloud-Provider (`mistral_cloud`) sind in Produktion
+> nicht zulässig (Pflichtenheft §4.3, Start-Validator); produktiv läuft `local_mistral` mit
+> `mistral-small3.2`. Konfigurationsänderungen werden mit
+> `docker compose up -d --force-recreate api worker` wirksam, nicht mit `restart`.
+
 # ✅ Ollama Integration - Fertiggestellt
 
 ## Zusammenfassung
