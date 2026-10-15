@@ -19,6 +19,10 @@ from api.dependencies import get_db, get_redis, get_temporal_client
 from api.main import app
 from core.db_models import ApiKeyModel, Base
 
+# Same as the Docker images: single-threaded tesseract, otherwise OCR tests hit
+# the per-page timeout on a loaded machine (OpenMP thread contention).
+os.environ.setdefault("OMP_THREAD_LIMIT", "1")
+
 # Minimal PDF that passes the ``%PDF`` magic-byte validator and is parseable
 # by pdfplumber. Used by API tests that need a syntactically valid PDF body.
 MINIMAL_PDF_BYTES = (
