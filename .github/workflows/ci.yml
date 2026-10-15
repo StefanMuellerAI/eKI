@@ -199,6 +199,27 @@ jobs:
           mkdir -p secrets && touch secrets/prometheus_api_key.txt
           docker compose -f docker-compose.yml -f docker-compose.observability.yml config -q
 
+      - name: Prod overlay publishes only the API and bind-mounts no source code
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml config --format json > /tmp/prod.json
+          python3 - <<'EOF'
+          import json
+          services = json.load(open("/tmp/prod.json"))["services"]
+          published = {n: [p.get("published") for p in s.get("ports", [])] for n, s in services.items()}
+          extra = {n: p for n, p in published.items() if p and n != "api"}
+          assert not extra, f"infra ports published in prod: {extra}"
+          assert published["api"] == ["8000"], published["api"]
+          code_dirs = {"api", "core", "services", "workflows", "db", "llm", "parsers", "config", "scripts"}
+          mounts = {
+              n: [v["source"] for v in s.get("volumes", []) if v.get("type") == "bind"
+                  and v["source"].rstrip("/").rsplit("/", 1)[-1] in code_dirs]
+              for n, s in services.items()
+          }
+          leaked = {n: m for n, m in mounts.items() if m}
+          assert not leaked, f"source bind mounts in prod: {leaked}"
+          print("prod overlay OK:", published)
+          EOF
+
   docker-build:
     name: Docker Build
     runs-on: ubuntu-latest

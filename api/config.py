@@ -496,11 +496,15 @@ class Settings(BaseSettings):
             "replace-this-secret-key-with-at-least-32-characters",
             "change-me-in-production-min-32-chars",
         }
-        if len(self.api_secret_key) < 32 or self.api_secret_key in insecure_defaults:
+        if (
+            len(self.api_secret_key) < 32
+            or self.api_secret_key in insecure_defaults
+            or _is_placeholder(self.api_secret_key)
+        ):
             raise ValueError("API_SECRET_KEY must be a strong non-default secret in production")
 
         database_url_str = str(self.database_url)
-        if "eki_password" in database_url_str or "replace-me" in database_url_str:
+        if "eki_password" in database_url_str or _is_placeholder(database_url_str):
             raise ValueError("DATABASE_URL contains insecure placeholder credentials")
 
         if self.debug:
@@ -514,6 +518,17 @@ class Settings(BaseSettings):
             )
 
         return self
+
+
+# Markers of the placeholders shipped in .env.example / code defaults
+# (e.g. ``CHANGE_ME_256_BIT_SECRET_KEY_HERE`` is 33 chars and passed the
+# length check, so production started with a publicly known Fernet key).
+_PLACEHOLDER_MARKERS = ("change_me", "change-me", "changeme", "replace-me", "replace_me")
+
+
+def _is_placeholder(value: str) -> bool:
+    lowered = value.lower()
+    return any(marker in lowered for marker in _PLACEHOLDER_MARKERS)
 
 
 @lru_cache

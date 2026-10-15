@@ -8,7 +8,8 @@
 # Principles (Pflichtenheft 4.1 / 5 / Security-Audit Finding 3):
 # * only the API port is published; every infra service stays on the internal network
 # * released images from GHCR instead of local builds; set EKI_IMAGE_TAG (default: latest)
-# * no source bind mounts
+# * no source bind mounts (`!reset` -- a plain `[]` would be merged with the base file
+#   and keep them, see Compose "merge" rules; needs Docker Compose >= 2.24)
 # * Gunicorn supervises the Uvicorn worker (Pflichtenheft 4.1 "Uvicorn + Gunicorn")
 # * local inference only: LLM_PROVIDER=local_mistral, cloud providers are rejected at startup
 # * all secrets via .env.local / *_FILE (secrets/), see secrets/README.md
@@ -16,14 +17,14 @@
 services:
   postgres:
     # POSTGRES_PASSWORD comes from .env.local (env_file in base compose)
-    ports: []
+    ports: !reset []
     deploy:
       resources:
         limits:
           memory: 2g
 
   redis:
-    ports: []
+    ports: !reset []
     # Persist the encrypted buffer across restarts (delivery retries up to 6h)
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "1gb", "--maxmemory-policy", "noeviction"]
     deploy:
@@ -32,14 +33,14 @@ services:
           memory: 1500m
 
   temporal:
-    ports: []
+    ports: !reset []
 
   temporal-ui:
     # Operator UI stays internal; reach it via SSH tunnel if needed.
-    ports: []
+    ports: !reset []
 
   ollama:
-    ports: []
+    ports: !reset []
     # NVIDIA GPU (Pflichtenheft 8: >= 24 GB VRAM recommended). Requires nvidia-container-toolkit.
     deploy:
       resources:
@@ -78,7 +79,7 @@ services:
       - DEBUG=false
       - LLM_PROVIDER=${LLM_PROVIDER:-local_mistral}
       - LOG_FORMAT=json
-    volumes: []
+    volumes: !reset []
     deploy:
       resources:
         limits:
@@ -92,7 +93,7 @@ services:
       - DEBUG=false
       - LLM_PROVIDER=${LLM_PROVIDER:-local_mistral}
       - LOG_FORMAT=json
-    volumes: []
+    volumes: !reset []
     deploy:
       resources:
         limits:

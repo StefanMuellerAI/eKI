@@ -98,3 +98,76 @@ def test_llm_provider_unknown_value_is_rejected(monkeypatch):
     assert "Invalid LLM_PROVIDER" in err
     assert "mistral_cloud" in err
     assert "ollama" in err
+
+
+class TestProductionSecurityValidator:
+    """``ENV=production`` must refuse to start with placeholder secrets."""
+
+    _STRONG_KEY = "k8Jf2nQ7xLp4Vr9Tz1Wb6Yc3Hd5Ms0Ge"  # 32 chars, no marker
+    _STRONG_DB = "postgresql+asyncpg://eki_user:Xy7pQ2rT9vB4@postgres:5432/eki_db"
+
+    def _settings(self, monkeypatch, **env: str) -> Settings:
+        base = {
+            "ENV": "production",
+            "DEBUG": "false",
+            "LLM_PROVIDER": "local_mistral",
+            "API_SECRET_KEY": self._STRONG_KEY,
+            "DATABASE_URL": self._STRONG_DB,
+        }
+        base.update(env)
+        for key, value in base.items():
+            monkeypatch.setenv(key, value)
+        return Settings(_env_file=None)
+
+    def test_strong_settings_are_accepted(self, monkeypatch):
+        settings = self._settings(monkeypatch)
+        assert settings.is_production
+
+    @pytest.mark.parametrize(
+        "secret",
+        [
+            "CHANGE_ME_256_BIT_SECRET_KEY_HERE",  # verbatim from .env.example (33 chars)
+            "change-me-in-production-min-32-chars",
+            "replace-this-secret-key-with-at-least-32-characters",
+            "short",
+        ],
+    )
+    def test_placeholder_or_weak_secret_key_is_rejected(self, monkeypatch, secret):
+        with pytest.raises(ValueError, match="API_SECRET_KEY"):
+            self._settings(monkeypatch, API_SECRET_KEY=secret)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            # verbatim from .env.example
+            "postgresql+asyncpg://eki_user:CHANGE_ME_STRONG_PASSWORD_HERE@postgres:5432/eki_db",
+            "postgresql+asyncpg://eki_user:replace-me@localhost:5432/eki_db",
+            "postgresql+asyncpg://eki_user:eki_password@postgres:5432/eki_db",
+        ],
+    )
+    def test_placeholder_database_password_is_rejected(self, monkeypatch, url):
+        with pytest.raises(ValueError, match="DATABASE_URL"):
+            self._settings(monkeypatch, DATABASE_URL=url)
+
+    def test_debug_is_rejected(self, monkeypatch):
+        with pytest.raises(ValueError, match="DEBUG"):
+            self._settings(monkeypatch, DEBUG="true")
+
+    def test_external_llm_requires_explicit_opt_in(self, monkeypatch):
+        with pytest.raises(ValueError, match="mistral_cloud"):
+            self._settings(monkeypatch, LLM_PROVIDER="mistral_cloud")
+        settings = self._settings(
+            monkeypatch,
+            LLM_PROVIDER="mistral_cloud",
+            LLM_ALLOW_EXTERNAL_PROVIDERS="true",
+            MISTRAL_API_KEY="test-key",
+        )
+        assert settings.llm_provider == "mistral_cloud"
+
+    def test_placeholders_are_fine_outside_production(self, monkeypatch):
+        settings = self._settings(
+            monkeypatch,
+            ENV="development",
+            API_SECRET_KEY="CHANGE_ME_256_BIT_SECRET_KEY_HERE",
+        )
+        assert not settings.is_production

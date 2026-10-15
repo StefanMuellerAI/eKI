@@ -56,6 +56,9 @@ async def get_temporal_client() -> TemporalClient:
     try:
         client = await TemporalClient.connect(
             settings.temporal_host,
+            # Must match the worker (worker/main.py); before, the API always
+            # used "default", so a custom TEMPORAL_NAMESPACE stranded every job.
+            namespace=settings.temporal_namespace,
             interceptors=temporal_interceptors(settings),
         )
     except Exception as exc:

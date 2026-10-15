@@ -18,7 +18,7 @@ from api.dependencies import verify_api_key
 from api.routers import health, knowledge_base, ops, security
 from core.db_models import ApiKeyModel
 from core.exceptions import EKIException
-from core.logging_config import configure_logging, set_request_id
+from core.logging_config import configure_logging, get_request_id, set_request_id
 from core.metrics import (
     HTTP_REQUEST_DURATION,
     HTTP_REQUESTS_IN_FLIGHT,
@@ -176,6 +176,15 @@ def _is_infrastructure_error(exc: Exception) -> tuple[bool, str]:
     return False, ""
 
 
+def _error_request_id(request: Request) -> str | None:
+    """Request id for error bodies: the one the middleware generated or adopted.
+
+    Before, only a client-supplied ``X-Request-ID`` was echoed, so callers that
+    did not send one got ``request_id: null`` and had nothing to quote to ops.
+    """
+    return get_request_id() or request.headers.get("X-Request-ID") or None
+
+
 @app.exception_handler(EKIException)
 async def eki_exception_handler(request: Request, exc: EKIException) -> JSONResponse:
     """Handle custom EKI exceptions with their specific status codes."""
@@ -185,7 +194,7 @@ async def eki_exception_handler(request: Request, exc: EKIException) -> JSONResp
             error=exc.__class__.__name__,
             message=exc.message,
             details=[ErrorDetail(message=str(v)) for v in exc.details.values()],
-            request_id=request.headers.get("X-Request-ID"),
+            request_id=_error_request_id(request),
         ).model_dump(mode="json"),
     )
 
@@ -211,7 +220,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
         content=ErrorResponse(
             error=error_name,
             message=str(exc.detail),
-            request_id=request.headers.get("X-Request-ID"),
+            request_id=_error_request_id(request),
         ).model_dump(mode="json"),
     )
 
@@ -241,7 +250,7 @@ async def validation_exception_handler(
             error="ValidationError",
             message="Request validation failed",
             details=details,
-            request_id=request.headers.get("X-Request-ID"),
+            request_id=_error_request_id(request),
         ).model_dump(mode="json"),
     )
 
@@ -266,7 +275,7 @@ async def pydantic_validation_exception_handler(
             error="ValidationError",
             message="Request validation failed",
             details=details,
-            request_id=request.headers.get("X-Request-ID"),
+            request_id=_error_request_id(request),
         ).model_dump(mode="json"),
     )
 
@@ -283,7 +292,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
             content=ErrorResponse(
                 error="ServiceUnavailable",
                 message=user_message,
-                request_id=request.headers.get("X-Request-ID"),
+                request_id=_error_request_id(request),
             ).model_dump(mode="json"),
         )
 
@@ -294,7 +303,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
         content=ErrorResponse(
             error="InternalServerError",
             message="An internal error occurred. Please try again later.",
-            request_id=request.headers.get("X-Request-ID"),
+            request_id=_error_request_id(request),
         ).model_dump(mode="json"),
     )
 
