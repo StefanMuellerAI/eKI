@@ -1,6 +1,6 @@
 # eKI API - Postman Collection v1.0
 
-Diese Postman Collection enthält alle API-Endpunkte der eKI API v1.0.0: Security-Checks (FDX/PDF, Push/Pull), Knowledge Base (M06), Operations/Dead Letters (M10) und Schnellnachweise für die Abnahmetests (M12).
+Diese Postman Collection enthält alle API-Endpunkte der eKI API v1.0.1: Security-Checks (FDX/PDF, Push/Pull), Knowledge Base (M06), Operations/Dead Letters (M10) und Schnellnachweise für die Abnahmetests (M12).
 
 ## Import
 
@@ -200,6 +200,6 @@ Vollständiger Testplan: `docs/UAT/UAT_TESTPLAN.md`; die Abnahmetests 2–7 auto
 
 ---
 
-**Version:** 1.0.0
+**Version:** 1.0.1
 **Last Updated:** 2026-10-16
 **Status:** Release (M12 UAT-Paket)

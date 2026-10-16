@@ -4,7 +4,7 @@
     "description": "Vollstaendige Postman-Sammlung fuer die eKI API v1.0.x (Pflichtenheft-Abnahme). Variablen ueber die mitgelieferte Environment-Datei eKI-API.postman_environment.json setzen. Seit 1.0.1: der synchrone Stub POST /v1/security/check ist entfernt (404; frueherer Ordner 4 entfaellt), die Knowledge Base (Ordner 8) verlangt ADMIN_API_KEY, callback_url ist ein echtes Push-Ziel und priority (1 = hoechste ... 10 = niedrigste) steuert die Temporal-Task-Queue-Prioritaet. Alle Datei-Beispiele nutzen ausschliesslich synthetische Fixtures aus tests/fixtures/ (keine echten Drehbuecher).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
     "_exporter_id": "eki-api",
-    "version": "1.0.0"
+    "version": "1.0.1"
   },
   "auth": {
     "type": "bearer",
