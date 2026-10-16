@@ -83,6 +83,8 @@ DB-Revision (head): `c4e6a8b0d2f1`. Upgrade-Schritte: `docs/OPERATIONS_GUIDE.md`
 - **Betrieb:** Metrik „completed" wurde seit M10 nie erfasst (SLO-Erfolgsquote 0); DB-Fehler bei
   Statusupdates wurden verschluckt (Jobs hingen in RUNNING); Parsing-Fehler nicht mehr wiederholt; echte
   Verarbeitungszeit statt fest 1,0 s; Engines im `finally` freigegeben; Log-Rotation im Prod-Overlay.
+- **Alarm `EkiDeadLettersPending`** feuerte nach dem Quittieren weiter (veralteter Gauge-Wert des
+  Workers); der Wert wird jetzt bei jedem `/metrics`-Scrape aus der Datenbank berechnet.
 - **KB:** Dedupe pro Mandant auch im Schema (Migration `b8d0f2a4c6e3`; vorher 503 für den zweiten Mandanten),
   paralleler Duplikat-Upload → 409.
 - **Robustheit gegen LLM-Ausgaben:** fehlerhafte Felder degradieren eine Szene statt den Parse abzubrechen;
