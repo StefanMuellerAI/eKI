@@ -68,7 +68,7 @@ pytestmark = requires_postgres
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-_HEAD_REVISION = "b8d0f2a4c6e3"  # M13b: KB dedupe per tenant
+_HEAD_REVISION = "c4e6a8b0d2f1"  # 1.0.1: metadata retention indexes
 _PRE_M13_REVISION = "f1a2b3c4d5e6"  # M10: delivery hardening
 _APP_TABLES = {
     "api_keys",
@@ -848,9 +848,9 @@ def _upload(client, headers, body: str, *, tag: str, title: str = "SOP", ttl_hou
 
 class TestKnowledgeBaseEndpoints:
     @pytest.mark.asyncio
-    async def test_upload_get_list_delete_roundtrip(self, client, auth_headers, kb_llm):
+    async def test_upload_get_list_delete_roundtrip(self, client, admin_headers, kb_llm):
         tag = f"t-{uuid4().hex[:8]}"
-        response = _upload(client, auth_headers, f"Feuer {uuid4().hex}", tag=tag, ttl_hours=48)
+        response = _upload(client, admin_headers, f"Feuer {uuid4().hex}", tag=tag, ttl_hours=48)
 
         assert response.status_code == status.HTTP_201_CREATED, response.text
         created = response.json()
@@ -858,7 +858,7 @@ class TestKnowledgeBaseEndpoints:
         assert created["title"] == "SOP"
         assert created["source"] == "PLACEHOLDER"
         assert created["tags"] == [tag, "sop"]
-        assert created["uploaded_by"] == "test-user-123"
+        assert created["uploaded_by"] == "ops-admin"  # KB is admin-only since 1.0.1
         assert created["chunk_count"] == 1
         lifetime = datetime.fromisoformat(created["expires_at"]) - datetime.fromisoformat(
             created["created_at"]
@@ -866,41 +866,41 @@ class TestKnowledgeBaseEndpoints:
         assert abs(lifetime - timedelta(hours=48)) < timedelta(minutes=1)
         assert "original_text" not in str(created)
 
-        fetched = client.get(f"/v1/kb/documents/{doc_id}", headers=auth_headers)
+        fetched = client.get(f"/v1/kb/documents/{doc_id}", headers=admin_headers)
         assert fetched.status_code == status.HTTP_200_OK
         assert fetched.json() == created
 
-        listed = client.get("/v1/kb/documents", headers=auth_headers, params={"tag": tag})
+        listed = client.get("/v1/kb/documents", headers=admin_headers, params={"tag": tag})
         assert listed.status_code == status.HTTP_200_OK
         assert listed.json() == {"total_returned": 1, "documents": [created]}
 
-        deleted = client.delete(f"/v1/kb/documents/{doc_id}", headers=auth_headers)
+        deleted = client.delete(f"/v1/kb/documents/{doc_id}", headers=admin_headers)
         assert deleted.status_code == status.HTTP_200_OK
         assert deleted.json() == {"deleted": True, "doc_id": doc_id}
 
-        gone = client.get(f"/v1/kb/documents/{doc_id}", headers=auth_headers)
+        gone = client.get(f"/v1/kb/documents/{doc_id}", headers=admin_headers)
         assert gone.status_code == status.HTTP_404_NOT_FOUND
         assert gone.json()["error"] == "NotFound"
         assert gone.json()["message"] == "Document not found"
 
-        again = client.delete(f"/v1/kb/documents/{doc_id}", headers=auth_headers)
+        again = client.delete(f"/v1/kb/documents/{doc_id}", headers=admin_headers)
         assert again.status_code == status.HTTP_404_NOT_FOUND
         assert again.json()["message"] == "Document not found"
 
     @pytest.mark.asyncio
-    async def test_duplicate_upload_is_409_and_bad_file_is_422(self, client, auth_headers, kb_llm):
+    async def test_duplicate_upload_is_409_and_bad_file_is_422(self, client, admin_headers, kb_llm):
         tag = f"t-{uuid4().hex[:8]}"
         body = f"Wasser {uuid4().hex}"
-        assert _upload(client, auth_headers, body, tag=tag).status_code == 201
+        assert _upload(client, admin_headers, body, tag=tag).status_code == 201
 
-        duplicate = _upload(client, auth_headers, body, tag=tag, title="Copy")
+        duplicate = _upload(client, admin_headers, body, tag=tag, title="Copy")
         assert duplicate.status_code == status.HTTP_409_CONFLICT
         assert duplicate.json()["error"] == "Conflict"
         assert duplicate.json()["message"] == "Document with identical content already exists"
 
         bad = client.post(
             "/v1/kb/documents",
-            headers=auth_headers,
+            headers=admin_headers,
             files={"file": ("plan.docx", b"PK\x03\x04", "application/octet-stream")},
             data={"title": "Docx"},
         )
@@ -908,38 +908,38 @@ class TestKnowledgeBaseEndpoints:
         assert bad.json()["error"] == "ValidationError"
         assert "Unsupported file type: .docx" in bad.json()["message"]
 
-        listed = client.get("/v1/kb/documents", headers=auth_headers, params={"tag": tag})
+        listed = client.get("/v1/kb/documents", headers=admin_headers, params={"tag": tag})
         assert listed.json()["total_returned"] == 1
         assert (
-            client.delete("/v1/kb/documents", headers=auth_headers, params={"tag": tag}).json()[
+            client.delete("/v1/kb/documents", headers=admin_headers, params={"tag": tag}).json()[
                 "count"
             ]
             == 1
         )
 
     @pytest.mark.asyncio
-    async def test_pagination_and_delete_by_tag(self, client, auth_headers, kb_llm):
+    async def test_pagination_and_delete_by_tag(self, client, admin_headers, kb_llm):
         tag = f"t-{uuid4().hex[:8]}"
         for word in ("Feuer", "Wasser", "Tier"):
             assert (
-                _upload(client, auth_headers, f"{word} {uuid4().hex}", tag=tag).status_code == 201
+                _upload(client, admin_headers, f"{word} {uuid4().hex}", tag=tag).status_code == 201
             )
 
         page1 = client.get(
-            "/v1/kb/documents", headers=auth_headers, params={"tag": tag, "limit": 2}
+            "/v1/kb/documents", headers=admin_headers, params={"tag": tag, "limit": 2}
         ).json()
         page2 = client.get(
-            "/v1/kb/documents", headers=auth_headers, params={"tag": tag, "limit": 2, "offset": 2}
+            "/v1/kb/documents", headers=admin_headers, params={"tag": tag, "limit": 2, "offset": 2}
         ).json()
         assert page1["total_returned"] == 2
         assert page2["total_returned"] == 1
         ids = [d["doc_id"] for d in page1["documents"] + page2["documents"]]
         assert len(set(ids)) == 3
 
-        wiped = client.delete("/v1/kb/documents", headers=auth_headers, params={"tag": f" {tag} "})
+        wiped = client.delete("/v1/kb/documents", headers=admin_headers, params={"tag": f" {tag} "})
         assert wiped.status_code == status.HTTP_200_OK
         assert wiped.json() == {"deleted": True, "tag": tag, "count": 3}
-        after = client.get("/v1/kb/documents", headers=auth_headers, params={"tag": tag}).json()
+        after = client.get("/v1/kb/documents", headers=admin_headers, params={"tag": tag}).json()
         assert after == {"total_returned": 0, "documents": []}
 
 

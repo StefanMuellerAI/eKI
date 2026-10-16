@@ -1,12 +1,12 @@
-# UAT-Testplan – eKI API v1.0.0
+# UAT-Testplan – eKI API v1.0.1
 
 Pflichtenheft v1 §7 „Abnahme des Projektes": neun verbindliche Abnahmetests,
 Abnahmekriterien (gültige OpenAPI, Auth und Monitoring laufen, alle 9 Tests
 bestanden, Betriebsdoku und Postman-Collection liegen vor). Dieser Plan ordnet
 jedem Test Automatisierung, manuelle Schritte, Nachweis und Verantwortliche zu.
 
-> **Wichtig:** Die Abnahmetests 2–7 sind auf dem aktuellen Stand (Migrations-Head `b8d0f2a4c6e3`,
-> bzw. dem empfohlenen Patch-Release) auszuführen bzw. zu wiederholen. Auf einem per
+> **Wichtig:** Die Abnahmetests 2–7 sind auf dem aktuellen Stand (Release 1.0.1, Migrations-Head
+> `c4e6a8b0d2f1`) auszuführen bzw. zu wiederholen. Auf einem per
 > `alembic` aufgebauten PostgreSQL-Stack scheiterte vorher die Zustellphase
 > (`job_metadata.status` zu kurz für `delivering`, `HANDOVER.md` §1.1). Ergebnisse älterer
 > Läufe gelten nicht als Nachweis.
@@ -67,13 +67,17 @@ python3 scripts/generate_secrets.py
 # 2) Basis-Stack (Observability erst nach dem Prometheus-Key, Schritt 4)
 docker compose up -d
 docker compose exec api alembic upgrade head
-docker compose exec api alembic current            # -> b8d0f2a4c6e3 (head)
-docker compose exec ollama ollama pull mistral-small3.2
+docker compose exec api alembic current            # -> c4e6a8b0d2f1 (head)
+#    LLM: externe Ollama-Instanz mit gepulltem mistral-small3.2 (OLLAMA_BASE_URL in .env.local),
+#    oder lokal per Overlay (README „Schnellstart“):
+#      docker compose -f docker-compose.yml -f docker-compose.ollama.yml up -d
+#      docker compose -f docker-compose.yml -f docker-compose.ollama.yml exec ollama ollama pull mistral-small3.2
+#    Das Overlay dann bei allen folgenden Compose-Aufrufen mit angeben (oder COMPOSE_FILE setzen).
 
 # 3) Keys (interaktiv; unterschiedliche user_id für den zweiten Nutzer)
 docker compose exec api python scripts/create_api_key.py --insert          # EKI_API_KEY
 docker compose exec api python scripts/create_api_key.py --insert          # zweiter Nutzer (IDOR)
-docker compose exec api python scripts/create_api_key.py --insert --admin  # EKI_ADMIN_KEY
+docker compose exec api python scripts/create_api_key.py --insert --admin  # EKI_ADMIN_KEY (auch für /v1/kb/*)
 docker compose exec api python scripts/create_api_key.py --insert          # Prometheus-Scraper
 
 # 4) Prometheus-Key ablegen (secrets/README.md), DANN das Observability-Overlay starten.
@@ -225,8 +229,8 @@ Szenentexte/Dialoge. Ergänzend `pytest tests/test_m08_log_hygiene.py`.
    Knowledge Base nicht nutzbar (`KB_RETRIEVAL_ENABLED=false` lassen).
 2. Mindestens ein FDX- und ein PDF-Testfilmprojekt über ePro anstoßen (Push) und ein Pull-Projekt.
 3. Erwartung: Reports im Stage-ePro sichtbar (Erfolgskriterium §3.4 „Report-Verfügbarkeit").
-4. Paritätslauf im API-Container (dort sind `MISTRAL_API_KEY` und Ollama erreichbar; das
-   Golden-Set liegt nicht im Image):
+4. Paritätslauf im API-Container (dort liegen `MISTRAL_API_KEY` und die URL der externen
+   Ollama-Instanz bereit; das Golden-Set liegt nicht im Image):
 
    ```bash
    docker compose cp tests/parity/golden_scenes.yaml api:/tmp/golden_scenes.yaml
@@ -246,6 +250,19 @@ Szenentexte/Dialoge. Ergänzend `pytest tests/test_m08_log_hygiene.py`.
 3. Paritätslauf wie bei AT8 Schritt 4 mit `--providers local_mistral` → alle Schwellen erfüllt.
 4. Firewall-Nachweis: ausgehender Verkehr zu `api.mistral.ai` blockiert.
 5. Protokoll §4.3.
+
+### Zusatzprüfungen Release 1.0.1 (optional, Postman-Ordner 5 und 8)
+- `POST /v1/security/check` (entfernter Sync-Stub) → 404 im `ErrorResponse`-Format.
+- `check:async` mit `callback_url` und `delivery=pull` → 422; `callback_url` auf einen Host
+  außerhalb von `CALLBACK_URL_ALLOWED_HOSTS` → 422.
+- `GET /v1/kb/documents` mit dem normalen Nutzer-Key → 403, mit `EKI_ADMIN_KEY` → 200.
+- Worker-Log: `Temporal payload encryption active: key id eki-v1-…`; Temporal UI zeigt die
+  Eingaben eines Testjobs nur als `binary/encrypted`.
+- Schedules `eki-kb-cleanup` und `eki-metadata-cleanup` vorhanden
+  (`docker compose exec temporal temporal schedule list --address temporal:7233`).
+- Ein Push an ein `callback_url` lässt sich lokal nicht gegen den HTTP-Mock prüfen (HTTPS,
+  freigegebener Host mit öffentlicher Adresse nötig); auf der Stage nur, wenn ePro einen
+  Callback-Endpunkt anbietet.
 
 ---
 

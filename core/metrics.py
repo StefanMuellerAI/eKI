@@ -60,7 +60,7 @@ def _counter(name: str, doc: str, labels: Iterable[str] = ()) -> Counter:
     return _existing(name, REGISTRY) or Counter(name, doc, list(labels))
 
 
-def _histogram(name: str, doc: str, labels: Iterable[str], buckets: tuple) -> Histogram:
+def _histogram(name: str, doc: str, labels: Iterable[str], buckets: tuple[float, ...]) -> Histogram:
     return _existing(name, REGISTRY) or Histogram(name, doc, list(labels), buckets=buckets)
 
 
@@ -210,6 +210,18 @@ KB_CLEANUP_REMOVED_TOTAL = _counter(
 )
 
 # ---------------------------------------------------------------------------
+# Metadata retention (1.0.1, schedule ``eki-metadata-cleanup``)
+# ---------------------------------------------------------------------------
+
+METADATA_CLEANUP_DELETED_TOTAL = _counter(
+    "eki_metadata_cleanup_deleted_total",
+    "Metadata rows deleted by the retention cleanup schedule, by table "
+    "(report_metadata, delivery_dead_letters, job_metadata = terminal jobs, "
+    "job_metadata_abandoned = jobs left pending/running/delivering, api_keys, audit_logs).",
+    ["table"],
+)
+
+# ---------------------------------------------------------------------------
 # Build info
 # ---------------------------------------------------------------------------
 
@@ -291,6 +303,7 @@ __all__ = [
     "LLM_QUEUE_WAIT",
     "LLM_REQUESTS_TOTAL",
     "LLM_REQUEST_DURATION",
+    "METADATA_CLEANUP_DELETED_TOTAL",
     "PROMPT_SANITIZER_HITS_TOTAL",
     "REPORT_RETRIEVALS_TOTAL",
     "SCENES_PROCESSED_TOTAL",

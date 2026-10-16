@@ -12,6 +12,14 @@
 > Webhook meldet sie mit `prompt_blocked`, `parsing_failed` oder `processing_failed`, ein Dead
 > Letter entsteht nicht – dafür gilt dieses Runbook nicht.
 
+> **Ergänzung Release 1.0.1 (16.10.2026).** Ein `callback_url` im Request ersetzt das Push-Ziel
+> `EPRO_BASE_URL/eki/scl/set-risk-assessment/{project_id}` für diesen Job; neuer Dead-Letter-Grund
+> `invalid_callback_url` (§2.9). Dead Letters werden 90 Tage nach Anlage bzw. Quittierung
+> automatisch gelöscht – **auch unquittierte**; innerhalb dieser Frist bearbeiten
+> (`OPERATIONS_GUIDE.md` §5.10). Die Temporal UI zeigt
+> Activity-Ein- und -Ausgaben seit 1.0.1 nur verschlüsselt; Attempt-Zähler und Fehlertypen bleiben
+> lesbar, die Fehlermeldung steht im Worker-Log.
+
 Betriebsanleitung für Störungen der Zustellung an ePro. Ergänzt
 `docs/M09_SLO.md` (Alerts) und `docs/EPRO_INTEGRATION_GUIDE.md` (Kontrakt).
 
@@ -125,6 +133,29 @@ bestehender `job_id`), auch bei gleichzeitigen Requests (Unique-Constraint
 `(user_id, idempotency_key)`). Unterschiedliche Keys/Nutzer → getrennte Jobs.
 Push-Retries tragen `Idempotency-Key: <report_id>`; ePro soll doppelte Eingänge
 mit 200 quittieren.
+
+### 2.9 `callback_url` bei der Zustellung abgelehnt (seit 1.0.1)
+
+Erkennung: Dead Letter mit `reason=invalid_callback_url`, `attempts=0`; Job `failed` mit
+`error_message=delivery_failed:invalid_callback_url`; Webhook mit demselben Grund; Worker-Log
+`Push aborted: callback_url rejected (…)`.
+
+Ursache: Unmittelbar vor dem Push prüft der Worker das `callback_url` des Jobs erneut – gegen die
+**dann** gültige `CALLBACK_URL_ALLOWED_HOSTS`, auf HTTPS und Zugangsdaten, und per DNS (jede
+Antwort muss eine öffentliche Adresse sein). Typisch: Host wurde aus der Allow-List entfernt,
+API und Worker haben unterschiedliche Allow-Lists, oder Split-Horizon-DNS liefert intern eine
+private Adresse. Es wurde **nichts** gesendet. Vorübergehende DNS-Fehler (NXDOMAIN, Timeout) sind
+dagegen kein Dead Letter, sondern werden wie Netzwerkfehler bis 6 h wiederholt (Outcome
+`transport_error`).
+
+Maßnahmen:
+1. `CALLBACK_URL_ALLOWED_HOSTS` in API und Worker vergleichen:
+   `docker compose exec worker env | grep CALLBACK_URL_ALLOWED_HOSTS` (ohne Eintrag gilt der
+   Standard `epro.filmakademie.de,staging.epro.filmakademie.de`).
+2. DNS aus Sicht des Workers prüfen:
+   `docker compose exec worker python -c "import socket;print({a[4][0] for a in socket.getaddrinfo('<callback-host>',443)})"`
+   – nur öffentliche Adressen sind zulässig.
+3. Nach Korrektur ePro den Check neu auslösen lassen; Dead Letter quittieren.
 
 ---
 

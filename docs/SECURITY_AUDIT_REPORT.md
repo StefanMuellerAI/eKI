@@ -2,6 +2,9 @@
 > beschriebenen Befunde und Code-Ausschnitte entsprechen nicht dem heutigen Code. Maßgeblich
 > sind [DATENSCHUTZ.md](DATENSCHUTZ.md), [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) und der
 > spätere Audit [SECURITY_AUDIT_2026-02-06.md](SECURITY_AUDIT_2026-02-06.md) (ebenfalls historisch).
+>
+> Hinweis 1.0.1: JWT/PyJWT wurde nie zur Authentifizierung genutzt (nur API-Keys, SHA-256-Hash);
+> die ungenutzten Abhängigkeiten `PyJWT`, `python-jose`, `passlib`, `bcrypt` sind entfernt.
 
 # 🔒 Security Audit Report - eKI API
 

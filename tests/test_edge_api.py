@@ -34,8 +34,8 @@ from services.report_generator import build_report_dict
 from services.secure_buffer import SecureBuffer
 from tests.conftest import MINIMAL_PDF_BYTES, requires_postgres
 
-SYNC = "/v1/security/check"
 ASYNC = "/v1/security/check:async"
+REMOVED_SYNC = "/v1/security/check"  # M01 stub, removed in 1.0.1 (Decision 6)
 NIL_UUID = "00000000-0000-0000-0000-000000000000"
 UNAVAILABLE = (
     "Report is no longer available (expired or already delivered). URL is no longer valid."
@@ -179,15 +179,15 @@ async def _create_report(db_session, redis, user_id: str) -> tuple[UUID, str]:
 class TestScriptContentLimits:
     @pytest.mark.parametrize(
         ("decoded_size", "expected"),
-        [(DECODED_MAX_VIA_JSON, 200), (DECODED_MAX_VIA_JSON + 1, 422)],
+        [(DECODED_MAX_VIA_JSON, 202), (DECODED_MAX_VIA_JSON + 1, 422)],
         ids=["encoded-exactly-at-limit", "encoded-limit-plus-one-block"],
     )
     def test_json_limit_is_on_the_encoded_length(self, client, headers, decoded_size, expected):
         content = b64(b"a" * decoded_size)
-        resp = client.post(SYNC, json=payload(script_content=content), headers=headers)
-        if expected == 200:
+        resp = client.post(ASYNC, json=payload(script_content=content), headers=headers)
+        if expected == 202:
             assert len(content) == ENCODED_LIMIT
-            assert resp.status_code == 200, resp.text
+            assert resp.status_code == 202, resp.text
         else:
             assert len(content) == ENCODED_LIMIT + 4
             assert_envelope(
@@ -197,16 +197,16 @@ class TestScriptContentLimits:
                 "script_content: String should have at most 10485760 characters",
             )
 
-    @pytest.mark.parametrize(("extra", "expected"), [(0, 200), (1, 413)], ids=["at", "plus-1"])
+    @pytest.mark.parametrize(("extra", "expected"), [(0, 202), (1, 413)], ids=["at", "plus-1"])
     def test_multipart_limit_is_on_raw_bytes(self, client, headers, monkeypatch, extra, expected):
         custom = get_settings().model_copy(update={"max_upload_size_bytes": 1024})
         monkeypatch.setattr("api.routers.security.get_settings", lambda: custom)
         body = b"x" * (1024 + extra)
         resp = client.post(
-            SYNC, files={"file": ("s.fdx", body, "application/xml")}, headers=headers
+            ASYNC, files={"file": ("s.fdx", body, "application/xml")}, headers=headers
         )
-        if expected == 200:
-            assert resp.status_code == 200, resp.text
+        if expected == 202:
+            assert resp.status_code == 202, resp.text
         else:
             assert_envelope(resp, 413, "PayloadTooLarge", "File exceeds maximum size of 1024 bytes")
 
@@ -214,11 +214,11 @@ class TestScriptContentLimits:
         limit = get_settings().max_upload_size_bytes
         assert limit == 10 * 1024 * 1024
         ok = client.post(
-            SYNC, files={"file": ("s.fdx", b"a" * limit, "application/xml")}, headers=headers
+            ASYNC, files={"file": ("s.fdx", b"a" * limit, "application/xml")}, headers=headers
         )
-        assert ok.status_code == 200, ok.text
+        assert ok.status_code == 202, ok.text
         too_big = client.post(
-            SYNC, files={"file": ("s.fdx", b"a" * (limit + 1), "application/xml")}, headers=headers
+            ASYNC, files={"file": ("s.fdx", b"a" * (limit + 1), "application/xml")}, headers=headers
         )
         assert_envelope(too_big, 413, "PayloadTooLarge", f"maximum size of {limit} bytes")
 
@@ -232,14 +232,14 @@ class TestScriptContentLimits:
         ids=["empty", "single-space", "mixed-whitespace"],
     )
     def test_empty_or_whitespace_content_rejected(self, client, headers, content, message):
-        resp = client.post(SYNC, json=payload(script_content=content), headers=headers)
+        resp = client.post(ASYNC, json=payload(script_content=content), headers=headers)
         assert_envelope(resp, 422, "ValidationError", message)
 
     def test_base64_of_whitespace_only_script_is_accepted(self, client, headers):
         # Surprising but current contract: emptiness is checked on the *encoded*
         # string only; a script that decodes to blanks is accepted (fails later).
-        resp = client.post(SYNC, json=payload(script_content=b64(b"   \n")), headers=headers)
-        assert resp.status_code == 200, resp.text
+        resp = client.post(ASYNC, json=payload(script_content=b64(b"   \n")), headers=headers)
+        assert resp.status_code == 202, resp.text
 
     @pytest.mark.parametrize(
         ("content", "message"),
@@ -271,7 +271,7 @@ class TestScriptContentLimits:
         ],
     )
     def test_invalid_base64_variants(self, client, headers, content, message):
-        resp = client.post(SYNC, json=payload(script_content=content), headers=headers)
+        resp = client.post(ASYNC, json=payload(script_content=content), headers=headers)
         assert_envelope(resp, 422, "ValidationError", message)
 
 
@@ -307,7 +307,7 @@ class TestMagicBytes:
     )
     def test_json_content_must_match_declared_format(self, client, headers, fmt, raw, message):
         resp = client.post(
-            SYNC, json=payload(script_format=fmt, script_content=b64(raw)), headers=headers
+            ASYNC, json=payload(script_format=fmt, script_content=b64(raw)), headers=headers
         )
         assert_envelope(resp, 422, "ValidationError", message)
 
@@ -325,9 +325,9 @@ class TestMagicBytes:
     def test_lenient_api_boundary_accepts(self, client, headers, fmt, raw):
         # Documented leniency: the API only sniffs; the parser rejects later.
         resp = client.post(
-            SYNC, json=payload(script_format=fmt, script_content=b64(raw)), headers=headers
+            ASYNC, json=payload(script_format=fmt, script_content=b64(raw)), headers=headers
         )
-        assert resp.status_code == 200, resp.text
+        assert resp.status_code == 202, resp.text
 
     def test_fdx_multibyte_char_straddling_byte_1000(self, client, headers):
         # Regression (W5 #8): the UTF-8 sniff of the first 1000 bytes rejected a
@@ -336,8 +336,8 @@ class TestMagicBytes:
         raw = prefix + b"a" * (999 - len(prefix)) + "ü".encode() + b"</Text></Paragraph>"
         raw += b"</Content></FinalDraft>"
         assert raw[999:1001] == "ü".encode()
-        resp = client.post(SYNC, json=payload(script_content=b64(raw)), headers=headers)
-        assert resp.status_code == 200, resp.text
+        resp = client.post(ASYNC, json=payload(script_content=b64(raw)), headers=headers)
+        assert resp.status_code == 202, resp.text
 
     @pytest.mark.parametrize(
         ("filename", "raw", "status", "message"),
@@ -347,9 +347,9 @@ class TestMagicBytes:
             ("s.txt", b"text", 400, "Unsupported file type. Allowed: .fdx, .pdf"),
             ("s.pdf.exe", MINIMAL_PDF_BYTES, 400, "Unsupported file type"),
             ("s", FDX, 400, "Unsupported file type"),
-            ("s.FDX", FDX, 200, None),
-            ("S.PDF", MINIMAL_PDF_BYTES, 200, None),
-            ("Drehbuch Über 🎬.fdx", FDX, 200, None),
+            ("s.FDX", FDX, 202, None),
+            ("S.PDF", MINIMAL_PDF_BYTES, 202, None),
+            ("Drehbuch Über 🎬.fdx", FDX, 202, None),
         ],
         ids=[
             "pdf-no-magic",
@@ -362,14 +362,16 @@ class TestMagicBytes:
             "unicode-filename",
         ],
     )
-    def test_multipart_extension_and_magic(self, client, headers, filename, raw, status, message):
+    def test_multipart_extension_and_magic(
+        self, client, headers, mock_temporal, filename, raw, status, message
+    ):
         resp = client.post(
-            SYNC, files={"file": (filename, raw, "application/octet-stream")}, headers=headers
+            ASYNC, files={"file": (filename, raw, "application/octet-stream")}, headers=headers
         )
-        if status == 200:
-            assert resp.status_code == 200, resp.text
+        if status == 202:
+            assert resp.status_code == 202, resp.text
             expected_fmt = "pdf" if filename.lower().endswith(".pdf") else "fdx"
-            assert resp.json()["report"]["script_format"] == expected_fmt
+            assert mock_temporal.started[-1]["args"][1]["script_format"] == expected_fmt
         else:
             assert_envelope(resp, status, "BadRequest", message)
 
@@ -440,10 +442,6 @@ class TestPriority:
             assert mock_temporal.started[-1]["args"][1]["priority"] == stored_or_message
         else:
             assert_envelope(resp, 422, "ValidationError", stored_or_message)
-
-    def test_sync_endpoint_ignores_priority(self, client, headers):
-        resp = client.post(SYNC, json=payload(priority=999), headers=headers)
-        assert resp.status_code == 200, resp.text
 
 
 def _post_delivery(client, headers, transport: str, value):
@@ -545,10 +543,10 @@ class TestStringFieldBoundaries:
     @pytest.mark.parametrize(
         "value", ["a" * 100, "a", "A-z_0-9"], ids=["max-100", "min-1", "charset"]
     )
-    def test_project_id_accepted(self, client, headers, value):
-        resp = client.post(SYNC, json=payload(project_id=value), headers=headers)
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["report"]["project_id"] == value
+    def test_project_id_accepted(self, client, headers, mock_temporal, value):
+        resp = client.post(ASYNC, json=payload(project_id=value), headers=headers)
+        assert resp.status_code == 202, resp.text
+        assert mock_temporal.started[-1]["args"][1]["project_id"] == value
 
     @pytest.mark.parametrize(
         "value",
@@ -569,7 +567,7 @@ class TestStringFieldBoundaries:
         ids=repr,
     )
     def test_project_id_rejected(self, client, headers, value):
-        resp = client.post(SYNC, json=payload(project_id=value), headers=headers)
+        resp = client.post(ASYNC, json=payload(project_id=value), headers=headers)
         assert_envelope(resp, 422, "ValidationError", "project_id")
 
     @pytest.mark.parametrize(
@@ -617,7 +615,7 @@ class TestStringFieldBoundaries:
         ],
     )
     def test_metadata_rejected(self, client, headers, metadata, message):
-        resp = client.post(SYNC, json=payload(metadata=metadata), headers=headers)
+        resp = client.post(ASYNC, json=payload(metadata=metadata), headers=headers)
         assert_envelope(resp, 422, "ValidationError", message)
 
     @pytest.mark.parametrize(
@@ -827,8 +825,10 @@ class TestMultipart:
     def test_multipart_beyond_json_encoded_limit_is_accepted(self, client, headers):
         # The JSON base64-length limit must not apply to uploads (raw size only).
         raw = b"a" * (DECODED_MAX_VIA_JSON + 1)
-        resp = client.post(SYNC, files={"file": ("s.fdx", raw, "application/xml")}, headers=headers)
-        assert resp.status_code == 200, resp.text
+        resp = client.post(
+            ASYNC, files={"file": ("s.fdx", raw, "application/xml")}, headers=headers
+        )
+        assert resp.status_code == 202, resp.text
 
 
 # ---------------------------------------------------------------------------
@@ -842,7 +842,6 @@ _BAD_JSON = "Request body must be valid JSON (or multipart/form-data with a 'fil
 class TestMalformedBodies:
     """Regression (W5 #2): these used to raise inside ``_resolve_json`` -> 500."""
 
-    @pytest.mark.parametrize("url", [SYNC, ASYNC])
     @pytest.mark.parametrize(
         ("content", "content_type"),
         [
@@ -856,19 +855,20 @@ class TestMalformedBodies:
         ],
         ids=["syntax", "empty", "blank", "non-utf8", "truncated", "urlencoded", "deep-nesting"],
     )
-    def test_unparseable_body_is_400(self, client, headers, url, content, content_type):
-        resp = client.post(url, content=content, headers={**headers, "Content-Type": content_type})
+    def test_unparseable_body_is_400(self, client, headers, content, content_type):
+        resp = client.post(
+            ASYNC, content=content, headers={**headers, "Content-Type": content_type}
+        )
         assert_envelope(resp, 400, "BadRequest", _BAD_JSON)
 
-    @pytest.mark.parametrize("url", [SYNC, ASYNC])
     @pytest.mark.parametrize(
         ("content", "type_name"),
         [(b"[1, 2, 3]", "list"), (b"null", "NoneType"), (b'"a string"', "str"), (b"42", "int")],
         ids=["array", "null", "string", "number"],
     )
-    def test_non_object_json_is_422(self, client, headers, url, content, type_name):
+    def test_non_object_json_is_422(self, client, headers, content, type_name):
         resp = client.post(
-            url, content=content, headers={**headers, "Content-Type": "application/json"}
+            ASYNC, content=content, headers={**headers, "Content-Type": "application/json"}
         )
         assert_envelope(
             resp,
@@ -885,14 +885,16 @@ class TestMalformedBodies:
         hdrs = dict(headers)
         if content_type:
             hdrs["Content-Type"] = content_type
-        resp = client.post(SYNC, content=json.dumps(payload()).encode(), headers=hdrs)
-        assert resp.status_code == 200, resp.text
+        resp = client.post(ASYNC, content=json.dumps(payload()).encode(), headers=hdrs)
+        assert resp.status_code == 202, resp.text
 
-    def test_unknown_fields_are_ignored(self, client, headers):
+    def test_unknown_fields_are_ignored(self, client, headers, mock_temporal):
         resp = client.post(
-            SYNC, json=payload(unexpected="x", __proto__={"admin": True}), headers=headers
+            ASYNC, json=payload(unexpected="x", __proto__={"admin": True}), headers=headers
         )
-        assert resp.status_code == 200, resp.text
+        assert resp.status_code == 202, resp.text
+        job_data = mock_temporal.started[-1]["args"][1]
+        assert "unexpected" not in job_data and "__proto__" not in job_data
 
 
 # ---------------------------------------------------------------------------
@@ -901,15 +903,17 @@ class TestMalformedBodies:
 
 
 class TestActorHeaders:
-    def test_missing_and_blank_actor_user_are_equivalent(self, client, headers, edge_user):
-        missing = client.post(SYNC, json=payload(), headers=headers)
-        blank = client.post(SYNC, json=payload(), headers={**headers, "X-Actor-User-Id": ""})
+    def test_missing_and_blank_actor_user_are_equivalent(
+        self, client, headers, edge_user, mock_temporal
+    ):
+        missing = client.post(ASYNC, json=payload(), headers=headers)
+        blank = client.post(ASYNC, json=payload(), headers={**headers, "X-Actor-User-Id": ""})
         matching = client.post(
-            SYNC, json=payload(), headers={**headers, "X-Actor-User-Id": edge_user[1]}
+            ASYNC, json=payload(), headers={**headers, "X-Actor-User-Id": edge_user[1]}
         )
         for resp in (missing, blank, matching):
-            assert resp.status_code == 200, resp.text
-            assert resp.json()["report"]["metadata"]["user_id"] == edge_user[1]
+            assert resp.status_code == 202, resp.text
+        assert [s["args"][1]["user_id"] for s in mock_temporal.started] == [edge_user[1]] * 3
 
     @pytest.mark.parametrize(
         "value",
@@ -927,7 +931,7 @@ class TestActorHeaders:
     def test_actor_user_mismatch_is_403(self, client, headers, edge_user, value):
         if isinstance(value, str):
             value = value.replace("{user}", edge_user[1]).replace("{USER}", edge_user[1].upper())
-        resp = client.post(SYNC, json=payload(), headers={**headers, "X-Actor-User-Id": value})
+        resp = client.post(ASYNC, json=payload(), headers={**headers, "X-Actor-User-Id": value})
         assert_envelope(
             resp, 403, "Forbidden", "X-Actor-User-Id does not match authenticated API key user"
         )
@@ -937,12 +941,16 @@ class TestActorHeaders:
         ["Prüfung 😀".encode(), "مشروع".encode(), b"p" * 16_384, b"tab\there"],
         ids=["utf8", "rtl", "16kb", "tab"],
     )
-    def test_actor_project_header_is_unvalidated_latin1(self, client, headers, raw):
-        # Surprising: the header is not validated and is echoed as Latin-1
-        # (mojibake for UTF-8 input) into the sync report metadata.
-        resp = client.post(SYNC, json=payload(), headers={**headers, "X-Actor-Project-Id": raw})
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["report"]["metadata"]["project_id"] == raw.decode("latin-1")
+    def test_actor_project_header_is_unvalidated_and_unused(
+        self, client, headers, mock_temporal, raw
+    ):
+        # The audit-only header is not validated; it never overrides the
+        # validated body project_id (it was only echoed by the removed sync stub).
+        resp = client.post(ASYNC, json=payload(), headers={**headers, "X-Actor-Project-Id": raw})
+        assert resp.status_code == 202, resp.text
+        job_data = mock_temporal.started[-1]["args"][1]
+        assert job_data["project_id"] == "edge-proj"
+        assert raw.decode("latin-1") not in repr(job_data)
 
     def test_huge_authorization_header_is_plain_401(self, client):
         resp = client.get(
@@ -959,7 +967,7 @@ class TestRequestId:
         hdrs = dict(headers)
         if sent is not None:
             hdrs["X-Request-ID"] = sent
-        resp = client.post(SYNC, json=payload(project_id="bad id"), headers=hdrs)
+        resp = client.post(ASYNC, json=payload(project_id="bad id"), headers=hdrs)
         body = assert_envelope(resp, 422, "ValidationError")
         assert resp.headers["X-Request-ID"]
         assert body["request_id"] == resp.headers["X-Request-ID"]
@@ -974,6 +982,7 @@ class TestRequestId:
 PRIVATE = "Callback URL cannot point to private/internal IP addresses"
 NOT_ALLOWED = "Callback URL domain not allowed"
 HTTPS_ONLY = "Callback URL must use HTTPS"
+CREDENTIALS = "Callback URL must not contain credentials"
 BAD_SCHEME = "URL scheme should be 'http' or 'https'"
 
 
@@ -994,14 +1003,18 @@ class TestCallbackUrlSsrf:
             ("https://10.0.0.1/cb", PRIVATE),
             ("https://224.0.0.1/cb", PRIVATE),
             ("https://epro.filmakademie.de@127.0.0.1/cb", PRIVATE),  # userinfo trick
+            # 1.0.1: credentials are rejected (httpx would send them as Basic auth
+            # next to the ePro bearer token).
+            ("https://127.0.0.1@epro.filmakademie.de/", CREDENTIALS),
+            ("https://user:pw@epro.filmakademie.de/cb", CREDENTIALS),
             ("https://localhost./cb", NOT_ALLOWED),
             ("https://localhost/cb", NOT_ALLOWED),
             ("https://8.8.8.8/cb", NOT_ALLOWED),
-            ("https://100.64.0.1/cb", NOT_ALLOWED),  # CGNAT: not "private" but not allowed
+            ("https://100.64.0.1/cb", PRIVATE),  # CGNAT: not "private", but not global either
             ("https://epro.filmakademie.de.evil.com/cb", NOT_ALLOWED),
             ("https://evil.com#@epro.filmakademie.de", NOT_ALLOWED),
             ("https://evil.com\\@epro.filmakademie.de", NOT_ALLOWED),
-            ("https://epro.filmakademie.de%2f@evil.com/", NOT_ALLOWED),
+            ("https://epro.filmakademie.de%2f@evil.com/", CREDENTIALS),  # userinfo, host evil.com
             ("https://еpro.filmakademie.de/cb", NOT_ALLOWED),  # Cyrillic 'е' (IDN homograph)
             ("https://xn--pro-5cd.filmakademie.de/cb", NOT_ALLOWED),
             ("http://epro.filmakademie.de/cb", HTTPS_ONLY),
@@ -1015,22 +1028,26 @@ class TestCallbackUrlSsrf:
         ],
         ids=lambda v: v if isinstance(v, str) and len(v) < 60 else None,
     )
-    def test_rejected(self, client, headers, url, message):
-        resp = client.post(SYNC, json=payload(callback_url=url), headers=headers)
+    def test_rejected(self, client, headers, mock_temporal, url, message):
+        resp = client.post(ASYNC, json=payload(callback_url=url), headers=headers)
         assert_envelope(resp, 422, "ValidationError", message)
         assert "callback_url" in resp.json()["message"]
+        assert mock_temporal.started == []
 
     @pytest.mark.parametrize(
         "url",
-        ["https://[::ffff:127.0.0.1]/cb", "https://[::ffff:7f00:1]/cb"],
-        ids=["mapped", "mapped-hex"],
+        [
+            "https://[::ffff:127.0.0.1]/cb",
+            "https://[::ffff:7f00:1]/cb",
+            "https://[2002:7f00:1::1]/cb",
+        ],
+        ids=["mapped", "mapped-hex", "6to4-loopback"],
     )
-    def test_ipv4_mapped_ipv6_rejected(self, client, headers, url):
-        # Message depends on the Python version's ipaddress semantics; either
-        # way the domain allow-list blocks it.
-        resp = client.post(SYNC, json=payload(callback_url=url), headers=headers)
-        body = assert_envelope(resp, 422, "ValidationError")
-        assert PRIVATE in body["message"] or NOT_ALLOWED in body["message"]
+    def test_ipv4_embedded_in_ipv6_rejected(self, client, headers, url):
+        # Judged by the embedded IPv4 address, independent of the Python
+        # version's ipaddress semantics for mapped addresses.
+        resp = client.post(ASYNC, json=payload(callback_url=url), headers=headers)
+        assert_envelope(resp, 422, "ValidationError", PRIVATE)
 
     @pytest.mark.parametrize(
         "url",
@@ -1038,13 +1055,89 @@ class TestCallbackUrlSsrf:
             "https://epro.filmakademie.de/cb",
             "https://staging.epro.filmakademie.de/x?y=1",
             "https://EPRO.FILMAKADEMIE.DE./cb",  # case + trailing dot normalised
-            "https://127.0.0.1@epro.filmakademie.de/",  # userinfo, real host is allowed
             "https://epro.filmakademie.de:8443/cb",  # surprising: any port is allowed
         ],
     )
-    def test_allowed(self, client, headers, url):
-        resp = client.post(SYNC, json=payload(callback_url=url), headers=headers)
-        assert resp.status_code == 200, resp.text
+    def test_allowed_and_implies_push(self, client, headers, mock_temporal, url):
+        resp = client.post(ASYNC, json=payload(callback_url=url), headers=headers)
+        assert resp.status_code == 202, resp.text
+        assert resp.json()["message"] == "Security check job started (delivery=push)"
+        job_data = mock_temporal.started[-1]["args"][1]
+        assert job_data["delivery_mode"] == "push"
+        assert job_data["callback_url"].lower() == url.lower()
+
+    @pytest.mark.parametrize("transport", ["json", "multipart"])
+    @pytest.mark.parametrize(
+        ("delivery", "status", "stored"),
+        [
+            (None, 202, "push"),  # omitted -> push (Decision 10b)
+            ("", 202, "push"),  # blank == omitted
+            ("  ", 202, "push"),
+            ("push", 202, "push"),
+            (" PUSH ", 202, "push"),
+            ("pull", 422, None),  # contradiction
+            (" Pull ", 422, None),
+        ],
+        ids=repr,
+    )
+    def test_delivery_rules_with_callback_url(
+        self, client, headers, mock_temporal, transport, delivery, status, stored
+    ):
+        url = "https://epro.filmakademie.de/api/eki/scl/set-risk-assessment/77"
+        if transport == "json":
+            body = payload(callback_url=url)
+            if delivery is not None:
+                body["delivery"] = delivery
+            resp = client.post(ASYNC, json=body, headers=headers)
+        else:
+            data = {"project_id": "edge-proj", "callback_url": url}
+            if delivery is not None:
+                data["delivery"] = delivery
+            resp = client.post(
+                ASYNC,
+                files={"file": ("s.fdx", FDX, "application/xml")},
+                data=data,
+                headers=headers,
+            )
+        if status == 202:
+            assert resp.status_code == 202, resp.text
+            job_data = mock_temporal.started[-1]["args"][1]
+            assert (job_data["delivery_mode"], job_data["callback_url"]) == (stored, url)
+        else:
+            assert_envelope(
+                resp, 422, "ValidationError", "delivery 'pull' contradicts callback_url"
+            )
+            assert mock_temporal.started == []
+
+    def test_multipart_callback_url_is_validated_like_json(self, client, headers, mock_temporal):
+        resp = client.post(
+            ASYNC,
+            files={"file": ("s.fdx", FDX, "application/xml")},
+            data={"callback_url": "https://evil.example/cb"},
+            headers=headers,
+        )
+        assert_envelope(resp, 422, "ValidationError", f"callback_url: Value error, {NOT_ALLOWED}")
+        assert mock_temporal.started == []
+
+    def test_allow_list_is_a_setting(self, client, headers, mock_temporal, monkeypatch):
+        settings = get_settings()
+        monkeypatch.setattr(settings, "callback_url_allowed_hosts", ["epro.example.org"])
+        ok = client.post(
+            ASYNC, json=payload(callback_url="https://EPRO.example.org/cb"), headers=headers
+        )
+        assert ok.status_code == 202, ok.text
+        default_host = client.post(
+            ASYNC, json=payload(callback_url="https://epro.filmakademie.de/cb"), headers=headers
+        )
+        assert_envelope(
+            default_host, 422, "ValidationError", f"{NOT_ALLOWED}. Allowed: epro.example.org"
+        )
+        monkeypatch.setattr(settings, "callback_url_allowed_hosts", [])
+        disabled = client.post(
+            ASYNC, json=payload(callback_url="https://epro.example.org/cb"), headers=headers
+        )
+        assert_envelope(disabled, 422, "ValidationError", "Allowed: (none configured)")
+        assert len(mock_temporal.started) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1197,7 +1290,7 @@ class TestAuthorizationHeader:
         unknown = f"eki_{secrets.token_hex(32)}"
 
         def probe(key: str):
-            resp = client.post(SYNC, json=payload(), headers={"Authorization": f"Bearer {key}"})
+            resp = client.post(ASYNC, json=payload(), headers={"Authorization": f"Bearer {key}"})
             body = resp.json()
             return (
                 resp.status_code,
@@ -1398,25 +1491,25 @@ ERROR_CASES = {
         400,
         "BadRequest",
     ),
-    "401-no-auth": (lambda c, h: c.post(SYNC, json=_marker_payload()), 401, "Unauthorized"),
+    "401-no-auth": (lambda c, h: c.post(ASYNC, json=_marker_payload()), 401, "Unauthorized"),
     "401-bad-key": (
-        lambda c, h: c.post(SYNC, json=_marker_payload(), headers={"Authorization": "Bearer x"}),
+        lambda c, h: c.post(ASYNC, json=_marker_payload(), headers={"Authorization": "Bearer x"}),
         401,
         "Unauthorized",
     ),
     "403-actor": (
-        lambda c, h: c.post(SYNC, json=_marker_payload(), headers={**h, "X-Actor-User-Id": "x"}),
+        lambda c, h: c.post(ASYNC, json=_marker_payload(), headers={**h, "X-Actor-User-Id": "x"}),
         403,
         "Forbidden",
     ),
     "404-job": (lambda c, h: c.get(f"/v1/security/jobs/{uuid4()}", headers=h), 404, "NotFound"),
     "422-project": (
-        lambda c, h: c.post(SYNC, json=_marker_payload(project_id="bad id"), headers=h),
+        lambda c, h: c.post(ASYNC, json=_marker_payload(project_id="bad id"), headers=h),
         422,
         "ValidationError",
     ),
     "422-format": (
-        lambda c, h: c.post(SYNC, json=_marker_payload(script_format="docx"), headers=h),
+        lambda c, h: c.post(ASYNC, json=_marker_payload(script_format="docx"), headers=h),
         422,
         "ValidationError",
     ),
@@ -1426,17 +1519,17 @@ ERROR_CASES = {
         "ValidationError",
     ),
     "422-callback": (
-        lambda c, h: c.post(SYNC, json=_marker_payload(callback_url="https://x.y"), headers=h),
+        lambda c, h: c.post(ASYNC, json=_marker_payload(callback_url="https://x.y"), headers=h),
         422,
         "ValidationError",
     ),
     "422-raw-content": (
-        lambda c, h: c.post(SYNC, json=payload(script_content=MARKER.decode() + "!"), headers=h),
+        lambda c, h: c.post(ASYNC, json=payload(script_content=MARKER.decode() + "!"), headers=h),
         422,
         "ValidationError",
     ),
     "422-content-as-pdf": (
-        lambda c, h: c.post(SYNC, json=_marker_payload(script_format="pdf"), headers=h),
+        lambda c, h: c.post(ASYNC, json=_marker_payload(script_format="pdf"), headers=h),
         422,
         "ValidationError",
     ),
@@ -1471,8 +1564,10 @@ class TestErrorEnvelope:
         ("method", "url", "kwargs", "status", "error", "message"),
         [
             ("get", "/v1/does-not-exist", {}, 404, "NotFound", "Not Found"),
-            ("put", SYNC, {}, 405, "MethodNotAllowed", "Method Not Allowed"),
-            ("get", SYNC, {}, 405, "MethodNotAllowed", "Method Not Allowed"),
+            ("post", REMOVED_SYNC, {"json": payload()}, 404, "NotFound", "Not Found"),
+            ("get", REMOVED_SYNC, {}, 404, "NotFound", "Not Found"),
+            ("put", ASYNC, {}, 405, "MethodNotAllowed", "Method Not Allowed"),
+            ("get", ASYNC, {}, 405, "MethodNotAllowed", "Method Not Allowed"),
             (
                 "post",
                 ASYNC,
@@ -1482,7 +1577,14 @@ class TestErrorEnvelope:
                 "Missing boundary in multipart.",
             ),
         ],
-        ids=["unknown-route", "put", "get-on-post", "multipart-no-boundary"],
+        ids=[
+            "unknown-route",
+            "removed-sync-post",
+            "removed-sync-get",
+            "put",
+            "get-on-post",
+            "multipart-no-boundary",
+        ],
     )
     def test_framework_errors_use_envelope(
         self, client, headers, method, url, kwargs, status, error, message

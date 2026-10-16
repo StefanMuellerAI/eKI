@@ -17,7 +17,8 @@ Usage:
 
 Environment:
     EKI_API_URL   default http://localhost:8000
-    EKI_API_KEY   required (admin API key from scripts/create_api_key.py)
+    EKI_API_KEY   required: an ADMIN API key (scripts/create_api_key.py --insert --admin).
+                  Since 1.0.1 every /v1/kb/* endpoint answers 403 for non-admin keys.
 """
 
 from __future__ import annotations
@@ -79,8 +80,22 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, object], str]:
     return meta, body
 
 
+_ADMIN_HINT = (
+    "the KB API requires an admin API key "
+    "(create one with: python scripts/create_api_key.py --insert --admin)"
+)
+
+
 def _headers(api_key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"}
+
+
+def _http_error(resp: requests.Response) -> str:
+    """One-line error for a non-success response; 403 explains the admin requirement."""
+    message = f"HTTP {resp.status_code}: {resp.text[:200]}"
+    if resp.status_code == 403:
+        message += f" -- {_ADMIN_HINT}"
+    return message
 
 
 def _upload(
@@ -120,7 +135,7 @@ def _upload(
             return True, "created"
     if resp.status_code == 409:
         return True, "skip (already in KB)"
-    return False, f"HTTP {resp.status_code}: {resp.text[:200]}"
+    return False, _http_error(resp)
 
 
 def cmd_seed_placeholders(api_url: str, api_key: str) -> int:
@@ -210,7 +225,7 @@ def cmd_wipe_placeholders(api_url: str, api_key: str) -> int:
         print(f"Error: {exc}")
         return 1
     if resp.status_code != 200:
-        print(f"Error: HTTP {resp.status_code}: {resp.text[:200]}")
+        print(f"Error: {_http_error(resp)}")
         return 1
     body = resp.json()
     print(f"Wiped {body.get('count', 0)} placeholder document(s)")
@@ -265,7 +280,7 @@ def cmd_status(api_url: str, api_key: str) -> int:
         print(f"Error: {exc}")
         return 1
     if resp.status_code != 200:
-        print(f"Error: HTTP {resp.status_code}: {resp.text[:200]}")
+        print(f"Error: {_http_error(resp)}")
         return 1
     body = resp.json()
     docs = body.get("documents", [])
@@ -301,7 +316,7 @@ def _make_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--key",
         default=os.environ.get("EKI_API_KEY", ""),
-        help="API key (or EKI_API_KEY env)",
+        help="Admin API key (or EKI_API_KEY env); non-admin keys get 403",
     )
 
     group = parser.add_mutually_exclusive_group(required=True)
@@ -354,7 +369,7 @@ def _make_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = _make_parser().parse_args()
     if not args.key:
-        print("Error: --key or EKI_API_KEY required")
+        print(f"Error: --key or EKI_API_KEY required ({_ADMIN_HINT})")
         return 2
 
     if args.seed_placeholders:

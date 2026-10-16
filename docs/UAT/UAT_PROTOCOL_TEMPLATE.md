@@ -2,23 +2,24 @@
 
 | Feld | Wert |
 |---|---|
-| Release / Tag | `v<Release-Tag>` = `core/version.py`: ______ (empfohlen: Patch-Release mit den Korrekturen vom 15.10.2026, `HANDOVER.md` §1.1) |
+| Release / Tag | `v<Release-Tag>` = `core/version.py`: ______ (erwartet: `1.0.1` oder neuer, `HANDOVER.md` §1.1) |
 | Git-Commit | |
 | Image-Digest API / Worker | `ghcr.io/…/eki-api@sha256:…` / `ghcr.io/…/eki-worker@sha256:…` |
-| DB-Migrationsstand (`docker compose exec api alembic current`) | erwartet `b8d0f2a4c6e3 (head)` |
+| DB-Migrationsstand (`docker compose exec api alembic current`) | erwartet `c4e6a8b0d2f1 (head)` |
 | Docker / Docker Compose | ≥ 24 / ≥ 2.24 |
 | Umgebung | ☐ lokal ☐ Stage ☐ Produktion |
 | Datum / Uhrzeit | |
 | Durchführende (eKI) | |
 | Teilnehmende (ePro / IT / Sicherheitsbeauftragter) | |
 | LLM-Provider / Modell | `LLM_PROVIDER=` / Modell-Tag |
-| Hardware (GPU, VRAM) | |
+| Ollama-Instanz (URL, Version `/api/version`) | |
+| Hardware Ollama-Host (GPU, VRAM) | |
 
 ---
 
 ## 1. Automatisierte Nachweise
 
-Nur Läufe auf dem oben eingetragenen Stand (Head `b8d0f2a4c6e3`; die Zustellphase funktioniert
+Nur Läufe auf dem oben eingetragenen Stand (Head `c4e6a8b0d2f1`; die Zustellphase funktioniert
 auf PostgreSQL erst ab `a7c9e1f3b5d2`) zählen; ältere Läufe der Tests 2–7 sind zu wiederholen
 (`UAT_TESTPLAN.md`).
 

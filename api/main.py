@@ -4,6 +4,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
@@ -12,11 +13,14 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.base import RequestResponseEndpoint
 
 from api.config import get_settings
-from api.dependencies import verify_api_key
+from api.dependencies import get_db, verify_api_key
 from api.routers import health, knowledge_base, ops, security
+from core import metrics
 from core.db_models import ApiKeyModel
 from core.exceptions import EKIException
 from core.logging_config import configure_logging, set_request_id
@@ -30,7 +34,6 @@ from core.models import (
     AsyncSecurityCheckRequest,
     ErrorDetail,
     ErrorResponse,
-    SecurityCheckRequest,
 )
 from core.tracing import configure_tracing
 from core.version import __version__
@@ -97,7 +100,7 @@ app.add_middleware(
 # ihn in der Response-Header zurueck, damit Aufrufer Trace-Querverweise
 # ziehen koennen. Bewusst als Middleware vor allen Routern installiert.
 @app.middleware("http")
-async def request_id_middleware(request: Request, call_next):
+async def request_id_middleware(request: Request, call_next: RequestResponseEndpoint) -> Response:
     incoming = request.headers.get("X-Request-ID")
     request_id = set_request_id(incoming)
     # request.state lives in the ASGI scope, so every exception handler sees
@@ -137,7 +140,7 @@ def _route_template(request: Request) -> str:
 # Fehlerantworten aus Exception-Handlern gezaehlt werden. /metrics selbst
 # wird ausgenommen, damit der Scrape die Zahlen nicht verfaelscht.
 @app.middleware("http")
-async def http_metrics_middleware(request: Request, call_next):
+async def http_metrics_middleware(request: Request, call_next: RequestResponseEndpoint) -> Response:
     if request.url.path == "/metrics":
         return await call_next(request)
 
@@ -329,8 +332,19 @@ app.include_router(ops.router, prefix="/v1/ops", tags=["Operations"])
 if settings.metrics_enabled:
 
     @app.get("/metrics", include_in_schema=False)
-    async def metrics_endpoint(_api_key: ApiKeyModel = Depends(verify_api_key)) -> Response:
+    async def metrics_endpoint(
+        _api_key: ApiKeyModel = Depends(verify_api_key),
+        db: AsyncSession = Depends(get_db),
+    ) -> Response:
         """Prometheus metrics endpoint protected by API key authentication."""
+        # The dead-letter gauge is recomputed on every scrape: it used to be set
+        # only when a dead letter was written or /v1/ops/* was called, so after an
+        # acknowledgement or the 90-day cleanup a stale series kept
+        # EkiDeadLettersPending firing.
+        try:
+            metrics.DEAD_LETTERS_UNACKNOWLEDGED.set(await ops.unacknowledged_dead_letters(db))
+        except Exception as exc:  # keep serving the other metrics
+            logger.warning("Dead-letter gauge refresh failed: %s", type(exc).__name__)
         return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
@@ -350,7 +364,7 @@ async def root() -> dict[str, str]:
 # use raw Request parsing (needed for dual JSON / multipart support).
 # ---------------------------------------------------------------------------
 
-_MULTIPART_BASE: dict = {
+_MULTIPART_ASYNC: dict[str, Any] = {
     "type": "object",
     "required": ["file"],
     "properties": {
@@ -380,10 +394,17 @@ _MULTIPART_BASE: dict = {
         "delivery": {
             "type": "string",
             "enum": ["pull", "push"],
-            "default": "pull",
             "description": (
                 "Delivery mode: pull (One-Shot GET) or push (POST to ePro); "
-                "case-insensitive, blank means pull"
+                "case-insensitive; blank or omitted means push with callback_url, else pull"
+            ),
+        },
+        "callback_url": {
+            "type": "string",
+            "format": "uri",
+            "description": (
+                "Optional HTTPS push target on an allow-listed host "
+                "(CALLBACK_URL_ALLOWED_HOSTS); implies delivery=push"
             ),
         },
         "idempotency_key": {
@@ -394,25 +415,18 @@ _MULTIPART_BASE: dict = {
                 "control characters are rejected"
             ),
         },
-    },
-}
-
-_MULTIPART_ASYNC: dict = {
-    **_MULTIPART_BASE,
-    "properties": {
-        **_MULTIPART_BASE["properties"],
         "priority": {
             "type": "integer",
             "minimum": 1,
             "maximum": 10,
             "default": 5,
-            "description": "Job priority (1=highest, 10=lowest)",
+            "description": "Job priority (1=highest, 10=lowest), Temporal task-queue priority",
         },
     },
 }
 
 
-def _custom_openapi() -> dict:
+def _custom_openapi() -> dict[str, Any]:
     if app.openapi_schema:
         return app.openapi_schema
 
@@ -425,30 +439,23 @@ def _custom_openapi() -> dict:
 
     schemas = openapi_schema.setdefault("components", {}).setdefault("schemas", {})
 
-    for model_cls in (SecurityCheckRequest, AsyncSecurityCheckRequest):
-        model_schema = model_cls.model_json_schema(ref_template="#/components/schemas/{model}")
-        for def_name, def_body in model_schema.pop("$defs", {}).items():
-            schemas.setdefault(def_name, def_body)
-        schemas[model_cls.__name__] = model_schema
+    model_schema = AsyncSecurityCheckRequest.model_json_schema(
+        ref_template="#/components/schemas/{model}"
+    )
+    for def_name, def_body in model_schema.pop("$defs", {}).items():
+        schemas.setdefault(def_name, def_body)
+    schemas[AsyncSecurityCheckRequest.__name__] = model_schema
 
-    paths = openapi_schema.get("paths", {})
-
-    endpoint_map = [
-        ("/v1/security/check", "SecurityCheckRequest", _MULTIPART_BASE),
-        ("/v1/security/check:async", "AsyncSecurityCheckRequest", _MULTIPART_ASYNC),
-    ]
-    for path, json_schema_name, multipart_schema in endpoint_map:
-        operation = paths.get(path, {}).get("post")
-        if not operation:
-            continue
+    operation = openapi_schema.get("paths", {}).get("/v1/security/check:async", {}).get("post")
+    if operation:
         operation["requestBody"] = {
             "required": True,
             "content": {
                 "application/json": {
-                    "schema": {"$ref": f"#/components/schemas/{json_schema_name}"},
+                    "schema": {"$ref": "#/components/schemas/AsyncSecurityCheckRequest"},
                 },
                 "multipart/form-data": {
-                    "schema": multipart_schema,
+                    "schema": _MULTIPART_ASYNC,
                 },
             },
         }
@@ -457,4 +464,5 @@ def _custom_openapi() -> dict:
     return openapi_schema
 
 
-app.openapi = _custom_openapi
+# Replacing the bound method is FastAPI's documented hook for a custom schema.
+app.openapi = _custom_openapi  # type: ignore[method-assign]

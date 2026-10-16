@@ -4,12 +4,11 @@ import hashlib
 import ipaddress
 import logging
 
-import redis.asyncio as aioredis
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security.utils import get_authorization_scheme_param
 
 from api.config import Settings, get_settings
-from api.dependencies import get_redis
+from api.dependencies import RedisClient, get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +42,7 @@ def _client_ip_from_request(request: Request, settings: Settings) -> str:
 
 async def rate_limit_by_ip(
     request: Request,
-    redis: aioredis.Redis = Depends(get_redis),
+    redis: RedisClient = Depends(get_redis),
     settings: Settings = Depends(get_settings),
 ) -> None:
     """
@@ -84,7 +83,7 @@ async def rate_limit_by_ip(
 
 async def rate_limit_by_api_key(
     request: Request,
-    redis: aioredis.Redis = Depends(get_redis),
+    redis: RedisClient = Depends(get_redis),
     settings: Settings = Depends(get_settings),
 ) -> None:
     """
@@ -134,7 +133,7 @@ async def rate_limit_by_api_key(
 
 async def rate_limit_combined(
     request: Request,
-    redis: aioredis.Redis = Depends(get_redis),
+    redis: RedisClient = Depends(get_redis),
     settings: Settings = Depends(get_settings),
 ) -> None:
     """

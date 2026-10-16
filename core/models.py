@@ -1,18 +1,19 @@
 """Pydantic models for API request/response schemas."""
 
 import base64
+import binascii
 import codecs
-import ipaddress
 import re
 import unicodedata
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, ClassVar, Literal
-from urllib.parse import urlparse
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
+from api.config import get_settings
+from core.callback_url import CallbackUrlError, check_callback_url
 from core.version import __version__
 
 
@@ -163,8 +164,19 @@ def check_script_bytes(decoded: bytes, fmt: ScriptFormat) -> None:
             raise ValueError("File does not appear to be a valid PDF")
 
 
+def _normalized_delivery(value: Any) -> Any:
+    """``" PUSH "`` -> ``"push"``; blank -> ``None`` (= omitted, default applies)."""
+    if isinstance(value, str):
+        return value.strip().lower() or None
+    return value
+
+
 class SecurityCheckRequest(BaseModel):
-    """Request model for security check endpoint."""
+    """Shared JSON request fields of ``POST /v1/security/check:async``.
+
+    Base of :class:`AsyncSecurityCheckRequest` (adds ``priority``) and of the
+    multipart validation model; not published as a schema of its own.
+    """
 
     # Limit on the *decoded* script (JSON path).  ``None`` disables it for
     # subclasses whose size is enforced elsewhere (multipart uploads).
@@ -196,13 +208,20 @@ class SecurityCheckRequest(BaseModel):
         ),
     )
     callback_url: HttpUrl | None = Field(
-        None, description="Optional callback URL for async results"
+        None,
+        description=(
+            "Optional HTTPS callback URL for push delivery results: replaces the default "
+            "push target {EPRO_BASE_URL}/eki/scl/set-risk-assessment/{project_id}. Host must "
+            "be on CALLBACK_URL_ALLOWED_HOSTS; private/internal addresses are rejected. "
+            "Implies delivery 'push'; together with delivery 'pull' it is rejected (422)."
+        ),
     )
     delivery: Literal["pull", "push"] = Field(
         default="pull",
         description=(
             "Delivery mode: 'pull' (One-Shot GET) or 'push' (POST to ePro). "
-            "Case-insensitive and whitespace-tolerant; blank means the default 'pull'."
+            "Case-insensitive and whitespace-tolerant; blank or omitted means the default: "
+            "'push' if callback_url is set, otherwise 'pull'."
         ),
     )
     idempotency_key: str | None = Field(
@@ -228,7 +247,7 @@ class SecurityCheckRequest(BaseModel):
 
         try:
             decoded = base64.b64decode(v, validate=True)
-        except base64.binascii.Error:
+        except binascii.Error:
             raise ValueError("Invalid base64 encoding")
 
         max_size = self.max_decoded_script_bytes
@@ -238,13 +257,29 @@ class SecurityCheckRequest(BaseModel):
         check_script_bytes(decoded, fmt)
         return self
 
-    @field_validator("delivery", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def normalize_delivery(cls, v: Any) -> Any:
-        """Accept ``" PUSH "`` etc.; a blank value falls back to the default ``pull``."""
-        if isinstance(v, str):
-            return v.strip().lower() or "pull"
-        return v
+    def resolve_delivery_default(cls, data: Any) -> Any:
+        """Decision 10b: ``callback_url`` is a push target.
+
+        * ``delivery`` omitted or blank -> ``push`` with a callback_url, else ``pull``;
+        * ``delivery`` given -> normalised (``" PUSH "`` -> ``push``);
+        * explicit ``pull`` together with a callback_url is a contradiction -> 422.
+        """
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        has_callback = data.get("callback_url") not in (None, "")
+        delivery = _normalized_delivery(data.get("delivery"))
+        if delivery is None and ("delivery" not in data or isinstance(data["delivery"], str)):
+            delivery = "push" if has_callback else "pull"
+        if has_callback and delivery == "pull":
+            raise ValueError(
+                "delivery 'pull' contradicts callback_url (callback_url is a push target); "
+                "omit delivery or use 'push'"
+            )
+        data["delivery"] = delivery
+        return data
 
     @field_validator("idempotency_key")
     @classmethod
@@ -264,42 +299,17 @@ class SecurityCheckRequest(BaseModel):
     @field_validator("callback_url")
     @classmethod
     def validate_callback_url(cls, v: HttpUrl | None) -> HttpUrl | None:
-        """Validate callback URL to prevent SSRF attacks."""
+        """Static SSRF policy (HTTPS, no credentials/internal IPs, host allow-list).
+
+        The allow-list is ``CALLBACK_URL_ALLOWED_HOSTS``; the worker repeats the
+        check plus DNS resolution right before the push.
+        """
         if v is None:
             return v
-
-        parsed = urlparse(str(v))
-
-        # Enforce TLS for callback delivery.
-        if parsed.scheme != "https":
-            raise ValueError("Callback URL must use HTTPS")
-
-        # Block private/internal IP ranges
-        hostname = parsed.hostname
-        if not hostname:
-            raise ValueError("Invalid callback URL hostname")
-
         try:
-            ip = ipaddress.ip_address(hostname)
-        except ValueError:
-            ip = None
-
-        if ip and (
-            ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved
-        ):
-            raise ValueError("Callback URL cannot point to private/internal IP addresses")
-
-        # Whitelist of allowed domains
-        allowed_domains = {
-            "epro.filmakademie.de",
-            "staging.epro.filmakademie.de",
-        }
-
-        if hostname.lower().rstrip(".") not in allowed_domains:
-            raise ValueError(
-                f"Callback URL domain not allowed. Allowed: {', '.join(sorted(allowed_domains))}"
-            )
-
+            check_callback_url(str(v), get_settings().callback_url_allowed_hosts)
+        except CallbackUrlError as exc:
+            raise ValueError(str(exc)) from None
         return v
 
     @field_validator("project_id")
@@ -346,12 +356,20 @@ class SecurityCheckRequest(BaseModel):
 
 
 class AsyncSecurityCheckRequest(SecurityCheckRequest):
-    """Request model for async security check endpoint."""
+    """Request model for ``POST /v1/security/check:async`` (JSON body)."""
 
-    priority: int = Field(default=5, ge=1, le=10, description="Job priority (1=highest, 10=lowest)")
+    priority: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+        description=(
+            "Job priority (1=highest, 10=lowest), passed to the Temporal task-queue "
+            "priority; under load a higher-priority job is dispatched first."
+        ),
+    )
 
 
-class UploadSecurityCheckRequest(SecurityCheckRequest):
+class UploadAsyncSecurityCheckRequest(AsyncSecurityCheckRequest):
     """Validation model for multipart/form-data uploads (not part of the JSON schema).
 
     Same field rules and content sniffing as the JSON body.  ``script_content``
@@ -363,12 +381,6 @@ class UploadSecurityCheckRequest(SecurityCheckRequest):
     max_decoded_script_bytes: ClassVar[int | None] = None
 
     script_content: str = Field(..., min_length=1, description="Base64 of the uploaded file")
-
-
-class UploadAsyncSecurityCheckRequest(UploadSecurityCheckRequest):
-    """Multipart counterpart of :class:`AsyncSecurityCheckRequest`."""
-
-    priority: int = Field(default=5, ge=1, le=10, description="Job priority (1=highest, 10=lowest)")
 
 
 # Response Models
@@ -459,16 +471,6 @@ class SecurityReport(BaseModel):
     findings: list[RiskFinding] = Field(default_factory=list, description="List of findings")
     processing_time_seconds: float = Field(..., description="Time taken to process")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
-
-
-class SyncSecurityCheckResponse(BaseModel):
-    """Response for synchronous security check."""
-
-    report: SecurityReport = Field(..., description="Security analysis report")
-    message: str = Field(
-        default="Security check completed successfully",
-        description="Human-readable message",
-    )
 
 
 class AsyncSecurityCheckResponse(BaseModel):

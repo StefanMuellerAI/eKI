@@ -2,7 +2,9 @@
 
 import hashlib
 import logging
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING, TypeAlias
 
 import redis.asyncio as aioredis
 from fastapi import Depends, Header, HTTPException, status
@@ -14,10 +16,18 @@ from temporalio.client import Client as TemporalClient
 from api.config import Settings, get_settings
 from core.db_models import ApiKeyModel
 from core.exceptions import ServiceUnavailableException
+from core.temporal_codec import temporal_client_options
 from core.tracing import temporal_interceptors
 from db.session import get_db_session
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    # The types-redis stubs make Redis generic over the response type; the
+    # runtime class is not subscriptable, and FastAPI evaluates annotations.
+    RedisClient: TypeAlias = aioredis.Redis[str]
+else:
+    RedisClient = aioredis.Redis
 
 
 async def get_settings_dependency() -> Settings:
@@ -25,13 +35,13 @@ async def get_settings_dependency() -> Settings:
     return get_settings()
 
 
-async def get_db() -> AsyncSession:
+async def get_db() -> AsyncIterator[AsyncSession]:
     """Get database session."""
     async for session in get_db_session():
         yield session
 
 
-async def get_redis() -> aioredis.Redis:
+async def get_redis() -> AsyncIterator[RedisClient]:
     """Get Redis connection."""
     settings = get_settings()
     redis_client = aioredis.from_url(
@@ -43,10 +53,11 @@ async def get_redis() -> aioredis.Redis:
     try:
         yield redis_client
     finally:
-        await redis_client.aclose()
+        # types-redis 4.6 stubs predate aclose() (redis>=5; close() is deprecated).
+        await redis_client.aclose()  # type: ignore[attr-defined]
 
 
-async def get_temporal_client() -> TemporalClient:
+async def get_temporal_client() -> AsyncIterator[TemporalClient]:
     """Get Temporal client.
 
     Raises ServiceUnavailableException with a user-facing message when
@@ -60,6 +71,9 @@ async def get_temporal_client() -> TemporalClient:
             # used "default", so a custom TEMPORAL_NAMESPACE stranded every job.
             namespace=settings.temporal_namespace,
             interceptors=temporal_interceptors(settings),
+            # Payload encryption (1.0.1): identical converter to the worker,
+            # keyed by API_SECRET_KEY -- see core/temporal_codec.py.
+            **temporal_client_options(settings.api_secret_key),
         )
     except Exception as exc:
         logger.error(f"Failed to connect to Temporal at {settings.temporal_host}: {exc}")
@@ -128,11 +142,11 @@ async def verify_api_key(
 
 
 async def require_admin_key(api_key: ApiKeyModel = Depends(verify_api_key)) -> ApiKeyModel:
-    """Gate for ``/v1/ops/*``: the key must carry ``is_admin`` (M10)."""
+    """Gate for ``/v1/ops/*`` (M10) and ``/v1/kb/*`` (1.0.1): the key must carry ``is_admin``."""
     if not getattr(api_key, "is_admin", False):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin API key required for operations endpoints",
+            detail="Admin API key required for this endpoint",
         )
     return api_key
 

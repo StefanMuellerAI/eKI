@@ -33,8 +33,7 @@ jobs:
         run: ruff format --check .
 
       - name: Run mypy type checker
-        run: mypy api core services workflows worker
-        continue-on-error: true
+        run: mypy api core services workflows worker llm parsers
 
   security-scan:
     name: Security Scan
@@ -89,7 +88,8 @@ jobs:
           - 5432:5432
 
       redis:
-        image: redis:7-alpine
+        # Same Redis line as docker-compose.yml (7.2, BSD-3).
+        image: redis:7.2-alpine
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
@@ -217,7 +217,28 @@ jobs:
           }
           leaked = {n: m for n, m in mounts.items() if m}
           assert not leaked, f"source bind mounts in prod: {leaked}"
+          # Inference runs on an external Ollama instance (no Ollama container in prod).
+          assert "ollama" not in services, "ollama service must not be part of the prod stack"
           print("prod overlay OK:", published)
+          EOF
+
+      - name: Optional Ollama overlay validates; third-party images are pinned
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.ollama.yml config --format json > /tmp/ollama.json
+          python3 - <<'EOF'
+          import json
+          services = json.load(open("/tmp/ollama.json"))["services"]
+          assert "ollama" in services, "overlay must add the ollama service"
+          for name in ("api", "worker"):
+              env = services[name]["environment"]
+              assert env["OLLAMA_BASE_URL"] == "http://ollama:11434", (name, env)
+              assert env["LOCAL_MISTRAL_BASE_URL"] == "http://ollama:11434", (name, env)
+          images = {n: s["image"] for n, s in services.items() if "image" in s}
+          unpinned = {n: i for n, i in images.items()
+                      if ":" not in i.rsplit("/", 1)[-1] or i.endswith(":latest")}
+          assert not unpinned, f"unpinned images: {unpinned}"
+          assert images["redis"] == "redis:7.2-alpine", images["redis"]
+          print("ollama overlay OK:", images)
           EOF
 
   docker-build:

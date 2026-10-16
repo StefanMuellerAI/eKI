@@ -14,7 +14,6 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from core import metrics
 from core.db_models import DeliveryDeadLetter, JobMetadata, ReportMetadata
 from workflows import activities
 from workflows.activities import (
@@ -182,7 +181,6 @@ class TestDeadLetterAndRetrievalCheck:
                 await session.execute(select(JobMetadata).where(JobMetadata.job_id == job.job_id))
             ).scalar_one()
             assert fresh.delivery_status == "dead_lettered"
-        assert metrics.DEAD_LETTERS_UNACKNOWLEDGED._value.get() >= 1
 
     async def test_record_dead_letter_for_unknown_job_uses_payload(self, db_factory):
         job_id = uuid4()

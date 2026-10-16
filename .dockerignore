@@ -1,0 +1,61 @@
+# Build context for docker/Dockerfile and docker/Dockerfile.worker (context: repo root).
+# Nothing below may end up in an image or even reach the Docker daemon.
+# The Dockerfiles copy only: pyproject.toml, requirements.lock, core/version.py,
+# api/ core/ services/ workflows/ worker/ db/ llm/ parsers/ config/ scripts/,
+# tests/fixtures/fdx/ (API image, synthetic, for scripts/smoke_prod.py) and alembic.ini.
+
+# Version control, CI, editors
+.git
+.gitignore
+.github
+.cursor
+.vscode
+.idea
+**/*.swp
+
+# Secrets and local environment files (runtime only: env_file / Docker secrets)
+.env
+.env.*
+secrets
+**/*.pem
+**/*.key
+
+# Real material: screenplays, safety-officer KB documents, local test reports.
+# Real screenplays live only in the git-ignored tests/fixtures/pdf/private/.
+tests/fixtures/pdf/private
+tests/fixtures/pdf
+tests/reports
+config/kb_seed/real/*
+!config/kb_seed/real/.gitkeep
+**/*.pdf
+
+# Virtual environments, build artefacts, caches
+venv
+.venv
+env
+ENV
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+build
+dist
+.eggs
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.tox
+.hypothesis
+.temporal
+.coverage
+.coverage.*
+htmlcov
+coverage.xml
+bandit-report.json
+**/*.log
+**/*.db
+**/*.sqlite3
+
+# Not needed at runtime
+docs
+postman
+docker-compose.override.yml

@@ -266,7 +266,9 @@ class MistralCloudProvider(BaseLLMProvider):
             cleaned = cleaned[:-3]
         cleaned = cleaned.strip()
         try:
-            return json.loads(cleaned)
+            # JSON mode returns an object; the object-rooted schema check catches anything else.
+            parsed: dict[str, Any] = json.loads(cleaned)
+            return parsed
         except json.JSONDecodeError as e:
             raise LLMException(
                 "Invalid JSON response from Mistral",

@@ -3,16 +3,16 @@
 import logging
 from datetime import datetime
 
-import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from temporalio.client import Client as TemporalClient
 
 from api.config import get_settings
-from api.dependencies import get_db, get_redis, verify_api_key
+from api.dependencies import RedisClient, get_db, get_redis, verify_api_key
 from core.db_models import ApiKeyModel
 from core.models import HealthResponse, ReadinessResponse
+from core.temporal_codec import temporal_client_options
 from core.version import __version__
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ async def health_check() -> HealthResponse:
 async def readiness_check(
     http_response: Response,
     db: AsyncSession = Depends(get_db),
-    redis: aioredis.Redis = Depends(get_redis),
+    redis: RedisClient = Depends(get_redis),
     _api_key: ApiKeyModel = Depends(verify_api_key),
 ) -> ReadinessResponse:
     """
@@ -82,11 +82,17 @@ async def readiness_check(
     except Exception:
         services_status["redis"] = False
 
-    # Check Temporal – connect and perform a real RPC health check
+    # Check Temporal – connect and perform a real RPC health check.
+    # check_health carries no payloads; the client is still built with the
+    # production codec options (like api/dependencies.py) so that the probe
+    # also fails on a key the codec cannot use and no client in the code base
+    # can send unencrypted payloads.
     try:
         settings = get_settings()
         client = await TemporalClient.connect(
-            settings.temporal_host, namespace=settings.temporal_namespace
+            settings.temporal_host,
+            namespace=settings.temporal_namespace,
+            **temporal_client_options(settings.api_secret_key),
         )
         await client.service_client.check_health()
         services_status["temporal"] = True

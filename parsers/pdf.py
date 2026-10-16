@@ -189,7 +189,7 @@ class PDFParser(ParserBase):
     def supported_format(self) -> ScriptFormat:
         return ScriptFormat.PDF
 
-    async def parse(self, content: bytes) -> ParsedScript:  # type: ignore[override]
+    async def parse(self, content: bytes) -> ParsedScript:
         """Parse raw PDF bytes into a ``ParsedScript``."""
         t0 = time.monotonic()
         warnings: list[str] = []

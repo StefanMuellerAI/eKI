@@ -138,7 +138,7 @@ class ProviderReport:
 
     def metrics(self) -> dict[str, float]:
         n = len(self.scenes) or 1
-        with_expectations = [s for s in self.scenes if s.recall is not None]
+        recalls = [s.recall for s in self.scenes if s.recall is not None]
         negatives = [s for s in self.scenes if s.negative]
         risk_lat = [s.risk_latency_s for s in self.scenes if s.error is None]
         struct_lat = [s.structure_latency_s for s in self.scenes if s.error is None]
@@ -149,11 +149,7 @@ class ProviderReport:
                 1 for s in self.scenes if s.risk_schema_valid and s.structure_schema_valid
             )
             / n,
-            "class_recall": (
-                statistics.fmean(s.recall for s in with_expectations)  # type: ignore[misc]
-                if with_expectations
-                else 1.0
-            ),
+            "class_recall": statistics.fmean(recalls) if recalls else 1.0,
             "severity_agreement": sum(1 for s in self.scenes if s.severity_ok) / n,
             "false_positive_rate": (
                 sum(1 for s in negatives if s.false_positive) / len(negatives) if negatives else 0.0
@@ -205,7 +201,7 @@ class ParityRunner:
 
     def __init__(self, provider: Any, *, model: str | None = None, concurrency: int = 1) -> None:
         self.provider = provider
-        self.model = model or getattr(provider, "model", "unknown")
+        self.model = model or str(getattr(provider, "model", "unknown"))
         self.concurrency = max(1, concurrency)
 
     async def run(self, scenes: list[GoldenScene]) -> ProviderReport:

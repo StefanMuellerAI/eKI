@@ -42,7 +42,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from temporalio import activity, workflow
 from temporalio.api.enums.v1 import EventType
-from temporalio.client import WorkflowFailureError, WorkflowHistory
+from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
+from temporalio.common import HeaderCodecBehavior
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Replayer, Worker
@@ -53,6 +54,7 @@ from core.db_models import JobMetadata, ReportMetadata
 from core.exceptions import LLMException
 from core.models import JobStatus
 from core.prompt_sanitizer import PromptSanitizer
+from core.temporal_codec import EncryptionCodec, temporal_client_options
 from llm.base import BaseLLMProvider
 from services.secure_buffer import SecureBuffer
 from workflows import activities as activities_module
@@ -65,6 +67,7 @@ with workflow.unsafe.imports_passed_through():
     from workflows.security_check import SecurityCheckWorkflow
 
 FIXTURES = Path(__file__).parent / "fixtures"
+_CODEC_SECRET = "cov-workflow-codec-secret-0123456789abcdef"  # nosec B105 - test key
 _REAL_ASYNC_CLIENT = httpx.AsyncClient
 _FALLBACK_WARNING = "No scene markers (INT/EXT) found. Falling back to page-by-page splitting."
 
@@ -463,14 +466,17 @@ async def _execute(
 ) -> Outcome:
     """Run the workflow; optionally cancel it once *cancel_when* is set / a timer runs."""
     async with await WorkflowEnvironment.start_time_skipping() as env:
+        # Production payload codec (1.0.1): every branch runs with encrypted
+        # payloads and encrypted failure messages, like API and worker.
+        client = Client(**{**env.client.config(), **temporal_client_options(_CODEC_SECRET)})
         queue = f"cov-wf-{uuid.uuid4().hex}"
         async with Worker(
-            env.client,
+            client,
             task_queue=queue,
             workflows=[SecurityCheckWorkflow],
             activities=activities if activities is not None else build_stub_activities(h),
         ):
-            handle = await env.client.start_workflow(
+            handle = await client.start_workflow(
                 SecurityCheckWorkflow.run,
                 job_data,
                 id=f"wf-{uuid.uuid4().hex}",
@@ -503,8 +509,10 @@ async def _run(
 
 
 async def _assert_replays(history: WorkflowHistory) -> None:
-    """The recorded history replays deterministically on the current code."""
-    await Replayer(workflows=[SecurityCheckWorkflow]).replay_workflow(history)
+    """The recorded (encrypted) history replays deterministically on the current code."""
+    await Replayer(
+        workflows=[SecurityCheckWorkflow], **temporal_client_options(_CODEC_SECRET)
+    ).replay_workflow(history)
 
 
 _BLOCKED = "Szene 2: vom Prompt-Injection-Filter blockiert – manuelle Prüfung erforderlich"
@@ -593,6 +601,9 @@ class TestPdfPipeline:
             "user_id": "u1",
             "script_format": "pdf",
             "script_id": 7,
+            # 1.0.1: optional per-job push target; absent in job_data -> None
+            # (default EPRO_BASE_URL target), same as pre-1.0.1 histories.
+            "callback_url": None,
         }
         # Progress: 0 -> 5 (split) -> 8..50 (structure) -> 52 -> 52..92 (risk) -> 95.
         assert h.statuses() == [
@@ -1636,6 +1647,7 @@ def _worker_settings(**overrides: Any) -> SimpleNamespace:
         "worker_max_concurrent_workflow_tasks": 7,
         "worker_max_concurrent_activities": 3,
         "otel_enabled": False,
+        "api_secret_key": _CODEC_SECRET,
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -1663,6 +1675,8 @@ def worker_main(monkeypatch):
     monkeypatch.setattr(module, "Client", SimpleNamespace(connect=mocks.connect))
     monkeypatch.setattr(module, "Worker", mocks.worker_cls)
     monkeypatch.setattr(module, "ensure_kb_cleanup_schedule", mocks.ensure_schedule)
+    # metadata retention schedule: covered in tests/test_retention.py
+    monkeypatch.setattr(module, "ensure_metadata_cleanup_schedule", AsyncMock(return_value=True))
     monkeypatch.setattr(module, "start_metrics_server", mocks.metrics_server)
     monkeypatch.setattr(module, "configure_tracing", mocks.tracing)
     monkeypatch.setattr(module, "set_build_info", mocks.build_info)
@@ -1679,7 +1693,11 @@ class TestWorkerMain:
         args, kwargs = worker_main.worker_cls.call_args
         assert args == (worker_main.client,)
         assert kwargs["task_queue"] == "eki-cov-queue"
-        assert kwargs["workflows"] == [SecurityCheckWorkflow, KBCleanupWorkflow]
+        assert kwargs["workflows"] == [
+            SecurityCheckWorkflow,
+            KBCleanupWorkflow,
+            maintenance_module.MetadataCleanupWorkflow,
+        ]
         assert kwargs["max_concurrent_workflow_tasks"] == 7
         assert kwargs["max_concurrent_activities"] == 3
 
@@ -1696,9 +1714,10 @@ class TestWorkerMain:
             if callable(obj) and activity._Definition.from_callable(obj) is not None
         }
         assert defined <= set(registered)
-        assert len(called) == 14
+        assert len(called) == 15
 
-    async def test_bootstrap_wires_metrics_tracing_and_schedule(self, worker_main):
+    async def test_bootstrap_wires_metrics_tracing_and_schedule(self, worker_main, caplog):
+        caplog.set_level("INFO", logger="worker.main")
         await worker_main.module.main()
 
         worker_main.metrics_server.assert_called_once_with(9191)
@@ -1710,6 +1729,12 @@ class TestWorkerMain:
         assert connect_args == ("temporal.test:7233",)
         assert connect_kwargs["namespace"] == "eki-test"
         assert connect_kwargs["interceptors"], "context-propagation interceptor is always set"
+        # 1.0.1: payload codec keyed by API_SECRET_KEY, identical to the API's.
+        codec = connect_kwargs["data_converter"].payload_codec
+        assert isinstance(codec, EncryptionCodec)
+        assert codec.key_id == EncryptionCodec(_CODEC_SECRET).key_id
+        assert connect_kwargs["header_codec_behavior"] is HeaderCodecBehavior.CODEC
+        assert f"encryption active: key id {codec.key_id}" in caplog.text
         worker_main.ensure_schedule.assert_awaited_once_with(
             worker_main.client, worker_main.settings
         )

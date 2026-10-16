@@ -49,8 +49,7 @@ class LocalMistralProvider(OllamaProvider):
     @staticmethod
     def _tag_matches(installed: str, wanted: str) -> bool:
         """``mistral-small3.2`` matches ``mistral-small3.2:latest`` and vice versa."""
-        norm = lambda t: t[:-7] if t.endswith(":latest") else t  # noqa: E731
-        return norm(installed) == norm(wanted)
+        return installed.removesuffix(":latest") == wanted.removesuffix(":latest")
 
     async def installed_models(self) -> list[str]:
         return await self.list_models()

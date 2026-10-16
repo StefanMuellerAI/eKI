@@ -1,6 +1,11 @@
 # eProjekt-Integration: eKI API Anbindung
 
-**Stand:** Oktober 2026 | **API-Version:** 1.0.0 | **Zielgruppe:** eProjekt-Entwicklungsteam
+**Stand:** Oktober 2026 | **API-Version:** 1.0.1 | **Zielgruppe:** eProjekt-Entwicklungsteam
+
+**Neu in 1.0.1 (fuer ePro relevant):** `POST /v1/security/check` (synchroner Stub) entfernt → 404;
+`callback_url` ist jetzt das Push-Ziel des Jobs (§2, §4b); `priority` steuert die Reihenfolge
+wartender Jobs (§2); `/v1/kb/*` nur noch mit Admin-Key – der ePro-Service-Key erhaelt dort 403
+(ePro nutzt die KB nicht).
 
 Verbindlicher Schnittstellenvertrag: `openapi/eki-api-v1.0.yaml`. Datenhaltung und Loeschfristen:
 `docs/DATENSCHUTZ.md`.
@@ -26,10 +31,9 @@ keine direkten Datenbankzugriffe.
 **Wichtig:** Der Report kann nur **einmal** abgeholt werden. Nach dem
 ersten erfolgreichen Abruf (HTTP 200) wird er sofort geloescht.
 
-Der Endpoint `POST /v1/security/check` (synchron) ist ein **Stub aus M01**: Er
-validiert die Anfrage, analysiert aber nichts und liefert immer ein einzelnes
-`info`-Finding mit `category=stub` und `metadata.stub=true`. Fuer echte Pruefungen
-ausschliesslich `POST /v1/security/check:async` verwenden.
+Einziger Pruef-Endpunkt ist `POST /v1/security/check:async`. Der fruehere synchrone
+Stub `POST /v1/security/check` (M01, ohne Analyse) wurde in 1.0.1 entfernt und
+antwortet mit **404** (`ErrorResponse`, fuer jede Methode, mit oder ohne Key).
 
 ---
 
@@ -56,7 +60,7 @@ Optionale Header:
 |--------|-----------|
 | `X-Request-ID` | Korrelations-ID; wird uebernommen und in der Antwort zurueckgegeben. Fehlt sie, erzeugt die eKI eine. |
 | `X-Actor-User-Id` | Muss, falls gesetzt, der `user_id` des API-Keys entsprechen -- sonst **403** |
-| `X-Actor-Project-Id` | Nur informativ, wird nicht gespeichert |
+| `X-Actor-Project-Id` | Nur informativ, wird weder gespeichert noch ausgewertet |
 
 ### Beispiel
 
@@ -113,11 +117,11 @@ delivery: pull
 | script_format | Ja (JSON) | "fdx" / "pdf" | Format des Drehbuchs; bei Multipart optional (sonst aus der Dateiendung) |
 | project_id | Ja | string | eProjekt Projekt-ID (poAllgemeinId, alphanumerisch, max 100 Zeichen) |
 | script_id | Nein | int (32 Bit) | eProjekt Drehbuch-Dokument-ID. Wird bei Push an ePro zurueckgegeben, damit ePro das Assessment dem korrekten Dokument zuordnen kann. -1 wenn unbekannt. |
-| delivery | Nein | "pull" / "push" | Delivery-Modus (Default: "pull"); Gross-/Kleinschreibung egal, leer = "pull", jeder andere Wert → 422 |
+| delivery | Nein | "pull" / "push" | Delivery-Modus. Default "pull"; mit `callback_url` Default "push"; "pull" zusammen mit `callback_url` → 422. Gross-/Kleinschreibung egal, leer = Default, jeder andere Wert → 422 |
 | idempotency_key | Nein | string (max 255) | Verhindert doppelte Jobs bei Retry (gilt pro API-Key-User); leer = kein Key, Steuerzeichen → 422 |
-| priority | Nein | int 1-10 | Wird gespeichert, beeinflusst die Abarbeitung derzeit **nicht** |
-| callback_url | Nein | string (HTTPS) | Wird validiert (nur `epro.filmakademie.de` / `staging.epro.filmakademie.de`, sonst 422), aber **nicht verwendet**. Das Push-Ziel ist immer `EPRO_BASE_URL/eki/scl/set-risk-assessment/{project_id}` aus der eKI-Konfiguration. |
-| metadata | Nein (nur JSON) | object | Max. 50 Schluessel, Werte max. 1000 Zeichen. Wird nicht in der Datenbank gespeichert, laeuft aber unverschluesselt durch die Workflow-Historie -- keine Drehbuchinhalte oder Personendaten hineinschreiben. |
+| priority | Nein | int 1-10 | 1 (hoechste) ... 10 (niedrigste), Default 5; ausserhalb 1..10 → 422 (Multipart: als Text). Temporal-Task-Queue-Prioritaet: Warten mehr Jobs als Verarbeitungsplaetze frei sind, werden hoeher priorisierte zuerst gestartet bzw. fortgesetzt; laufende Jobs werden nicht unterbrochen, gleiche Prioritaet bleibt in Eingangsreihenfolge (bei mehreren Task-Queue-Partitionen nur naeherungsweise) |
+| callback_url | Nein | string (HTTPS, max. 2083 Zeichen) | Push-Ziel **dieses** Jobs anstelle von `EPRO_BASE_URL/eki/scl/set-risk-assessment/{project_id}`; die eKI haengt nichts an (vollstaendige Ziel-URL senden). Impliziert `delivery=push`. Nur HTTPS, keine Zugangsdaten in der URL, keine private/interne IP, Host muss in `CALLBACK_URL_ALLOWED_HOSTS` stehen (Standard `epro.filmakademie.de`, `staging.epro.filmakademie.de`), sonst 422. Details: 4b „Push an callback_url" |
+| metadata | Nein (nur JSON) | object | Max. 50 Schluessel, Werte max. 1000 Zeichen. Wird nicht in der Datenbank gespeichert; laeuft durch die Workflow-Historie (seit 1.0.1 verschluesselt) -- trotzdem keine Drehbuchinhalte oder Personendaten hineinschreiben. |
 
 Groessenlimits: Bei JSON gilt das Limit von 10 485 760 Zeichen fuer den
 **Base64-String**, also Dateien bis ca. 7,5 MB (darueber 422). Per Multipart sind
@@ -145,7 +149,9 @@ eKI `unknown`). Ein Textfeld, das als Datei-Teil gesendet wird, ergibt 422.
 Wenn idempotency_key gesetzt ist und fuer denselben API-Key-User bereits ein
 Job mit diesem Key existiert, wird der bestehende Job zurueckgegeben (HTTP 202,
 gleiche `job_id`, kein neuer Workflow) -- auch bei gleichzeitigen Requests.
-Das ist wichtig fuer Retry-Szenarien, damit keine Duplikate entstehen.
+Das ist wichtig fuer Retry-Szenarien, damit keine Duplikate entstehen. Ein Key wirkt,
+solange der Job gespeichert ist: Seit 1.0.1 werden Job-Metadaten 90 Tage nach der letzten
+Aenderung geloescht; danach startet derselbe Key einen neuen Job.
 
 ---
 
@@ -320,7 +326,7 @@ Authorization: Bearer eki_<api_key>
     ],
     "processing_time_seconds": 3445.2,
     "metadata": {
-      "engine_version": "1.0.0",
+      "engine_version": "1.0.1",
       "taxonomy_version": "1.0"
     }
   },
@@ -395,8 +401,8 @@ der Report bleibt in diesem Fall abrufbar -- spaeter erneut versuchen.
 
 ## 4b. Push-Modus (Alternative zu Pull)
 
-Wenn `delivery=push` beim Einreichen gesetzt wird, sendet eKI den Report
-nach Fertigstellung **automatisch** per `POST` an die eProjekt-API.
+Wenn `delivery=push` (oder ein `callback_url`) beim Einreichen gesetzt wird, sendet eKI
+den Report nach Fertigstellung **automatisch** per `POST` an die eProjekt-API.
 Ein manuelles Abholen (Schritt 4) entfaellt -- ein GET nach erfolgreichem Push
 liefert 410 (siehe 4).
 
@@ -412,8 +418,9 @@ liefert 410 (siehe 4).
 ### Was eKI an ePro sendet
 
 eKI ruft folgende ePro-Schnittstelle auf (Basis-URL = `EPRO_BASE_URL` der
-eKI-Konfiguration, z. B. `https://staging.epro.filmakademie.de/api`; ein im
-Request mitgeschicktes `callback_url` wird nicht verwendet):
+eKI-Konfiguration, z. B. `https://staging.epro.filmakademie.de/api`). Enthielt der
+Request ein `callback_url`, geht der Push stattdessen an genau diese URL (siehe
+„Push an callback_url" unten) -- mit demselben Inhalt, denselben Headern und demselben Token.
 
 ```
 POST {EPRO_BASE_URL}/eki/scl/set-risk-assessment/{project_id}
@@ -446,7 +453,34 @@ mit demselben Key `200 OK` ohne zweite Speicherung antworten.
 Die Autorisierung beim Push zu ePro erfolgt per **IP-Whitelist**: Der
 eKI-Server muss von der freigeschalteten IP zugreifen. Ist in der eKI
 `EPRO_AUTH_TOKEN` gesetzt, sendet sie zusaetzlich `Authorization: Bearer <Token>`
-(Push und Webhook); Standard ist ohne Token.
+(Push, auch an ein `callback_url`, und Webhook); Standard ist ohne Token.
+
+### Push an callback_url (seit 1.0.1)
+
+Ein `callback_url` im Request ersetzt fuer diesen Job das Standard-Ziel. Fuer ePro gilt:
+
+- Der Callback-Endpunkt muss denselben Multipart-Vertrag annehmen wie
+  `set-risk-assessment` (Felder `script_id`, `status`, `assessment`, `file`; Header
+  `Idempotency-Key`, `X-EKI-Job-Id`, `X-EKI-Attempt`, `X-Request-ID`, ggf. `Authorization`).
+  Es gelten dasselbe Retry-Fenster (6 h) und dieselben Regeln fuer Statuscodes (siehe
+  Fehlerverhalten). Weiterleitungen (3xx) folgt die eKI nicht; sie gelten als voruebergehender Fehler.
+- Der Host muss in `CALLBACK_URL_ALLOWED_HOSTS` der eKI-Konfiguration stehen (Standard
+  `epro.filmakademie.de`, `staging.epro.filmakademie.de`; exakter Hostname, keine
+  Subdomains, beliebiger Port), muss auf **oeffentliche** IP-Adressen aufloesen und ein gueltiges
+  oeffentliches TLS-Zertifikat fuer den Hostnamen vorweisen.
+- **Erneute Pruefung vor jedem Push:** Unmittelbar vor jedem Versuch prueft der Worker die URL
+  erneut gegen die dann gueltige Allow-List, loest den Host per DNS auf (jede Antwort muss eine
+  oeffentliche Adresse sein) und verbindet sich genau mit der geprueften Adresse (Host-Header,
+  SNI und Zertifikatspruefung nutzen weiter den Hostnamen). So kann ein geaenderter DNS-Eintrag
+  den Push samt Token nicht auf einen internen Dienst umlenken.
+- Verletzt die URL dabei die Regeln (Host nicht mehr freigegeben, kein HTTPS, Zugangsdaten,
+  Aufloesung auf eine private/interne Adresse), wird **nichts gesendet** und nicht wiederholt:
+  Job `failed` mit `delivery_failed:invalid_callback_url`, Dead Letter und Webhook mit
+  `reason: "invalid_callback_url"`, `attempts: 0`. Ein voruebergehender DNS-Fehler (z. B.
+  Timeout) wird dagegen innerhalb des 6-h-Fensters wiederholt.
+- Der Webhook `security.delivery.failed` geht weiterhin an `EPRO_WEBHOOK_URL`, nicht an das
+  `callback_url`.
+- `callback_url` wird nicht in der Datenbank gespeichert und erscheint nicht im Job-Status.
 
 ### Status-Mapping
 
@@ -468,6 +502,8 @@ hohe/kritische Findings. Den Abbruch erkennt ePro am Job-Status.
 | sonstige 4xx | Kein Retry (Hard-Fail): Loeschung, Job `failed`, Dead Letter, Webhook |
 | 6 h ohne Erfolg | Loeschung, Job `failed` (`delivery_failed:retry_window_exhausted`), Dead Letter, Webhook |
 | (vor dem Senden) Report nicht mehr im Buffer, z. B. nach einem One-Shot-GET | Kein Retry: Job `failed` (`delivery_failed:report_expired`), Dead Letter, Webhook |
+| (vor dem Senden) `callback_url` verletzt die Regeln (siehe oben) | Kein Request, kein Retry: Loeschung, Job `failed` (`delivery_failed:invalid_callback_url`), Dead Letter, Webhook (`attempts: 0`) |
+| (vor dem Senden) DNS-Aufloesung des `callback_url`-Hosts scheitert voruebergehend | Retry wie bei Netzwerkfehlern, bis zu 6 Stunden |
 
 Waehrend des Retry-Fensters bleibt der Report verschluesselt im Buffer.
 Ein One-Shot-GET ist in dieser Zeit technisch moeglich, beendet die Zustellung
@@ -479,7 +515,7 @@ erneut ausloesen. Der Metadaten-Webhook `security.delivery.failed` (siehe OpenAP
 `webhooks`) informiert darueber, sofern `EPRO_WEBHOOK_URL` konfiguriert ist:
 JSON-Body mit `job_id`, `report_id`, `reason` und `attempts`. Gruende bei der
 Zustellung: `retry_window_exhausted`, `hard_4xx`, `pull_ttl_expired`,
-`report_expired`, `invalid_project_id`, `delivery_failed`; bei Verarbeitungsfehlern
+`report_expired`, `invalid_project_id`, `invalid_callback_url`, `delivery_failed`; bei Verarbeitungsfehlern
 (kein Report entstanden, siehe 3): `prompt_blocked`, `parsing_failed`,
 `processing_failed`. Bei Nicht-2xx-Antwort versucht die eKI den Webhook insgesamt
 hoechstens dreimal.
@@ -570,11 +606,11 @@ Support-Anfragen bitte immer die `request_id` angeben.
 | 202 | -- | Job angenommen | Polling starten |
 | 400 | `BadRequest` | Ungueltige Anfrage: Body ist kein gueltiges JSON (Syntax, leer, nicht UTF-8, form-urlencoded), Multipart ohne `file`, leere Datei, falscher Dateityp, kein gueltiges PDF | Request pruefen |
 | 401 | `Unauthorized` | Nicht authentifiziert (Key fehlt, ungueltig, abgelaufen, deaktiviert) | API-Key pruefen |
-| 403 | `Forbidden` | `X-Actor-User-Id` passt nicht zur `user_id` des API-Keys | Header korrigieren oder weglassen |
-| 404 | `NotFound` | Nicht gefunden / Kein Zugriff (fremder Job/Report) | Job-ID/Report-ID pruefen |
+| 403 | `Forbidden` | `X-Actor-User-Id` passt nicht zur `user_id` des API-Keys; bzw. `/v1/kb/*` oder `/v1/ops/*` mit einem Nicht-Admin-Key (`Admin API key required for this endpoint`) | Header korrigieren oder weglassen; KB/Ops sind nicht fuer den ePro-Key vorgesehen |
+| 404 | `NotFound` | Nicht gefunden / Kein Zugriff (fremder Job/Report); auch der in 1.0.1 entfernte Endpunkt `POST /v1/security/check` | Job-ID/Report-ID pruefen; `check:async` verwenden |
 | 410 | `Gone` | Report bereits abgeholt | Report war schon einmal abgerufen |
 | 413 | `PayloadTooLarge` | Multipart-Datei groesser als 10 MB | Datei verkleinern |
-| 422 | `ValidationError` | Validierungsfehler: JSON ist kein Objekt, Base64, `project_id`-Format, `delivery`, `script_format`, `script_id` ausserhalb 32 Bit, Steuerzeichen im `idempotency_key`, `callback_url`, `priority`, Base64-String zu lang, Textfeld als Datei-Teil | Request-Format pruefen |
+| 422 | `ValidationError` | Validierungsfehler: JSON ist kein Objekt, Base64, `project_id`-Format, `delivery`, `script_format`, `script_id` ausserhalb 32 Bit, Steuerzeichen im `idempotency_key`, `priority` ausserhalb 1..10, `callback_url` nicht erlaubt (kein HTTPS, Host nicht in der Allow-List, Zugangsdaten in der URL, private IP), `delivery=pull` zusammen mit `callback_url`, Base64-String zu lang, Textfeld als Datei-Teil | Request-Format pruefen |
 | 429 | `RateLimitExceeded` | Rate Limit ueberschritten | `Retry-After` abwarten |
 | 500 | `InternalServerError` | Unerwarteter Serverfehler | mit `request_id` an den Support |
 | 503 | `ServiceUnavailable` / `ServiceUnavailableException` | PostgreSQL, Redis oder Temporal voruebergehend nicht erreichbar | spaeter erneut senden (siehe Hinweis unten) |
@@ -748,7 +784,9 @@ des Proxys.
   Drehbuch, Zwischenergebnisse, Findings und Report liegen nur verschluesselt im
   Buffer und werden nach Abholung/Zustellung bzw. bei einem Fehler sofort,
   spaetestens nach 6 Stunden geloescht. Metadaten (Job-/Report-IDs, `project_id`,
-  Zeitstempel) bleiben erhalten. Details: `docs/DATENSCHUTZ.md`.
+  Zeitstempel) bleiben 90 Tage erhalten und werden dann automatisch geloescht; ein
+  `GET /v1/security/jobs/{job_id}` auf einen so alten Job liefert danach 404. Details:
+  `docs/DATENSCHUTZ.md`.
 - **`failed`, `cancelled` und 410 beim Abruf** nie als "kein Risiko" anzeigen --
   dann liegt keine automatische Bewertung vor.
 

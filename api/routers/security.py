@@ -1,8 +1,10 @@
 """Security check endpoints.
 
-Supports both JSON (base64-encoded script_content) and multipart/form-data
-file uploads.  Sensitive data is stored in the encrypted SecureBuffer (Redis)
-and only opaque reference keys are passed to Temporal workflows.
+``POST /v1/security/check:async`` supports both JSON (base64-encoded
+script_content) and multipart/form-data file uploads.  Sensitive data is stored
+in the encrypted SecureBuffer (Redis) and only opaque reference keys are passed
+to Temporal workflows.  (The synchronous M01 stub ``POST /v1/security/check``
+was removed in 1.0.1; the path answers 404.)
 """
 
 import base64
@@ -13,7 +15,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import redis.asyncio as aioredis
 from fastapi import (
     APIRouter,
     Depends,
@@ -28,9 +29,11 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from temporalio.client import Client as TemporalClient
+from temporalio.common import Priority
 
 from api.config import get_settings
 from api.dependencies import (
+    RedisClient,
     get_actor_headers,
     get_db,
     get_redis,
@@ -47,13 +50,9 @@ from core.models import (
     JobStatus,
     JobStatusResponse,
     ReportResponse,
-    RiskLevel,
     ScriptFormat,
-    SecurityCheckRequest,
     SecurityReport,
-    SyncSecurityCheckResponse,
     UploadAsyncSecurityCheckRequest,
-    UploadSecurityCheckRequest,
 )
 from services.secure_buffer import SecureBuffer
 from workflows.security_check import SecurityCheckWorkflow
@@ -80,7 +79,7 @@ def _max_upload_size() -> int:
 # ---------------------------------------------------------------------------
 
 
-def _get_buffer(redis_client: aioredis.Redis) -> SecureBuffer:
+def _get_buffer(redis_client: RedisClient) -> SecureBuffer:
     settings = get_settings()
     return SecureBuffer(
         redis_client,
@@ -101,6 +100,7 @@ class ResolvedRequest:
     delivery: str = "pull"
     idempotency_key: str | None = None
     script_id: int | None = None
+    callback_url: str | None = None
 
 
 def _validation_error_to_http(exc: ValidationError) -> HTTPException:
@@ -115,11 +115,10 @@ def _validation_error_to_http(exc: ValidationError) -> HTTPException:
 
 
 def _validate_priority(raw: Any) -> int:
-    """Validate the async-only ``priority`` field (1..10) outside of Pydantic.
+    """Validate the multipart ``priority`` form field (1..10) outside of Pydantic.
 
-    Both request resolvers accept the priority as loosely typed input
-    (JSON number or multipart string); this funnels it through the same
-    bounds as ``AsyncSecurityCheckRequest.priority``.
+    Multipart sends the priority as a string; this funnels it through the same
+    bounds as ``AsyncSecurityCheckRequest.priority`` with a stable message.
     """
     try:
         priority = int(raw)
@@ -136,32 +135,29 @@ def _validate_priority(raw: Any) -> int:
     return priority
 
 
-async def _resolve_request(request: Request, *, is_async: bool = False) -> ResolvedRequest:
-    """Inspect Content-Type and parse the request into a ResolvedRequest.
-
-    ``is_async`` selects the stricter ``AsyncSecurityCheckRequest`` model so
-    that async-only fields (``priority``) are validated server-side.
-    """
+async def _resolve_request(request: Request) -> ResolvedRequest:
+    """Inspect Content-Type and parse the request into a ResolvedRequest."""
     ct = (request.headers.get("content-type") or "").lower()
     if "multipart/form-data" in ct:
-        return await _resolve_multipart(request, is_async=is_async)
-    return await _resolve_json(request, is_async=is_async)
+        return await _resolve_multipart(request)
+    return await _resolve_json(request)
 
 
-def _to_resolved(req: SecurityCheckRequest) -> ResolvedRequest:
+def _to_resolved(req: AsyncSecurityCheckRequest) -> ResolvedRequest:
     return ResolvedRequest(
         b64_content=req.script_content,
         script_format=req.script_format,
         project_id=req.project_id,
         metadata=req.metadata,
-        priority=getattr(req, "priority", 5),
+        priority=req.priority,
         delivery=req.delivery,
         idempotency_key=req.idempotency_key,
         script_id=req.script_id,
+        callback_url=str(req.callback_url) if req.callback_url is not None else None,
     )
 
 
-async def _resolve_json(request: Request, *, is_async: bool = False) -> ResolvedRequest:
+async def _resolve_json(request: Request) -> ResolvedRequest:
     raw = await request.body()
     try:
         body = json.loads(raw)
@@ -179,9 +175,8 @@ async def _resolve_json(request: Request, *, is_async: bool = False) -> Resolved
                 f"Request validation failed: body: JSON object expected, got {type(body).__name__}"
             ),
         )
-    model_cls = AsyncSecurityCheckRequest if is_async else SecurityCheckRequest
     try:
-        req = model_cls(**body)
+        req = AsyncSecurityCheckRequest(**body)
     except ValidationError as exc:
         raise _validation_error_to_http(exc) from exc
     return _to_resolved(req)
@@ -198,7 +193,7 @@ def _form_text(form: Any, name: str) -> str | None:
     )
 
 
-async def _resolve_multipart(request: Request, *, is_async: bool = False) -> ResolvedRequest:
+async def _resolve_multipart(request: Request) -> ResolvedRequest:
     form = await request.form()
     upload = form.get("file")
     if upload is None or not hasattr(upload, "read"):
@@ -238,9 +233,10 @@ async def _resolve_multipart(request: Request, *, is_async: bool = False) -> Res
         )
 
     # Every form field goes through the same Pydantic rules as the JSON body
-    # (project_id pattern, delivery enum, idempotency_key, script_id range) and
-    # the content sniffing runs against the *final* script_format, so an
-    # explicit ``script_format=pdf`` cannot bypass the %PDF check.
+    # (project_id pattern, delivery enum + callback_url policy, idempotency_key,
+    # script_id range) and the content sniffing runs against the *final*
+    # script_format, so an explicit ``script_format=pdf`` cannot bypass the
+    # %PDF check.
     fields: dict[str, Any] = {
         "script_content": base64.b64encode(raw).decode("ascii"),
         "script_format": _form_text(form, "script_format") or fmt.value,
@@ -248,17 +244,15 @@ async def _resolve_multipart(request: Request, *, is_async: bool = False) -> Res
         # router has always stored for a missing project.
         "project_id": _form_text(form, "project_id") or "unknown",
     }
-    for name in ("script_id", "delivery", "idempotency_key"):
+    for name in ("script_id", "delivery", "idempotency_key", "callback_url"):
         value = _form_text(form, name)
         if value not in (None, ""):
             fields[name] = value
-    if is_async:
-        raw_priority = _form_text(form, "priority")
-        fields["priority"] = _validate_priority(5 if raw_priority is None else raw_priority)
+    raw_priority = _form_text(form, "priority")
+    fields["priority"] = _validate_priority(5 if raw_priority is None else raw_priority)
 
-    model_cls = UploadAsyncSecurityCheckRequest if is_async else UploadSecurityCheckRequest
     try:
-        req = model_cls(**fields)
+        req = UploadAsyncSecurityCheckRequest(**fields)
     except ValidationError as exc:
         raise _validation_error_to_http(exc) from exc
     return _to_resolved(req)
@@ -284,73 +278,16 @@ def _existing_job_response(job: JobMetadata) -> AsyncSecurityCheckResponse:
     )
 
 
-# ---------------------------------------------------------------------------
-# Sync endpoint
-# ---------------------------------------------------------------------------
+def temporal_priority_key(priority: int, levels: int) -> int:
+    """Map the API priority 1 (highest) .. 10 (lowest) onto Temporal keys 1..``levels``.
 
-
-@router.post(
-    "/check",
-    response_model=SyncSecurityCheckResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Synchronous security check",
-    description=(
-        "Perform a synchronous security check for scripts ≤1 MB or ≤50 scenes. "
-        "Accepts JSON (base64 script_content) or multipart/form-data file upload."
-    ),
-    dependencies=[Depends(rate_limit_combined)],
-)
-async def security_check_sync(
-    request: Request,
-    actor_info: dict[str, str | None] = Depends(get_actor_headers),
-) -> SyncSecurityCheckResponse:
-    """Synchronous security check endpoint.
-
-    Accepts a script and returns a security analysis report immediately.
+    Monotonic, 1 -> 1 and 10 -> ``levels``; with the shipped server config
+    (``matching.priorityLevels: 10``) the mapping is the identity, so the API
+    default 5 equals the server default key ``(levels + 1) // 2`` = 5.
     """
-    resolved = await _resolve_request(request)
-    fmt = resolved.script_format
-    proj_id = resolved.project_id
-
-    report_id = uuid.uuid4()
-
-    mock_report = SecurityReport(
-        report_id=report_id,
-        project_id=proj_id or "unknown",
-        script_format=fmt,
-        created_at=datetime.utcnow(),
-        risk_summary={
-            RiskLevel.CRITICAL: 0,
-            RiskLevel.HIGH: 0,
-            RiskLevel.MEDIUM: 0,
-            RiskLevel.LOW: 0,
-            RiskLevel.INFO: 1,
-        },
-        total_findings=1,
-        findings=[
-            {
-                "id": str(uuid.uuid4()),
-                "scene_number": None,
-                "risk_level": RiskLevel.INFO,
-                "category": "stub",
-                "description": "Stub response. Real analysis in later milestones.",
-                "recommendation": "No action required for stub data.",
-                "confidence": 1.0,
-                "line_reference": None,
-            }
-        ],
-        processing_time_seconds=0.1,
-        metadata={
-            "user_id": actor_info.get("user_id"),
-            "project_id": actor_info.get("project_id"),
-            "stub": True,
-        },
-    )
-
-    return SyncSecurityCheckResponse(
-        report=mock_report,
-        message="Security check completed successfully (M01 stub)",
-    )
+    levels = max(1, int(levels))
+    priority = min(10, max(1, int(priority)))
+    return ((priority - 1) * levels) // 10 + 1
 
 
 # ---------------------------------------------------------------------------
@@ -372,7 +309,7 @@ async def security_check_sync(
 async def security_check_async(
     request: Request,
     temporal_client: TemporalClient = Depends(get_temporal_client),
-    redis_client: aioredis.Redis = Depends(get_redis),
+    redis_client: RedisClient = Depends(get_redis),
     db: AsyncSession = Depends(get_db),
     actor_info: dict[str, str | None] = Depends(get_actor_headers),
 ) -> AsyncSecurityCheckResponse:
@@ -385,7 +322,7 @@ async def security_check_async(
     settings = get_settings()
     buffer = _get_buffer(redis_client)
 
-    resolved = await _resolve_request(request, is_async=True)
+    resolved = await _resolve_request(request)
     user_id = actor_info.get("user_id") or ""
 
     # Idempotency (M10): scoped to the authenticated user. Fast path first;
@@ -451,6 +388,9 @@ async def security_check_async(
         "delivery_mode": delivery_mode,
         "metadata": resolved.metadata,
         "script_id": resolved.script_id,
+        # Decision 10b: per-job push target (None = EPRO_BASE_URL default). Not
+        # stored in PostgreSQL; the worker re-validates it before every push.
+        "callback_url": resolved.callback_url,
         "llm_parallel_enabled": settings.llm_parallel_enabled,
         "pdf_structure_concurrency": settings.pdf_structure_concurrency,
         "risk_analysis_concurrency": settings.risk_analysis_concurrency,
@@ -466,6 +406,13 @@ async def security_check_async(
             id=str(job_id),
             task_queue=settings.temporal_task_queue,
             execution_timeout=timedelta(seconds=settings.temporal_workflow_execution_timeout),
+            # Decision 10b: task-queue priority; activities inherit it from the
+            # workflow (server side), the workflow code does not change.
+            priority=Priority(
+                priority_key=temporal_priority_key(
+                    resolved.priority, settings.temporal_priority_levels
+                )
+            ),
         )
     except Exception as exc:
         logger.error(f"Failed to start workflow for job {job_id}: {exc}", exc_info=True)
@@ -575,7 +522,7 @@ async def get_report(
     report_id: uuid.UUID = Path(..., description="Report ID to retrieve"),
     api_key: ApiKeyModel = Depends(verify_api_key),
     db: AsyncSession = Depends(get_db),
-    redis_client: aioredis.Redis = Depends(get_redis),
+    redis_client: RedisClient = Depends(get_redis),
 ) -> ReportResponse:
     """One-Shot report retrieval: fetch from Redis, return JSON + PDF, then delete.
 

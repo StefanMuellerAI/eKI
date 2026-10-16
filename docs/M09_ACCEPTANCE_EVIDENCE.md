@@ -1,6 +1,10 @@
 > **Historischer Nachweis** (Stand 16.09.2026, M09). Beschreibt den damaligen Stand und wird
 > nicht fortgeschrieben. Aktueller Stand: [M09_SLO.md](M09_SLO.md),
 > [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md).
+>
+> **Stand 1.0.1:** `KB_CLEANUP_ENABLED=false` pausiert einen bestehenden Schedule beim Worker-Start, und
+> Cron-Änderungen werden übernommen (der Worker gleicht die Schedules bei jedem Start ab); dazu kommt
+> der Schedule `eki-metadata-cleanup` (`OPERATIONS_GUIDE.md` §5.10).
 
 # M09 Acceptance Evidence – Observability & SLOs
 

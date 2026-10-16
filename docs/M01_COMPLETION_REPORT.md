@@ -1,6 +1,9 @@
 > **Historischer Nachweis** (Stand 30.01.2026, M01). Beschreibt den damaligen Stand und wird
 > nicht fortgeschrieben. Aktueller Stand: [README](../README.md),
 > [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md), [openapi/eki-api-v1.0.yaml](../openapi/eki-api-v1.0.yaml).
+>
+> Der hier beschriebene synchrone Endpunkt `POST /v1/security/check` (Stub) wurde in 1.0.1
+> entfernt (404); geprüft wird nur über `POST /v1/security/check:async`.
 
 # M01 Completion Report - eKI API
 

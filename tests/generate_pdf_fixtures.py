@@ -1,13 +1,22 @@
 #!/usr/bin/env python3
 """Generate synthetic PDF test fixtures for the PDF parser tests.
 
-Run once:  python tests/generate_pdf_fixtures.py
+Every PDF committed under ``tests/fixtures/pdf/`` is synthetic and produced by
+this script or by ``tests/build_large_fixture.py`` (``german_screenplay_report.pdf``
+is an eKI report rendered for the synthetic ``german_screenplay.pdf``).  Real
+screenplays never go into the repository: put them into the git-ignored
+``tests/fixtures/pdf/private/`` (or ``EKI_PRIVATE_FIXTURES_DIR``) for the
+``tests/run_pdf_*.py`` stack runners.
+
+Run:  python tests/generate_pdf_fixtures.py                 # all fixtures
+      python tests/generate_pdf_fixtures.py realworld_headings suffix_headings
 """
 
 import random
+import sys
 from pathlib import Path
 
-from reportlab.lib.pagesizes import LETTER
+from reportlab.lib.pagesizes import A4, LETTER
 from reportlab.pdfgen import canvas
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "pdf"
@@ -430,14 +439,202 @@ def create_blank_middle_page():
     print(f"Created {path}")
 
 
+# ---------------------------------------------------------------------------
+# Layout features of real screenplays, rebuilt synthetically (no real text).
+# Both fixtures use ``invariant=1`` so that regenerating them is byte-stable.
+# ---------------------------------------------------------------------------
+
+_CUE = " " * 20  # character cue indent
+_DLG = " " * 10  # dialogue indent
+
+REALWORLD_PAGES: list[list[str]] = [
+    [
+        "DAS UNGESCHRIEBENE HAUS",
+        "",
+        "Drehbuch",
+        "nach einer Idee von Testautorin",
+        "",
+        "5. Fassung, Stand 01.01.2026",
+        "Synthetisches Testdokument - keine reale Produktion",
+    ],
+    [
+        "1 INT. KÜCHE - TAG",
+        "",
+        "Eine helle Küche. MARA (34) schneidet Brot.",
+        "",
+        f"{_CUE}MARA",
+        f"{_DLG}Kaffee ist fertig.",
+        "",
+        f"{_CUE}JONAS (O.S.)",
+        f"{_DLG}Komme gleich!",
+        "",
+        "2 EXT. HOF - NACHT",
+        "",
+        "Regen. JONAS (36) läuft über den Hof zum Auto.",
+        "",
+        "3 INT./EXT. AUTO - FORTLAUFEND",
+        "",
+        "Jonas startet den Motor. Die Scheiben beschlagen.",
+        "",
+        "4 INT/EXT. TANKSTELLE - ABEND",
+        "",
+        "Neonlicht. Jonas tankt und sieht sich um.",
+    ],
+    [
+        "2.",
+        "5A EXT. LANDSTRASSE - NACHT",
+        "",
+        "Scheinwerfer auf nassem Asphalt.",
+        "",
+        "5B EXT. LANDSTRASSE - SPÄTER",
+        "",
+        "Das Auto steht am Straßenrand, der Motor läuft.",
+        "",
+        f"{_CUE}JONAS (CONT'D)",
+        f"{_DLG}Ich weiß nicht mehr weiter --",
+        "",
+        "6. EXT. FELD - TAG",
+        "",
+        "Mara geht über ein Stoppelfeld.",
+        "",
+        "7. INT. SCHEUNE - NACHT",
+        "",
+        "Staub tanzt im Licht einer Taschenlampe.",
+    ],
+    [
+        "3.",
+        "12.1 INT. FLUR - TAG",
+        "",
+        "Ein langer Flur. Türen links und rechts.",
+        "",
+        "12.1A. INT. BAD - TAG",
+        "",
+        "Mara wäscht sich das Gesicht.",
+        "",
+        "13 I/E. AUTO - NACHT",
+        "",
+        "Jonas am Steuer, Mara auf dem Beifahrersitz.",
+        "",
+        f"{_CUE}MARA (INTER)",
+        f"{_DLG}Fahr langsamer.",
+        "",
+        "14 E/I. TREPPENHAUS - NACHT",
+        "",
+        "Schritte hallen durch das Treppenhaus.",
+    ],
+    [
+        "4.",
+        "15 INNEN. WOHNUNG - ABEND",
+        "",
+        "Auf dem Tablet läuft die Lern-App. Die Avatare passen",
+        "sich den User:innen an, alle Nutzer:innen sehen ihr Profil.",
+        "",
+        f"{_CUE}COMPUTERSTIMME (V.O.)",
+        f"{_DLG}System: Zugriff verweigert.",
+        "",
+        "Auf dem Bildschirm: USER: hallo?",
+        "",
+        "16 AUSSEN. BALKON - NACHT",
+        "",
+        "RÜCKBLENDE --- zehn Jahre früher.",
+        "",
+        "17 INNEN-AUSSEN. GARTEN - TAG",
+        "",
+        "Kinder spielen zwischen den Beeten.",
+        "",
+        "18 INT. CUISINE - JOUR",
+        "",
+        "Élodie entre, un café à la main.",
+        "",
+        f"{_CUE}ÉLODIE",
+        f"{_DLG}Ça va ? On commence à huit heures.",
+    ],
+]
+
+SUFFIX_HEADING_PAGES: list[list[str]] = [
+    [
+        "DAS UNGESCHRIEBENE UFER",
+        "",
+        "Drehbuch, 3. Fassung",
+        "Synthetisches Testdokument - keine reale Produktion",
+    ],
+    [
+        "1 WALDSTRASSE, DÄMMERUNG/AUSSEN",
+        "",
+        "Ein Geländewagen fährt durch den Wald.",
+        "",
+        f"{_CUE}SARA",
+        f"{_DLG}Wie weit ist es noch?",
+    ],
+    [
+        "2 GELÄNDEWAGEN, DÄMMERUNG/INNEN",
+        "",
+        "SARA (32) und THEO (34) schweigen. Das Navi piept.",
+        "",
+        f"{_CUE}NAVI-STIMME",
+        f"{_DLG}Bitte wenden.",
+    ],
+    [
+        "3 SEEUFER, NACHT/AUSSEN",
+        "",
+        "Nebel liegt über dem Wasser. Theo steigt aus.",
+    ],
+]
+
+
+def _write_pages(path: Path, pages: list[list[str]], pagesize=A4) -> None:
+    c = canvas.Canvas(str(path), pagesize=pagesize, invariant=1)
+    for i, page_lines in enumerate(pages):
+        if i:
+            c.showPage()
+        c.setFont(FONT, FONT_SIZE)
+        _write_lines(c, page_lines, pagesize[1] - 72)
+    c.save()
+    print(f"Created {path}")
+
+
+def create_realworld_headings():
+    """Heading/layout variants found in real German screenplays, synthetic text.
+
+    Title page, numbered headings ("1 INT.", "5A EXT.", "6. EXT.", "12.1 INT.",
+    "12.1A. INT."), "INT./EXT."/"INT/EXT."/"I/E."/"E/I.", German
+    "INNEN."/"AUSSEN."/"INNEN-AUSSEN.", page numbers at the top of each page,
+    cue extensions (O.S., V.O., CONT'D, INTER), the German gender colon
+    ("User:innen") and on-screen computer text for the prompt-injection screen,
+    plus one French scene (accents).
+    """
+    _write_pages(FIXTURES_DIR / "realworld_headings.pdf", REALWORLD_PAGES)
+
+
+def create_suffix_headings():
+    """Headings with the INNEN/AUSSEN designation at the end ("1 ORT, ZEIT/AUSSEN").
+
+    The splitter does not recognise this layout, so the document must fall
+    back to page-by-page splitting.
+    """
+    _write_pages(FIXTURES_DIR / "suffix_headings.pdf", SUFFIX_HEADING_PAGES)
+
+
+GENERATORS = {
+    "simple_screenplay": create_simple_screenplay,
+    "german_screenplay": create_german_screenplay,
+    "multi_scene": create_multi_scene,
+    "no_structure": create_no_structure,
+    "no_structure_multi_page": create_no_structure_multi_page,
+    "password_protected": create_password_protected,
+    "large_120_pages": create_large_120_pages,
+    "scanned_screenplay": create_scanned_screenplay,
+    "blank_middle_page": create_blank_middle_page,
+    "realworld_headings": create_realworld_headings,
+    "suffix_headings": create_suffix_headings,
+}
+
+
 if __name__ == "__main__":
-    create_simple_screenplay()
-    create_german_screenplay()
-    create_multi_scene()
-    create_no_structure()
-    create_no_structure_multi_page()
-    create_password_protected()
-    create_large_120_pages()
-    create_scanned_screenplay()
-    create_blank_middle_page()
-    print("All PDF fixtures generated!")
+    selected = sys.argv[1:] or list(GENERATORS)
+    unknown = sorted(set(selected) - set(GENERATORS))
+    if unknown:
+        sys.exit(f"Unknown fixture(s): {unknown}; choose from {sorted(GENERATORS)}")
+    for name in selected:
+        GENERATORS[name]()
+    print("PDF fixtures generated:", ", ".join(selected))

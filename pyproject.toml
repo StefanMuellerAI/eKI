@@ -18,7 +18,6 @@ dependencies = [
     # Validation & Settings
     "pydantic>=2.5.0",
     "pydantic-settings>=2.1.0",
-    "email-validator>=2.1.0",
 
     # Database
     # [asyncio] pulls in greenlet, which SQLAlchemy >= 2.1 no longer installs by
@@ -38,13 +37,9 @@ dependencies = [
 
     # HTTP Client
     "httpx>=0.26.0",
-    "aiohttp>=3.9.1",
-
-    # Security
-    "PyJWT>=2.8.0",
-    "python-jose[cryptography]>=3.3.0",
-    "passlib[bcrypt]>=1.7.4",
-    "bcrypt>=4.1.2",
+    # Synchronous client of the operator scripts that also run inside the API
+    # container (scripts/seed_kb.py) and of the host-side runners (tests/run_*.py).
+    "requests>=2.31.0",
 
     # Observability
     "prometheus-client>=0.19.0",
@@ -54,10 +49,8 @@ dependencies = [
     "opentelemetry-instrumentation-sqlalchemy>=0.43b0",
     "opentelemetry-instrumentation-httpx>=0.43b0",
     "opentelemetry-exporter-otlp-proto-http>=1.22.0",
-    "opentelemetry-exporter-prometheus>=0.43b0",
 
     # Logging
-    "python-json-logger>=2.0.7",
     "structlog>=24.1.0",
 
     # XML Security
@@ -79,10 +72,6 @@ dependencies = [
 
     # PDF Report Generation
     "reportlab>=4.0",
-
-    # Utilities
-    "python-dateutil>=2.8.2",
-    "pytz>=2023.3",
 ]
 
 [project.optional-dependencies]
@@ -91,9 +80,7 @@ dev = [
     "pytest>=7.4.4",
     "pytest-asyncio>=0.23.3",
     "pytest-cov>=4.1.0",
-    "pytest-mock>=3.12.0",
     "httpx>=0.26.0",
-    "faker>=22.0.0",
     "aiosqlite>=0.19.0",
 
     # Linting & Formatting
@@ -102,15 +89,10 @@ dev = [
 
     # Type Stubs
     "types-redis>=4.6.0",
-    "types-python-dateutil>=2.8.19",
 
     # Security Scanning
     "bandit>=1.7.6",
     "safety>=3.0.1",
-
-    # Documentation
-    "mkdocs>=1.5.3",
-    "mkdocs-material>=9.5.3",
 ]
 
 [build-system]
@@ -189,11 +171,23 @@ warn_unused_ignores = true
 warn_no_return = true
 check_untyped_defs = true
 strict_equality = true
+# Teaches mypy pydantic's model semantics, e.g. that ``Field(None, ...)`` is optional.
+plugins = ["pydantic.mypy"]
 
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+# Runtime dependencies that ship neither inline types (py.typed) nor a stub
+# package in requirements-dev.lock (types-PyYAML, types-jsonschema,
+# types-reportlab and types-defusedxml exist upstream but are not locked).
 [[tool.mypy.overrides]]
 module = [
-    "temporalio.*",
-    "prometheus_client.*",
-    "pgvector.*",
+    "defusedxml.*",
+    "jsonschema.*",
+    "pytesseract.*",
+    "reportlab.*",
+    "yaml.*",
 ]
 ignore_missing_imports = true

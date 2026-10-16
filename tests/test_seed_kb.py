@@ -161,3 +161,54 @@ def test_reseed_wipes_then_ingests_real(seed_module, tmp_path) -> None:
     sent_data = post_mock.call_args.kwargs["data"]
     assert sent_data["source"] == "UPLOAD"
     assert "placeholder" not in sent_data["tags"]
+
+
+# ---------------------------------------------------------------------------
+# 1.0.1: /v1/kb/* is admin-only -> a non-admin key gets 403 with a clear hint
+# ---------------------------------------------------------------------------
+
+_FORBIDDEN_BODY = '{"error": "Forbidden", "message": "Admin API key required for this endpoint"}'
+
+
+def test_upload_with_non_admin_key_fails_with_admin_hint(seed_module, capsys) -> None:
+    post_mock = MagicMock(return_value=_fake_response(403, text=_FORBIDDEN_BODY))
+    with patch.object(seed_module.requests, "post", post_mock):
+        rc = seed_module.cmd_seed_placeholders("http://test", "eki_not_admin")
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "HTTP 403" in out
+    assert "requires an admin API key" in out
+    assert "create_api_key.py --insert --admin" in out
+    assert "Summary: 0 created, 0 skipped, 6 failed" in out
+
+
+@pytest.mark.parametrize(
+    ("command", "method"), [("cmd_wipe_placeholders", "delete"), ("cmd_status", "get")]
+)
+def test_wipe_and_status_with_non_admin_key_explain_403(
+    seed_module, capsys, command, method
+) -> None:
+    mock = MagicMock(return_value=_fake_response(403, text=_FORBIDDEN_BODY))
+    with patch.object(seed_module.requests, method, mock):
+        rc = getattr(seed_module, command)("http://test", "eki_not_admin")
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert out.startswith("Error: HTTP 403")
+    assert "requires an admin API key" in out
+
+
+def test_other_http_errors_have_no_admin_hint(seed_module, capsys) -> None:
+    delete_mock = MagicMock(return_value=_fake_response(503, text="down"))
+    with patch.object(seed_module.requests, "delete", delete_mock):
+        assert seed_module.cmd_wipe_placeholders("http://test", "eki_admin") == 1
+    out = capsys.readouterr().out
+    assert out.strip() == "Error: HTTP 503: down"
+
+
+def test_missing_key_mentions_the_admin_requirement(seed_module, capsys, monkeypatch) -> None:
+    monkeypatch.delenv("EKI_API_KEY", raising=False)
+    monkeypatch.setattr(sys, "argv", ["seed_kb.py", "--status"])
+    assert seed_module.main() == 2
+    assert "admin API key" in capsys.readouterr().out

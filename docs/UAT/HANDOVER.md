@@ -1,4 +1,4 @@
-# Übergabedokument – eKI API v1.0.0
+# Übergabedokument – eKI API v1.0.1
 
 Pflichtenheft §9 M12 „UAT-Paket (Testskripte, Protokolle, OpenAPI v1.0, Betriebsdoku),
 Go-Live-Checkliste, Schulungsunterlagen" und §12 „Rechte & Eigentum".
@@ -12,8 +12,8 @@ Go-Live-Checkliste, Schulungsunterlagen" und §12 „Rechte & Eigentum".
 | Write-Through-Löschlogik | fertig | `services/secure_buffer.py`, `deliver_report_activity`, `cleanup_buffer_activity` |
 | LLM-Adapter Mistral API und lokales Mistral | fertig | `llm/mistral_cloud.py`, `llm/local_mistral.py`, `llm/factory.py`, `docs/LLM_INTEGRATION.md` |
 | KB-Grundlage (Dokumentenaufnahme, Embeddings) | fertig | `services/knowledge_base.py`, `api/routers/knowledge_base.py`, `scripts/seed_kb.py`, `docs/M06_KB_GUIDE.md` |
-| OpenAPI-Doku | v1.0.0 | `openapi/eki-api-v1.0.yaml` (verbindlich); Swagger/ReDoc nur bei `DEBUG=true` |
-| Container-Setup | fertig | `docker/`, `docker-compose*.yml`, GHCR-Images bei `v*`-Tags; Abhängigkeiten gepinnt in `requirements.lock` / `requirements-dev.lock` |
+| OpenAPI-Doku | 1.0.1 | `openapi/eki-api-v1.0.yaml` (verbindlich); Swagger/ReDoc nur bei `DEBUG=true` |
+| Container-Setup | fertig | `docker/`, `docker-compose*.yml` (Ollama extern; optionales Overlay `docker-compose.ollama.yml` für Entwicklung), `.dockerignore`, GHCR-Images bei `v*`-Tags; Abhängigkeiten gepinnt in `requirements.lock` / `requirements-dev.lock` |
 | Monitoring-Dashboards | fertig | `docker/observability/`, `docs/M09_SLO.md` |
 | Betriebsdoku | fertig | `docs/OPERATIONS_GUIDE.md` (Installation, Updates, Backups, Runbooks, Troubleshooting), `docs/CONFIGURATION.md` (alle Einstellungen), `docs/M10_FAILOVER_RUNBOOK.md` |
 | Datenschutz-Inventar | fertig | `docs/DATENSCHUTZ.md` |
@@ -32,10 +32,9 @@ PostgreSQL-Stack bzw. bei einer frischen Installation auftraten (Details: `CHANG
 - `job_metadata.status` war `VARCHAR(9)`, der Status `delivering` passte nicht hinein – auf
   PostgreSQL scheiterte damit die Zustellphase jedes asynchronen Jobs. Neue Migration
   `a7c9e1f3b5d2`;
-- KB-Dubletten werden pro Mandant statt global erkannt (Migration `b8d0f2a4c6e3`, aktueller
-  Head; Kette: `docs/OPERATIONS_GUIDE.md`, Abschnitt „Datenbank-Migrationen“). Vorher führte
-  derselbe Text bei einem zweiten Mandanten zu HTTP 503, ein gleichzeitiger Doppel-Upload jetzt
-  zu 409 statt 503;
+- KB-Dubletten werden pro Mandant statt global erkannt (Migration `b8d0f2a4c6e3`; Kette:
+  `docs/OPERATIONS_GUIDE.md`, Abschnitt „Datenbank-Migrationen“). Vorher führte derselbe Text
+  bei einem zweiten Mandanten zu HTTP 503, ein gleichzeitiger Doppel-Upload jetzt zu 409 statt 503;
 - Produktions-Overlay band trotz `docker-compose.prod.yml` den Quellcode vom Host ein und
   veröffentlichte die Temporal-UI (jetzt `!reset`, benötigt Docker Compose ≥ 2.24);
 - Produktions-Validator akzeptierte die Platzhalter-Secrets aus `.env.example`;
@@ -49,11 +48,23 @@ PostgreSQL-Stack bzw. bei einer frischen Installation auftraten (Details: `CHANG
 - Findings laufen nur noch als verschlüsselte Buffer-Referenz durch Temporal, lange Szenen
   werden in überlappenden Abschnitten analysiert statt gekürzt.
 
-Die Versionsnummer bleibt 1.0.0. GHCR-Images, die vor diesen Korrekturen aus dem Tag
-`v1.0.0` gebaut wurden, enthalten sie **nicht**. Für den Go-Live wird ein fixierter
-Patch-Release empfohlen (neues Tag, z. B. `v1.0.1`; das Tag muss zu `core/version.py`
-passen, sonst bricht der CI-Release-Job ab). Die Abnahmetests 2–7 sind auf diesem Stand
-erneut auszuführen (`UAT_TESTPLAN.md`).
+Dazu kommen die Projektentscheidungen vom 16.10.2026, umgesetzt in **Release 1.0.1**
+(Details: `CHANGELOG.md`, Upgrade-Schritte: `docs/OPERATIONS_GUIDE.md` §4.10 „Upgrade 1.0.0 → 1.0.1“):
+
+- echte Drehbücher aus Repository und Images entfernt (synthetische Ersatz-Fixtures; Git-Historie
+  und Images ≤ 1.0.0 enthalten sie weiterhin, §5);
+- Metadaten werden nach 90 Tagen automatisch gelöscht (Schedule `eki-metadata-cleanup`,
+  Migration `c4e6a8b0d2f1`, aktueller Head);
+- Temporal-Payloads AES-256-GCM-verschlüsselt (Schlüssel aus `API_SECRET_KEY`);
+- `/v1/kb/*` nur mit Admin-Key; synchroner Stub `POST /v1/security/check` entfernt (404);
+  `callback_url` und `priority` wirken;
+- Inferenz auf externer Ollama-Instanz (kein Ollama-Dienst mehr im Stack), Redis auf 7.2
+  gepinnt, ungenutzte Abhängigkeiten entfernt, mypy (strict) als blockierendes CI-Gate.
+
+Für den Go-Live ist **1.0.1** vorgesehen: GHCR-Images, die aus dem Tag `v1.0.0` gebaut wurden,
+enthalten weder die Korrekturen noch die Entscheidungen (und noch echte Drehbücher). Das
+Release-Tag muss zu `core/version.py` passen, sonst bricht der CI-Release-Job ab. Die
+Abnahmetests 2–7 sind auf diesem Stand erneut auszuführen (`UAT_TESTPLAN.md`).
 
 ## 2. Meilenstein-Nachweise
 
@@ -83,9 +94,10 @@ Veraltet und nur noch zur Nachvollziehbarkeit im Repository (mit Hinweisbanner):
 | Gegenstand | Übergabe an | Form |
 |---|---|---|
 | GitHub-Repository (Eigentum nach §12) | Filmakademie IT | Owner-Rechte / Transfer |
-| GHCR-Images | Filmakademie IT | Pull-Rechte, Digest-Liste; Sichtbarkeit der Pakete prüfen (siehe §5, echte Drehbücher in den Images) |
+| GHCR-Images | Filmakademie IT | Pull-Rechte, Digest-Liste; Sichtbarkeit der Pakete prüfen; Versionen ≤ 1.0.0 enthalten noch echte Drehbücher – löschen bzw. Zugriff beschränken (§5) |
+| Externe Ollama-Instanz (URL, Version, Modelle) | Filmakademie IT | Betriebsdokumentation der Instanz; Version mit dem Overlay-Pin abgleichen (`OPERATIONS_GUIDE.md` §4.11) |
 | API-Keys (ePro-Service, Ops-Admin, Prometheus) | ePro-Team / IT | Passwort-Manager, einmalig |
-| `.env.local` der Produktion (u. a. `API_SECRET_KEY`, DB-Passwort) | IT | verschlüsselt, keine Kopie beim Auftragnehmer. `API_SECRET_KEY` ist zugleich der Schlüssel für Buffer und KB-Originaltexte – Verlust oder Wechsel macht diese unlesbar |
+| `.env.local` der Produktion (u. a. `API_SECRET_KEY`, DB-Passwort) | IT | verschlüsselt, keine Kopie beim Auftragnehmer. `API_SECRET_KEY` ist zugleich der Schlüssel für Buffer, KB-Originaltexte und (seit 1.0.1) die Temporal-Payloads – Verlust oder Wechsel macht diese unlesbar |
 | Compose-Variablen `GRAFANA_ADMIN_USER`/`GRAFANA_ADMIN_PASSWORD`, `EKI_IMAGE_TAG`, `GHCR_OWNER`, `LLM_PROVIDER` (Prod-Overlay) | IT | werden von Docker Compose aus der Shell bzw. einer `.env` im Projektverzeichnis gelesen, **nicht** aus `.env.local` |
 | Grafana-Admin | IT | Passwort-Manager |
 
@@ -94,9 +106,9 @@ Veraltet und nur noch zur Nachvollziehbarkeit im Repository (mit Hinweisbanner):
 | Abhängigkeit | Status | Verantwortlich |
 |---|---|---|
 | Stage-ePro mit Testfilmprojekten (AT1, AT8) | offen / terminiert: ____ | ePro-Team |
-| Produktiv-Hardware GPU ≥ 24 GB (AT6, AT9) | offen / terminiert: ____ | IT |
+| Externe Ollama-Instanz auf Produktiv-Hardware GPU ≥ 24 GB (AT6, AT9) | offen / terminiert: ____ | IT |
 | Fachinhalte für die KB | offen / laufend | Sicherheitsbeauftragter |
-| AVV mit Mistral AI, falls AT8 mit echten Drehbüchern (`DATENSCHUTZ.md` §5) | offen / entfällt: ____ | Filmakademie |
+| AVV mit Mistral AI, falls AT8 mit echten Drehbüchern (`DATENSCHUTZ.md` §5) – schließt die Filmakademie selbst ab | offen / entfällt: ____ | Filmakademie |
 | Supportvertrag (§14) | offen / geschlossen: ____ | Filmakademie / StefanAI |
 
 ## 5. Bekannte Einschränkungen
@@ -120,37 +132,53 @@ Verhaltensänderung seit M12 (für ePro relevant):
   eingeschleuste Szenen-Begrenzer). Normale Drehbuchsprache löst ihn in der Regel nicht aus;
   anderssprachige oder umschriebene Injektionen erkennt er nicht (`LLM_INTEGRATION.md`).
 - **Abgebrochene Jobs** (Workflow-Cancel durch den Betrieb) erhalten den Status `cancelled`.
+- **Offen (zurückgestellt):** Die Abstimmung des fail-closed-Verhaltens mit dem ePro-Team
+  (Darstellung von `failed`, `cancelled` und 410 als „keine automatische Bewertung“, Umgang mit
+  den Webhook-Gründen) ist vertagt und vor dem Go-Live nachzuholen (`GO_LIVE_CHECKLIST.md` E).
 
-API und Verhalten:
+API und Verhalten (Stand 1.0.1):
 
-- Der synchrone Endpoint `POST /v1/security/check` liefert eine Stub-Antwort (M01); die
-  produktive Analyse läuft asynchron (Pflichtenheft §4.1 nennt `check(:async)`; ePro nutzt async).
-- `callback_url` wird validiert, aber nicht verwendet; Push-Ziel ist immer
-  `EPRO_BASE_URL/eki/scl/set-risk-assessment/{project_id}`.
-- `priority` wird gespeichert, steuert die Abarbeitung aber nicht. Eine Abbruchfunktion in
-  der API gibt es nicht (Abbruch nur über Temporal).
+- Einziger Prüf-Endpunkt ist `POST /v1/security/check:async`; der synchrone M01-Stub
+  `POST /v1/security/check` ist entfernt und antwortet mit 404.
+- `callback_url` ist das Push-Ziel des Jobs (statt `EPRO_BASE_URL/eki/scl/set-risk-assessment/{project_id}`),
+  aber nur für Hosts aus `CALLBACK_URL_ALLOWED_HOSTS`, die auf öffentliche Adressen auflösen.
+  Split-Horizon-DNS mit interner Adresse führt zum Dead Letter `invalid_callback_url`. Ein Push an
+  `callback_url` lässt sich lokal nicht gegen den HTTP-ePro-Mock testen (HTTPS und öffentliche
+  Adresse nötig).
+- `priority` ordnet nur **wartende** Aufgaben einer Task-Queue (kein Abbruch, keine Verdrängung
+  laufender Jobs; bei mehreren Task-Queue-Partitionen nur näherungsweise). Wirkt nur mit
+  `matching.useNewMatcher: true` (in `docker/temporal/dynamicconfig/eki.yaml` gesetzt); bei
+  einem extern betriebenen Temporal-Cluster muss dessen Betreiber das setzen. Eine
+  Abbruchfunktion in der API gibt es nicht (Abbruch nur über Temporal).
+- Für `/v1/kb/*` ist ein Admin-Key nötig (auch für `scripts/seed_kb.py`).
 - Ein One-Shot-GET während laufender Push-Retries beendet die Zustellung als Fehler: Der
   nächste Push-Versuch findet den Report nicht mehr (Dead Letter `report_expired`).
-- Neue Dead-Letter-Gründe `report_expired` und `invalid_project_id`; der Webhook meldet
-  zusätzlich Verarbeitungsfehler (`prompt_blocked`, `parsing_failed`, `processing_failed`,
-  ohne Dead Letter). Beides ist in der OpenAPI-Spec beschrieben.
+- Dead-Letter-Gründe `report_expired`, `invalid_project_id` und (1.0.1) `invalid_callback_url`;
+  der Webhook meldet zusätzlich Verarbeitungsfehler (`prompt_blocked`, `parsing_failed`,
+  `processing_failed`, ohne Dead Letter). Beides ist in der OpenAPI-Spec beschrieben.
 - Die OpenAPI-Spec unter `/openapi.json` (nur `DEBUG=true`) wird von FastAPI generiert;
   verbindlich ist `openapi/eki-api-v1.0.yaml` (Contract-Test sichert Routen/Enums ab).
 
 Daten und Datenschutz (Details: `docs/DATENSCHUTZ.md`):
 
-- **Echte Drehbücher in `tests/fixtures/pdf/`** (15 Dateien realer Filmakademie-Produktionen)
-  sind seit März 2026 im Git-Repository und werden in **beide** Docker-Images kopiert, also
-  auch in die GHCR-Images. Offene Entscheidung der Filmakademie: Rechte/Einwilligung klären;
-  empfohlen wird, die Dateien mindestens aus den Images zu entfernen.
-- Metadaten (`job_metadata`, `report_metadata`, `delivery_dead_letters`, `api_keys`) werden
-  nie automatisch gelöscht; eine Löschfrist ist festzulegen. Die Tabelle `audit_logs`
-  existiert, wird aber nicht beschrieben.
-- Die Temporal-Workflow-Historie enthält unverschlüsselt Metadaten (`project_id`, `user_id`,
-  `script_id`, Client-`metadata`) und bei PDFs den Drehbuchtitel; sie bleiben dort bis zum
-  Ablauf der Namespace-Retention. Drehbuchtext und Findings laufen nur als Buffer-Referenz.
+- **Echte Drehbücher:** Seit 1.0.1 aus Repository und Images entfernt (nur noch synthetische
+  Fixtures; lokale echte Drehbücher nur im git-/docker-ignorierten `tests/fixtures/pdf/private/`).
+  Die 15 Dateien realer Filmakademie-Produktionen bleiben aber in der **Git-Historie** (seit März
+  2026) und in den **GHCR-Images bis einschließlich 1.0.0**; die Historie wird nach
+  Projektentscheidung nicht umgeschrieben. Alte Images löschen bzw. Zugriff beschränken
+  (`DATENSCHUTZ.md` §8).
+- Metadaten (`job_metadata`, `report_metadata`, `delivery_dead_letters`, nicht mehr nutzbare
+  `api_keys`, `audit_logs`) werden nach **90 Tagen** automatisch gelöscht – Dead Letters auch
+  unquittiert, also innerhalb der Frist bearbeiten. Die Tabelle `audit_logs` existiert, wird aber
+  nicht beschrieben.
+- Die Temporal-Workflow-Historie ist seit 1.0.1 verschlüsselt (lesbar nur `job_id` und technische
+  Namen); Historien von Workflows, die vor dem Update gestartet wurden, enthalten bis zum Ablauf
+  der Namespace-Retention (Standard 24 h) noch Metadaten und Drehbuchtitel im Klartext.
+  Drehbuchtext und Findings laufen nur als Buffer-Referenz.
+- Container-Logs werden in Produktion nur nach Größe rotiert (20 MB × 5 je Container), nicht nach
+  Zeit; eine zeitliche Frist braucht zentrale Log-Weiterleitung.
 - KB-Chunk-Texte liegen im Klartext in `kb_embeddings`; nur der Originaltext ist verschlüsselt.
-  Jeder gültige API-Key darf KB-Dokumente hochladen und löschen.
+  Hochladen und Löschen nur mit Admin-Key.
 
 LLM und Analyse:
 
@@ -164,12 +192,23 @@ LLM und Analyse:
 
 Technik und Wartung:
 
-- Ungenutzte Abhängigkeiten in `pyproject.toml`: `python-jose` (mit bekannten CVEs), `PyJWT`,
-  `passlib`, `bcrypt`, `aiohttp`, `python-json-logger`, `email-validator`, `pytz`,
-  `python-dateutil`, `opentelemetry-exporter-prometheus`. Empfehlung: entfernen und die
-  Lock-Dateien neu erzeugen. `requests` wird von Skripten genutzt, ist aber nicht direkt
-  deklariert (kommt derzeit transitiv mit).
-- `mypy --strict` meldet 77 Befunde (in CI nur informativ).
+- **Redis 7.2** ist gepinnt (letzte BSD-3-Clause-Linie). Upstream wird 7.2 nur so lange
+  unterstützt wie 7.4; Termine sind nicht veröffentlicht. Danach muss Redis ersetzt werden –
+  durch Valkey (BSD-3-Clause, kompatibel zu Redis 7.2) oder Redis ≥ 8 (Lizenzwahl inkl. AGPLv3,
+  rechtlich prüfen). Vorgehen: `OPERATIONS_GUIDE.md` §4.9. Bestehende Installationen liefen mit
+  Redis 7.4; deren Redis-Volume ist beim Update auf 1.0.1 zu leeren (§4.10).
+- **Ollama extern:** Die eKI ist nicht gegen eine bestimmte Ollama-Version getestet; der Pin des
+  Entwicklungs-Overlays (`ollama/ollama:0.33.3`) ist an die Version der Produktionsinstanz
+  anzugleichen, nach Ollama-Updates den Paritätslauf wiederholen (`OPERATIONS_GUIDE.md` §4.11).
+- Ungenutzte Abhängigkeiten sind seit 1.0.1 entfernt; `requests` ist direkt deklariert.
+- `mypy` (strict) über `api core services workflows worker llm parsers` ist seit 1.0.1
+  befundfrei (vorher 71 Befunde, keiner davon ein Laufzeitfehler) und blockiert die CI
+  (`TESTING_GUIDE.md` §5); `db/` und `scripts/` werden nicht typgeprüft.
+- Technische Schuld: Die Dev-Abhängigkeit `types-redis` ist veraltet (Stubs für redis 4.6;
+  redis ≥ 5 bringt eigene Typen mit) und verdeckt die Typen von redis 8.1. Beim nächsten
+  Lock-Update entfernen; dann in `api/dependencies.py` den Alias `RedisClient` auf
+  `aioredis.Redis` vereinfachen, das `# type: ignore[attr-defined]` an `aclose()` streichen und in
+  `services/secure_buffer.py` `aioredis.Redis[Any]` durch `aioredis.Redis` ersetzen.
 - Tech-Stack-Abweichungen zum Pflichtenheft §4.1, bewusst und dokumentiert: Temporal statt
   Celery/Flower (durable Timer für 6-h-Fenster), kein PgBouncer (Async-Pool von SQLAlchemy genügt
   bei der erwarteten Last).
@@ -179,12 +218,14 @@ Technik und Wartung:
 Mit vollständiger Vergütung gehen Eigentums- und Nutzungsrechte am Quellcode, den
 Konfigurationen und der Dokumentation an die Filmakademie Baden-Württemberg über.
 Drittkomponenten verbleiben unter ihren eigenen Lizenzen. Ausnahme vom Rechteübergang
-sind außerdem die echten Drehbücher in `tests/fixtures/pdf/` (Rechte bei den Urhebern, §5).
+sind außerdem die echten Drehbücher, die bis 1.0.0 in `tests/fixtures/pdf/` lagen und in der
+Git-Historie sowie in Images ≤ 1.0.0 noch enthalten sind (Rechte bei den Urhebern, §5).
 
 ### 6.1 Python-Laufzeitabhängigkeiten
 
 Ermittelt aus den Paket-Metadaten (`License-Expression`, `License`, Classifier) aller
-99 in `requirements.lock` gepinnten Pakete (Python 3.11, Stand 15.10.2026). Die große
+78 in `requirements.lock` gepinnten Pakete (Python 3.11, Stand 16.10.2026; mit 1.0.1 wurden
+ungenutzte Pakete entfernt, keine verbliebene Version hat sich geändert). Die große
 Mehrheit steht unter permissiven Lizenzen (MIT, BSD-2/3-Clause, Apache-2.0, ISC, PSF-2.0,
 MIT-0, MIT-CMU, Unlicense). **Nicht permissiv bzw. mit Copyleft-Anteil:**
 
@@ -211,9 +252,9 @@ python -c "import importlib.metadata as m; d=m.distribution('psycopg2-binary'); 
 | Tesseract OCR + Sprachdaten (Debian-Pakete im eKI-Image) | Apache-2.0 | |
 | Debian-Basis (`python:3.11-slim`) | gemischt, u. a. GPL-Systempakete | übliche Distributionspakete, bei Weitergabe der Images Lizenzpflichten der Distribution beachten |
 | PostgreSQL + pgvector (`pgvector/pgvector:pg16`) | PostgreSQL License | |
-| Redis (`redis:7-alpine`) | Redis 7.4+: RSALv2 / SSPLv1 (source-available, keine OSI-Lizenz); bis 7.2: BSD-3-Clause | Das Tag `7-alpine` löst auf die aktuelle 7.x-Version auf. Interne Nutzung ist erlaubt, ein Angebot von Redis als Dienst für Dritte nicht. Alternativen: auf eine 7.2-Version pinnen oder Valkey (BSD-3-Clause) |
+| Redis (`redis:7.2-alpine`, seit 1.0.1 gepinnt) | BSD-3-Clause (bis einschließlich 7.2; ab 7.4 RSALv2/SSPLv1, ab 8 zusätzlich AGPLv3) | Support-Risiko: 7.2 wird upstream nur so lange unterstützt wie 7.4, danach Wechsel auf Valkey (BSD-3-Clause) oder Redis ≥ 8 nötig (`OPERATIONS_GUIDE.md` §4.9) |
 | Temporal Server und UI (`temporalio/auto-setup`, `temporalio/ui`) | MIT | |
-| Ollama (`ollama/ollama`) | MIT | |
+| Ollama | MIT | Produktion: externe Instanz, Betrieb und Lizenz beim Betreiber der Instanz; im Repository nur das optionale Entwicklungs-Overlay `docker-compose.ollama.yml` (`ollama/ollama:0.33.3`) |
 | Prometheus, Alertmanager, Jaeger (Observability-Overlay) | Apache-2.0 | |
 | Grafana (`grafana/grafana:11.1.0`, Observability-Overlay) | AGPL-3.0 | unverändert und intern genutzt unproblematisch; Änderungen am Grafana-Code wären offenzulegen |
 
@@ -228,7 +269,7 @@ python -c "import importlib.metadata as m; d=m.distribution('psycopg2-binary'); 
 | Mistral Cloud (`mistral-large-latest`) | nur Stage | kommerzielle Nutzungsbedingungen von Mistral AI |
 
 Die Angaben zu den Modellen sind vor dem Go-Live am konkret gezogenen Modell zu bestätigen,
-z. B. `docker compose exec ollama ollama show mistral-small3.2 --license`.
+z. B. auf dem Ollama-Host `ollama show mistral-small3.2 --license`.
 
 ## 7. Kontakt nach Übergabe
 

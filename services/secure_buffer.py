@@ -5,6 +5,8 @@ in Redis with a configurable TTL.  Temporal activities exchange only opaque
 reference keys -- never raw screenplay content.
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import logging
@@ -43,7 +45,9 @@ class SecureBuffer:
     keys explicitly -- Redis TTL serves as a safety net.
     """
 
-    def __init__(self, redis_client: aioredis.Redis, secret_key: str, default_ttl: int = 21600):
+    def __init__(
+        self, redis_client: aioredis.Redis[Any], secret_key: str, default_ttl: int = 21600
+    ) -> None:
         self._redis = redis_client
         self._fernet = Fernet(_derive_fernet_key(secret_key))
         self._default_ttl = default_ttl  # 6 h
@@ -78,7 +82,8 @@ class SecureBuffer:
                 "Buffer decryption failed (key rotated or corrupted)",
                 details={"ref_key": ref_key},
             ) from exc
-        return json.loads(plaintext)
+        data: dict[str, Any] = json.loads(plaintext)
+        return data
 
     async def delete(self, *ref_keys: str) -> int:
         """Explicitly delete one or more buffer entries.  Returns count deleted."""

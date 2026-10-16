@@ -2,9 +2,12 @@
 > gepflegt. Maßgeblich sind [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) (Installation, Updates),
 > [M06_KB_GUIDE.md](M06_KB_GUIDE.md) und [UAT/GO_LIVE_CHECKLIST.md](UAT/GO_LIVE_CHECKLIST.md).
 > Revisionen, Versionen und das lokale Bauen der Container entsprechen nicht mehr dem
-> Produktionsverfahren (GHCR-Images, Migrations-Head `b8d0f2a4c6e3`). Embedding-Standard ist
+> Produktionsverfahren (GHCR-Images, Migrations-Head `c4e6a8b0d2f1`). Embedding-Standard ist
 > `mxbai-embed-large`; `bge-m3` ist eine Option, die vor dem Befüllen der KB festgelegt werden muss
 > (Wechsel = KB leeren und neu einspielen).
+>
+> Seit 1.0.1 läuft Ollama als externe Instanz (kein `ollama`-Dienst im Compose-Stack), und `/v1/kb/*`
+> verlangt einen Admin-Key.
 
 # M06 Production Deploy Cheat Sheet
 

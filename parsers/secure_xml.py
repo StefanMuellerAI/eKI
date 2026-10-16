@@ -35,7 +35,8 @@ def parse_xml_safe(content: bytes, *, max_size: int = MAX_XML_SIZE) -> Element:
         )
 
     try:
-        return SafeET.fromstring(content)
+        root: Element = SafeET.fromstring(content)
+        return root
     except DTDForbidden:
         raise ParsingException(
             "XML contains forbidden DTD declaration",

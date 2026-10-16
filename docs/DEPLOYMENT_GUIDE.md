@@ -3,6 +3,9 @@
 > [UAT/GO_LIVE_CHECKLIST.md](UAT/GO_LIVE_CHECKLIST.md). Befehle, Compose-Aufrufe und
 > Provider-Empfehlungen in diesem Dokument nicht für Produktion verwenden (Produktion: nur
 > `LLM_PROVIDER=local_mistral`, GHCR-Images über `docker-compose.prod.yml`).
+>
+> Zusätzlich seit 1.0.1: `POST /v1/security/check` ist entfernt (nur `check:async`), Ollama läuft
+> extern statt im Compose-Stack, Redis ist auf 7.2 gepinnt.
 
 # eKI API - Secure Production Deployment Guide
 

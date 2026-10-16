@@ -25,7 +25,7 @@ class TestAuthentication:
             "project_id": "test123",
         }
 
-        response = client.post("/v1/security/check", json=payload)
+        response = client.post("/v1/security/check:async", json=payload)
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert "not authenticated" in response.json()["message"].lower()
 
@@ -39,7 +39,7 @@ class TestAuthentication:
         }
 
         headers = {"Authorization": "InvalidFormat token"}
-        response = client.post("/v1/security/check", json=payload, headers=headers)
+        response = client.post("/v1/security/check:async", json=payload, headers=headers)
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_empty_token(self, client):
@@ -52,7 +52,7 @@ class TestAuthentication:
         }
 
         headers = {"Authorization": "Bearer "}
-        response = client.post("/v1/security/check", json=payload, headers=headers)
+        response = client.post("/v1/security/check:async", json=payload, headers=headers)
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_invalid_api_key(self, client):
@@ -65,7 +65,7 @@ class TestAuthentication:
         }
 
         headers = {"Authorization": "Bearer eki_invalid_key_12345"}
-        response = client.post("/v1/security/check", json=payload, headers=headers)
+        response = client.post("/v1/security/check:async", json=payload, headers=headers)
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert "invalid" in response.json()["message"].lower()
 
@@ -99,7 +99,7 @@ class TestAuthentication:
         }
 
         headers = {"Authorization": f"Bearer {api_key}"}
-        response = client.post("/v1/security/check", json=payload, headers=headers)
+        response = client.post("/v1/security/check:async", json=payload, headers=headers)
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     @pytest.mark.asyncio
@@ -132,11 +132,11 @@ class TestAuthentication:
         }
 
         headers = {"Authorization": f"Bearer {api_key}"}
-        response = client.post("/v1/security/check", json=payload, headers=headers)
+        response = client.post("/v1/security/check:async", json=payload, headers=headers)
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     @pytest.mark.asyncio
-    async def test_valid_api_key_success(self, client, auth_headers):
+    async def test_valid_api_key_success(self, client, auth_headers, mock_temporal):
         """Test request with valid API key."""
         script_content = base64.b64encode(b"Test script").decode()
         payload = {
@@ -145,8 +145,30 @@ class TestAuthentication:
             "project_id": "test123",
         }
 
-        response = client.post("/v1/security/check", json=payload, headers=auth_headers)
-        assert response.status_code == status.HTTP_200_OK
+        response = client.post("/v1/security/check:async", json=payload, headers=auth_headers)
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        assert mock_temporal.started[-1]["args"][1]["user_id"] == "test-user-123"
+
+    def test_removed_sync_endpoint_is_404_envelope(self, client, auth_headers):
+        """Decision 6 (1.0.1): the M01 stub POST /v1/security/check is gone.
+
+        The path answers 404 with the ErrorResponse envelope for authenticated and
+        anonymous callers alike (no route -> no auth check, no 405 hint).
+        """
+        payload = {
+            "script_content": base64.b64encode(b"Test script").decode(),
+            "script_format": "fdx",
+            "project_id": "test123",
+        }
+        for headers in (auth_headers, {}):
+            response = client.post("/v1/security/check", json=payload, headers=headers)
+            assert response.status_code == status.HTTP_404_NOT_FOUND
+            body = response.json()
+            assert body["error"] == "NotFound"
+            assert body["message"] == "Not Found"
+            assert set(body) == {"error", "message", "details", "request_id", "timestamp"}
+            assert body["request_id"] == response.headers["X-Request-ID"]
+            assert "report" not in body
 
 
 class TestAuthorization:
@@ -165,7 +187,7 @@ class TestAuthorization:
         mismatched_headers = dict(auth_headers)
         mismatched_headers["X-Actor-User-Id"] = "different-user"
 
-        response = client.post("/v1/security/check", json=payload, headers=mismatched_headers)
+        response = client.post("/v1/security/check:async", json=payload, headers=mismatched_headers)
         assert response.status_code == status.HTTP_403_FORBIDDEN
         assert "does not match" in response.json()["message"].lower()
 
@@ -296,7 +318,7 @@ class TestInputValidation:
             "project_id": "test123",
         }
 
-        response = client.post("/v1/security/check", json=payload, headers=auth_headers)
+        response = client.post("/v1/security/check:async", json=payload, headers=auth_headers)
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
         assert "base64" in str(response.json()).lower()
 
@@ -313,7 +335,7 @@ class TestInputValidation:
             "project_id": "test123",
         }
 
-        response = client.post("/v1/security/check", json=payload, headers=auth_headers)
+        response = client.post("/v1/security/check:async", json=payload, headers=auth_headers)
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
         response_str = str(response.json()).lower()
         assert "most" in response_str or "characters" in response_str or "too long" in response_str
@@ -339,7 +361,7 @@ class TestInputValidation:
                 "callback_url": ip_url,
             }
 
-            response = client.post("/v1/security/check", json=payload, headers=auth_headers)
+            response = client.post("/v1/security/check:async", json=payload, headers=auth_headers)
             assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
             response_str = str(response.json()).lower()
             assert (
@@ -359,7 +381,7 @@ class TestInputValidation:
             "callback_url": "https://192.168.1.10/callback",
         }
 
-        response = client.post("/v1/security/check", json=payload, headers=auth_headers)
+        response = client.post("/v1/security/check:async", json=payload, headers=auth_headers)
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
         assert "private/internal" in str(response.json()).lower()
 
@@ -376,7 +398,7 @@ class TestInputValidation:
             "callback_url": "https://evil.com/callback",
         }
 
-        response = client.post("/v1/security/check", json=payload, headers=auth_headers)
+        response = client.post("/v1/security/check:async", json=payload, headers=auth_headers)
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
         assert (
             "not allowed" in str(response.json()).lower()
@@ -403,7 +425,7 @@ class TestInputValidation:
                 "project_id": malicious_id,
             }
 
-            response = client.post("/v1/security/check", json=payload, headers=auth_headers)
+            response = client.post("/v1/security/check:async", json=payload, headers=auth_headers)
             assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
     @pytest.mark.asyncio
@@ -421,7 +443,7 @@ class TestInputValidation:
             "metadata": metadata,
         }
 
-        response = client.post("/v1/security/check", json=payload, headers=auth_headers)
+        response = client.post("/v1/security/check:async", json=payload, headers=auth_headers)
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
         assert "too many" in str(response.json()).lower() or "50" in str(response.json())
 

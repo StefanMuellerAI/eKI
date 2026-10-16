@@ -1,4 +1,4 @@
-# Schulungsunterlagen – eKI API v1.0.0
+# Schulungsunterlagen – eKI API v1.0.1
 
 Drei Zielgruppen, je ca. 45–60 Minuten. Alle Übungen laufen gegen einen
 lokalen Stack (`docker compose … up -d`) oder die Stage.
@@ -26,7 +26,8 @@ lokalen Stack (`docker compose … up -d`) oder die Stage.
    410 auch, wenn der Report nicht mehr im Buffer liegt (TTL abgelaufen, bereits gepusht);
    503 beim Abruf = später erneut versuchen, der Report bleibt abrufbar.
 6. **Push** – Was ePro empfängt (Multipart `script_id`, `status`, `assessment`, `file`) an
-   `EPRO_BASE_URL/eki/scl/set-risk-assessment/{project_id}` (`callback_url` wird nicht verwendet),
+   `EPRO_BASE_URL/eki/scl/set-risk-assessment/{project_id}` bzw. an `callback_url`, falls angegeben
+   (nur freigegebene Hosts, impliziert `delivery=push`; `priority` 1–10 ordnet wartende Jobs),
    Header `Idempotency-Key` deduplizieren, 201 antworten; Retry-Verhalten der eKI (5xx → bis 6 h);
    im Push-Modus nicht zusätzlich per GET abholen.
 7. **Fehler** – `ErrorResponse` (`error`, `message`, `details`, `request_id`, `timestamp`);
@@ -50,22 +51,31 @@ Material: `docs/EPRO_INTEGRATION_GUIDE.md`, `openapi/eki-api-v1.0.yaml`, Postman
    `LLM_PROVIDER` im Prod-Overlay) kommen aus Shell bzw. `.env`, nicht aus `.env.local`;
    Änderungen an `.env.local` erst nach `docker compose up -d --force-recreate api worker` wirksam;
    Secrets-Handling (`secrets/README.md`).
-3. **Keys** – `docker compose exec api python scripts/create_api_key.py --insert` (`--admin` für Ops),
-   Rotation, Deaktivierung per SQL (`is_active=false`), Ablauf nach 365 Tagen.
+3. **Keys** – `docker compose exec api python scripts/create_api_key.py --insert` (`--admin` für Ops
+   und Knowledge Base), Rotation, Deaktivierung per SQL (`is_active=false`), Ablauf nach 365 Tagen;
+   gesperrte/abgelaufene Keys löscht der Metadaten-Cleanup nach 90 Tagen.
 4. **Monitoring** – Grafana-Dashboards `eki-overview`/`eki-delivery`/`eki-llm`; SLOs S1–S9
    (`M09_SLO.md`); Alerts und was sie bedeuten. Übung: Alert `EkiDeadLettersPending` provozieren
    (Mock 422) und über `/v1/ops/dead-letters` quittieren.
 5. **Logs & Korrelation** – JSON-Logs, `request_id`/`job_id` in jeder Worker-Zeile; Log-Hygiene
    (keine Inhalte). Übung: Job-Verlauf anhand `job_id` durch API- und Worker-Logs verfolgen.
 6. **Zustellstörungen** – `M10_FAILOVER_RUNBOOK.md` Szenarien 2.1–2.8; Temporal UI lesen
-   (in Produktion nicht veröffentlicht, Zugriff per Tunnel; zeigt auch Findings – Zugang beschränken).
-7. **LLM-Betrieb** – Ollama-Modelle, VRAM, `OLLAMA_MAX_CONCURRENT_REQUESTS`, Queue-Wait-Metrik,
-   OCR-Cap. Paritätslauf als Regressionsprüfung nach Modell-/Prompt-Änderung.
-8. **Update/Rollback** – `EKI_IMAGE_TAG=<Release-Tag>` setzen, `pull` + `up -d --no-build`,
-   `alembic upgrade head` (Head prüfen); vor Releases mit geänderten Workflows laufende Workflows
-   auslaufen lassen (Temporal-Replay, `OPERATIONS_GUIDE.md`).
-9. **Backups** – nur Postgres (für KB-Restore denselben `API_SECRET_KEY`); Redis bewusst nicht.
-10. **Datenschutz** – was wo liegt und wann es gelöscht wird, offene Löschfristen (`docs/DATENSCHUTZ.md`).
+   (in Produktion nicht veröffentlicht, Zugriff per Tunnel; zeigt seit 1.0.1 Eingaben und Ergebnisse
+   nur verschlüsselt, lesbar sind IDs, Activity-Namen, Zeiten und Fehlertypen); Dead Letters innerhalb
+   von 90 Tagen bearbeiten.
+7. **LLM-Betrieb** – externe Ollama-Instanz (URL, Modelle, Version, Erreichbarkeit – `/ready` prüft
+   Ollama nicht), VRAM, `OLLAMA_MAX_CONCURRENT_REQUESTS`, Queue-Wait-Metrik, OCR-Cap.
+   Paritätslauf als Regressionsprüfung nach Modell-, Prompt- oder Ollama-Update.
+8. **Update/Rollback** – `EKI_IMAGE_TAG=<Release-Tag>` setzen, `pull` + `up -d --no-build` (API und
+   Worker immer gemeinsam), `alembic upgrade head` (Head `c4e6a8b0d2f1` prüfen); vor Releases mit
+   geänderten Workflows, vor einer `API_SECRET_KEY`-Rotation und vor einem Rollback laufende Workflows
+   auslaufen lassen (Temporal-Replay, Payload-Verschlüsselung). Einmalig: Upgrade 1.0.0 → 1.0.1
+   (`OPERATIONS_GUIDE.md` §4.10). Wartungs-Schedules werden über `*_ENABLED`/`*_CRON` gesteuert,
+   nicht in der Temporal UI.
+9. **Backups** – nur Postgres (für KB- und Temporal-Restore denselben `API_SECRET_KEY`); Redis bewusst
+   nicht. Redis 7.2: Support-Status beobachten (`OPERATIONS_GUIDE.md` §4.9).
+10. **Datenschutz** – was wo liegt und wann es gelöscht wird: Metadaten 90 Tage, Temporal-Retention,
+   Log-Rotation nach Größe (`docs/DATENSCHUTZ.md`).
 
 Material: `docs/OPERATIONS_GUIDE.md`, `docs/CONFIGURATION.md`, `docs/DATENSCHUTZ.md`,
 `docs/M09_SLO.md`, `docs/M10_FAILOVER_RUNBOOK.md`.
@@ -82,7 +92,7 @@ Material: `docs/OPERATIONS_GUIDE.md`, `docs/CONFIGURATION.md`, `docs/DATENSCHUTZ
    `measures.yaml`: 20 Maßnahmen mit Rolle und Frist. Änderungen ohne Code-Deployment;
    Wirkung im nächsten Job. Übung: neue Maßnahme anlegen und einer Klasse zuordnen.
 3. **Wissensbasis (KB)** – Welche Dokumente sinnvoll sind (Leitfäden, SOPs, Checklisten,
-   regulatorische Vorgaben); Ablage in `config/kb_seed/real/`; `scripts/seed_kb.py`
+   regulatorische Vorgaben); Ablage in `config/kb_seed/real/`; `scripts/seed_kb.py` mit Admin-Key
    (`--wipe-placeholders`, `--reseed`, `--status`); TTL (`ttl_hours`, Standard 30 Tage) und
    automatischer Cleanup (Temporal-Schedule `eki-kb-cleanup`, täglich); Embedding-Modell
    (Wechsel nur mit Neuaufbau der KB); Verschlüsselung (nur Originaltext, Chunks im Klartext)

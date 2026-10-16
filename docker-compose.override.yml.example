@@ -2,36 +2,25 @@
 #
 # Copy this file to docker-compose.override.yml to customize your setup
 # cp docker-compose.override.yml.example docker-compose.override.yml
+#
+# Inference runs on an EXTERNAL Ollama instance; its URL comes from .env.local
+# (LLM_PROVIDER=local_mistral: LOCAL_MISTRAL_BASE_URL, falling back to OLLAMA_BASE_URL,
+# for chat and KB embeddings; LLM_PROVIDER=ollama: OLLAMA_BASE_URL). For a local Ollama container
+# (development / offline) use the separate overlay instead of this file:
+#   docker compose -f docker-compose.yml -f docker-compose.ollama.yml up -d
 
 services:
-  # Disable Ollama if using Mistral Cloud
-  # ollama:
-  #   profiles:
-  #     - ollama
-
-  # Enable GPU for Ollama (NVIDIA)
-  ollama:
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-
-  # API with local inference via Ollama (same as production: local_mistral).
+  # API with local inference (same provider/model as production: local_mistral).
   # These values override .env.local -- keep them in sync or remove them.
   api:
     environment:
       - LLM_PROVIDER=local_mistral
-      - OLLAMA_BASE_URL=http://ollama:11434
       - LOCAL_MISTRAL_MODEL=mistral-small3.2
 
   # Worker: must use the same provider/model as the API
   worker:
     environment:
       - LLM_PROVIDER=local_mistral
-      - OLLAMA_BASE_URL=http://ollama:11434
       - LOCAL_MISTRAL_MODEL=mistral-small3.2
     # ---------------------------------------------------------------
     # M07 – Ressourcenlimits (Pflichtenheft §7 Abnahmetest 6:
@@ -63,15 +52,9 @@ services:
   #         memory: 512m
 
   # ----------------------------------------------------------------
-  # M07 – Ollama-Limits (Vorsicht: Ollama läuft auf einer geteilten
-  # GPU-Instanz, andere Anwendungen können denselben Endpoint nutzen.
-  # Memory-Limit hier referenziert NUR den Container-RAM, nicht VRAM.
-  # Den prozessweiten Concurrency-Cap setzen wir software-seitig via
-  # OLLAMA_MAX_CONCURRENT_REQUESTS in .env.local).
+  # M07 – Ollama: läuft extern (geteilte GPU-Instanz, andere Anwendungen
+  # können denselben Endpoint nutzen). Den prozessweiten Concurrency-Cap
+  # setzen wir software-seitig via OLLAMA_MAX_CONCURRENT_REQUESTS in
+  # .env.local; Container-Limits für einen lokalen Ollama-Container
+  # gehören in docker-compose.ollama.yml.
   # ----------------------------------------------------------------
-  # ollama:
-  #   deploy:
-  #     resources:
-  #       limits:
-  #         memory: 16g
-  #         cpus: "4"

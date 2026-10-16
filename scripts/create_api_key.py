@@ -68,7 +68,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--admin",
         action="store_true",
-        help="Grant access to the /v1/ops/* operations endpoints (M10)",
+        help="Grant access to the admin-only endpoints /v1/ops/* (M10) and /v1/kb/* (1.0.1)",
     )
     return parser.parse_args()
 

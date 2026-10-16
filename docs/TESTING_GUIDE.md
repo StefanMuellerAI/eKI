@@ -1,7 +1,7 @@
 # eKI API – Testleitfaden
 
 Wie die eKI getestet wird, welche Testebenen es gibt, wie man sie lokal ausführt und
-was die CI prüft. Stand: Release 1.0.0. Aktuelle Zahlen: Abschnitt [Kennzahlen](#9-kennzahlen).
+was die CI prüft. Stand: Release 1.0.1. Aktuelle Zahlen: Abschnitt [Kennzahlen](#9-kennzahlen).
 
 ---
 
@@ -19,7 +19,13 @@ was die CI prüft. Stand: Release 1.0.0. Aktuelle Zahlen: Abschnitt [Kennzahlen]
 
 pytest sammelt nur `tests/test_*.py`. Die Skripte `tests/run_*.py`,
 `tests/build_large_fixture.py` und `tests/generate_pdf_fixtures.py` sind Werkzeuge,
-keine Tests (§6.4).
+keine Tests (§6.4). `tests/generate_pdf_fixtures.py` erzeugt die synthetischen PDF-Fixtures
+(u. a. seit 1.0.1 `realworld_headings.pdf` und `suffix_headings.pdf`, die die Layout-Merkmale
+echter Drehbücher nachbilden: nummerierte Überschriften, `I/E.`, `INNEN-AUSSEN.`,
+Seitenzahlen, Cue-Erweiterungen, Gender-Doppelpunkt, Akzente bzw. Überschriften mit Ortsangabe
+am Ende); mit Namen als Argument nur diese (`python tests/generate_pdf_fixtures.py
+realworld_headings suffix_headings`, byte-reproduzierbar), ohne Argument alle (das zufällige
+`large_120_pages.pdf` ändert sich dann).
 
 ---
 
@@ -44,7 +50,7 @@ veröffentlicht 5432/6379 nicht, es gibt also keinen Portkonflikt):
 docker run -d --name eki-test-pg -p 5432:5432 \
   -e POSTGRES_DB=eki_test -e POSTGRES_USER=eki_user -e POSTGRES_PASSWORD=eki_password \
   pgvector/pgvector:pg16
-docker run -d --name eki-test-redis -p 6379:6379 redis:7-alpine
+docker run -d --name eki-test-redis -p 6379:6379 redis:7.2-alpine
 ```
 
 Der DB-Nutzer braucht das Recht `CREATEDB` (die Migrationstests legen eigene
@@ -152,6 +158,8 @@ PostgreSQL aus (NullPool, eine Session je Request). Zusätzlich laufen nur dann:
   die Verbreiterung von `job_metadata.status`; KB-Service auf echtem pgvector (Ingest,
   Dedupe, Chunking, Cosine-Ranking, Mandantentrennung, Tags, TTL-Cleanup, Verschlüsselung
   der Originale); `/v1/kb`-Endpunkte ohne Mocks; Zustell-Bookkeeping.
+- `tests/test_retention_pg.py` (1.0.1): Migration `c4e6a8b0d2f1`, Nutzung der neuen Indizes,
+  Metadaten-Cleanup auf dem per Alembic aufgebauten Schema.
 - mit `@requires_postgres` markierte Einzeltests anderer Dateien.
 
 Ohne die Variable werden diese Tests übersprungen.
@@ -159,16 +167,24 @@ Ohne die Variable werden diese Tests übersprungen.
 ### 4.3 Temporal-Tests (Marker `temporal`)
 
 `tests/test_m10_workflow_failover.py`, `tests/test_m09_context_propagation_e2e.py`,
-`tests/test_cov_security_check_workflow.py` und `tests/test_e2e_pipeline.py` starten den
-Time-Skipping-Testserver des Temporal-SDK (`WorkflowEnvironment.start_time_skipping()`).
-Er wird beim **ersten** Lauf heruntergeladen und danach zwischengespeichert – einmal
-Netzzugang nötig. Offline: `pytest -m "not temporal"`. Durable Timer (6-h-Retry-Fenster,
-Pull-TTL) laufen dort in Sekunden ab.
+`tests/test_cov_security_check_workflow.py`, `tests/test_e2e_pipeline.py`,
+`tests/test_temporal_codec.py`, `tests/test_callback_url_priority.py` und
+`tests/test_retention.py` starten den Time-Skipping-Testserver des Temporal-SDK
+(`WorkflowEnvironment.start_time_skipping()`). Er wird beim **ersten** Lauf heruntergeladen und
+danach zwischengespeichert – einmal Netzzugang nötig. Offline: `pytest -m "not temporal"`.
+Durable Timer (6-h-Retry-Fenster, Pull-TTL) laufen dort in Sekunden ab.
+
+Seit 1.0.1 laufen die Workflows in diesen Tests mit dem Produktions-Data-Converter, also mit
+dem Payload-Codec (verschlüsselte Payloads und Fehlermeldungen); Replays nutzen
+`Replayer(..., **temporal_client_options(secret))`. Ein AST-Test lässt den Build scheitern, wenn
+irgendwo ein Temporal-Client ohne diese Optionen erzeugt wird.
 
 ### 4.4 E2E-Pipeline (`tests/test_e2e_pipeline.py`)
 
-Läuft den echten Produktionspfad in einem Prozess: HTTP-API (echte API-Key-Prüfung) →
-Temporal-Workflow über `worker/main.py:main()` (echte Registrierung) → echte Activities
+Läuft den echten Produktionspfad in einem Prozess: HTTP-API (echte API-Key-Prüfung, echtes
+`get_temporal_client` – nur `TemporalClient.connect` wird auf den Testserver umgelenkt) →
+Temporal-Workflow über `worker/main.py:main()` (echte Registrierung, ebenfalls nur
+`Client.connect` umgelenkt; beide mit dem Produktions-Converter) → echte Activities
 und Parser auf `tests/fixtures/` → **echter SecureBuffer auf echtem Redis** → Zustellung
 per One-Shot-GET (Pull) oder Multipart-POST an einen lokalen ePro-Mock (Push, inkl.
 Webhook). Ersetzt ist nur das LLM, durch einen deterministischen Fake an der Grenze
@@ -176,8 +192,11 @@ Webhook). Ersetzt ist nur das LLM, durch einen deterministischen Fake an der Gre
 
 Nachgewiesen werden u. a. AT2 (Push + Delete-on-Delivery), AT3 (Pull One-Shot, danach
 410), AT4 (4xx-Hard-Fail mit Dead Letter und Webhook), AT5 (Idempotenz),
-Verarbeitungsfehler, der synchrone Endpunkt und die Invariante „Temporal sieht nur
-Referenzschlüssel, keinen Inhalt“.
+Verarbeitungsfehler, der entfernte synchrone Endpunkt (404), der Push an ein `callback_url`
+mit DNS-Pinning und die Temporal-Priorität, die Invariante „Temporal sieht nur
+Referenzschlüssel, keinen Inhalt“ sowie `test_temporal_history_is_encrypted_at_rest` (jede
+Payload der Historie eines echten PDF-Laufs ist verschlüsselt, kein Klartext von IDs, Titel,
+Client-`metadata` oder Skripttext).
 
 Voraussetzung: Redis unter `TEST_REDIS_URL` (Default `redis://localhost:6379/4`). Ist es
 nicht erreichbar, wird das Modul übersprungen. Datenbank: wie die Suite (SQLite oder
@@ -193,8 +212,32 @@ PostgreSQL).
 - `tests/test_cov_*.py`: Verhaltenstests für Zweige, die die Meilenstein-Suiten nicht
   erreichen (Activities, API, LLM-Provider auf Transportebene, Parser, Workflow).
 
-Bekannte, noch nicht behobene Fehler sind dort als `xfail(strict=True)` festgehalten
-(§7); Tests mit Suffix `_documented` halten überraschendes, aber aktuelles Verhalten fest.
+Neu in 1.0.1:
+
+- `tests/test_temporal_codec.py` (31 Tests): Payload-Codec – Schlüsselableitung und Format
+  (Known-Answer-Vektor), Manipulation/falscher Schlüssel, Klartext-Durchreichung alter
+  Payloads; auf dem Testserver: gespeicherte Historie ohne Klartext (Kontrolllauf ohne Codec),
+  Replay von Historien von vor 1.0.1 und eines über das Update laufenden Workflows; AST-Wächter
+  gegen Temporal-Clients ohne Codec.
+- `tests/test_callback_url_priority.py` (91 Tests): `callback_url`-Policy (HTTPS, Zugangsdaten,
+  nicht-öffentliche Adressen inkl. IPv4-mapped/6to4, Allow-List), Einstellungen, Abbildung
+  `priority` → Temporal-Schlüssel, Zustell-Activity inkl. eines echten lokalen TLS-Handshakes
+  (die gepinnte Verbindung prüft das Zertifikat weiter gegen den Hostnamen), Workflow auf dem
+  Testserver.
+- `tests/test_retention.py` (150 Tests, beide DB-Modi; jeder Test mit eigener SQLite-Datei bzw.
+  eigener PostgreSQL-Datenbank): Regeln des Metadaten-Cleanups je Tabelle, Stapelverarbeitung,
+  Schutzregel für verwaiste Jobs, Cron-Validierung, Schedule-Abgleich beim Worker-Start
+  (anlegen, aktualisieren, pausieren, fortsetzen); `tests/test_retention_pg.py` (6 Tests, nur
+  PostgreSQL) siehe §4.2.
+- `tests/test_pdf_parser.py::TestRealWorldLayoutFixtures`: Split, Seitenzahlen,
+  Cue-Erweiterungen, Gender-Doppelpunkt, Akzente und der Seiten-Fallback auf den synthetischen
+  Layout-Fixtures `realworld_headings.pdf` und `suffix_headings.pdf` (Ersatz für die entfernten
+  echten Drehbücher).
+
+Derzeit gibt es kein `xfail`: Der einzige, der Sync-Stub (`test_sync_check_returns_the_real_analysis`),
+ist mit dem Endpunkt entfallen. Bekannte, noch nicht behobene Fehler würden als
+`xfail(strict=True)` festgehalten (§7); Tests mit Suffix `_documented` halten überraschendes,
+aber aktuelles Verhalten fest.
 
 ### 4.6 OCR-Tests (Marker `ocr`)
 
@@ -221,19 +264,20 @@ Läuft bei Push auf `main`/`develop`, bei Pull-Requests dorthin und bei Tags `v*
 
 | Job | Inhalt | Blockierend |
 |---|---|---|
-| `lint` | `ruff check .`, `ruff format --check .`; `mypy api core services workflows worker` | Ruff ja; mypy nur beratend (`continue-on-error`) |
+| `lint` | `ruff check .`, `ruff format --check .` (prüft auch Python-Codeblöcke in Markdown-Dateien); `mypy api core services workflows worker llm parsers` (strict, Konfiguration `[tool.mypy]` in `pyproject.toml` mit Pydantic-mypy-Plugin; 0 Befunde; `db/` und `scripts/` werden nicht typgeprüft) | ja – seit 1.0.1 auch mypy (vorher nur beratend, 71 Befunde) |
 | `security-scan` | Bandit über `api core services workflows worker llm parsers` (bricht ab Schwere *medium*); `safety check` | Bandit ja; Safety beratend |
-| `test` | Dienste `pgvector/pgvector:pg16` + `redis:7-alpine`; Tesseract installieren; `pip install -c requirements-dev.lock -e ".[dev]"`; Migrationszyklus `upgrade head → check → downgrade base → upgrade head`; `pytest --no-cov -q` (SQLite); `pytest` im PostgreSQL-Modus mit echtem Redis und `--cov-fail-under=95`; Coverage-Artefakt + Codecov | ja |
+| `test` | Dienste `pgvector/pgvector:pg16` + `redis:7.2-alpine`; Tesseract installieren; `pip install -c requirements-dev.lock -e ".[dev]"`; Migrationszyklus `upgrade head → check → downgrade base → upgrade head`; `pytest --no-cov -q` (SQLite); `pytest` im PostgreSQL-Modus mit echtem Redis und `--cov-fail-under=95`; Coverage-Artefakt + Codecov | ja |
 | `openapi-validation` | Spectral auf `openapi/eki-api-v1.0.yaml`, 0 Errors | ja |
-| `observability-validation` | `promtool check rules`, `amtool check-config`, `docker compose config` für Basis + Observability-Overlay; Prüfung, dass das Prod-Overlay nur Port 8000 veröffentlicht und keinen Quellcode mountet | ja |
+| `observability-validation` | `promtool check rules`, `amtool check-config`, `docker compose config` für Basis + Observability-Overlay; Prüfung, dass das Prod-Overlay nur Port 8000 veröffentlicht, keinen Quellcode mountet und keinen `ollama`-Dienst enthält; das optionale Overlay `docker-compose.ollama.yml` validiert (Ollama-URLs von `api`/`worker` zeigen auf `http://ollama:11434`), kein Fremd-Image ohne Tag oder mit `:latest`, Redis ist `redis:7.2-alpine` | ja |
 | `docker-build` | baut API- und Worker-Image (nach `lint`, `test`, `security-scan`) | ja |
 | `integration-test` | `.env.example` → `.env.local`, `docker compose up -d --build`, `/health`, `alembic upgrade head` + `alembic check` **im API-Image**, `/docs`; `/ready` und Temporal UI nur informativ | ja |
 | `release-images` | nur bei Tags `v*`: Tag muss `core/version.py` entsprechen; pusht `eki-api`/`eki-worker` (Version + `latest`) nach GHCR | – |
 
 Lokal nachstellen: `ruff check . && ruff format --check .`,
 `bandit -r api core services workflows worker llm parsers -ll -q`,
-`mypy api core services workflows worker`, Spectral (§4.7), Migrationszyklus und
-PostgreSQL-Lauf (§3).
+`mypy api core services workflows worker llm parsers` (muss fehlerfrei sein), Spectral (§4.7),
+Migrationszyklus und PostgreSQL-Lauf (§3). Neue Typfehler blockieren die CI; `# type: ignore`
+nur gezielt mit Fehlercode (`# type: ignore[<code>]`) – überflüssige meldet `warn_unused_ignores`.
 
 ---
 
@@ -273,7 +317,12 @@ python scripts/uat/run_acceptance_tests.py --log-cmd "docker compose logs api wo
 
 - Die eigene `docker-compose.override.yml` wird ohne `-f` automatisch geladen. Nicht
   einfach `docker-compose.override.yml.example` kopieren: das Beispiel setzt
-  `LLM_PROVIDER=ollama`/`OLLAMA_MODEL=mistral` und überschreibt damit `.env.local`.
+  `LLM_PROVIDER`/`LOCAL_MISTRAL_MODEL` per `environment:` und überschreibt damit `.env.local`.
+- Das LLM kommt von der externen Ollama-Instanz (`OLLAMA_BASE_URL` in `.env.local`) oder
+  lokal aus dem Overlay `docker-compose.ollama.yml` (README „Schnellstart“); ohne erreichbares
+  Modell enden die Jobs mit `failed` (fail-closed).
+- Ein Push an ein `callback_url` lässt sich lokal nicht gegen den HTTP-Mock testen (nur HTTPS,
+  freigegebene Hosts mit öffentlicher Adresse); die Abnahmetests nutzen das Standard-Push-Ziel.
 - Redis ist nicht auf den Host veröffentlicht, `--redis-url` daher weglassen; der Lauf
   vermerkt dann den manuellen Buffer-Check:
   `docker compose exec redis redis-cli --scan --pattern 'eki:buf:*' | wc -l` → `0`.
@@ -287,12 +336,12 @@ docker compose exec -e EKI_API_KEY=eki_... api \
   python scripts/smoke_prod.py --worker-metrics http://worker:9090   # RESULT: PASSED
 ```
 
-Paritätslauf über das Golden-Set (`tests/parity/golden_scenes.yaml`): im API-Container,
-weil Ollama nur im Docker-Netz erreichbar ist – Kommandos in
+Paritätslauf über das Golden-Set (`tests/parity/golden_scenes.yaml`): am einfachsten im
+API-Container, weil dort Konfiguration und Ollama-URL bereitliegen – Kommandos in
 [`OPERATIONS_GUIDE.md`](OPERATIONS_GUIDE.md) §7. Auf dem Host liest
 `scripts/run_parity.py` die Konfiguration aus `.env`/Umgebung (nicht `.env.local`) und
-braucht ein erreichbares `OLLAMA_BASE_URL`. `mistral_cloud` braucht `MISTRAL_API_KEY`
-und ist mit `ENV=production` gesperrt.
+braucht ein vom Host erreichbares `OLLAMA_BASE_URL` (z. B. die externe Instanz).
+`mistral_cloud` braucht `MISTRAL_API_KEY` und ist mit `ENV=production` gesperrt.
 
 ### 6.3 Großdokument-Benchmark (AT6)
 
@@ -306,23 +355,33 @@ EKI_API_KEY=eki_... python tests/run_pdf_m07_benchmark.py --concurrency 1
 
 | Skript | Zweck | braucht Stack |
 |---|---|---|
-| `tests/run_pdf_full_pipeline.py` | alle PDF-Fixtures nacheinander durch `check:async` | ja (`EKI_API_KEY`) |
-| `tests/run_pdf_selected.py` | ausgewählte PDFs durch die Pipeline | ja (`EKI_API_KEY`) |
+| `tests/run_pdf_full_pipeline.py` | alle PDFs aus `tests/fixtures/pdf/private/` (bzw. `EKI_PRIVATE_FIXTURES_DIR`) nacheinander durch `check:async`; liegen dort keine, die synthetischen Fixtures | ja (`EKI_API_KEY`) |
+| `tests/run_pdf_selected.py [datei.pdf …]` | die angegebenen PDFs, sonst die aus `private/`, sonst eine synthetische Auswahl (`simple_screenplay`, `no_structure_multi_page`, `realworld_headings`, `suffix_headings`) durch die Pipeline | ja (`EKI_API_KEY`) |
 | `tests/run_security_check.py` | Einzel-PDF prüfen, Report-PDF speichern | ja (`--key`/`EKI_API_KEY`) |
-| `tests/run_pdf_m07_benchmark.py` | Großdokument-Benchmark (§6.3) | ja |
-| `tests/run_pdf_bulk_test.py` | nur Textextraktion + Szenen-Split aller PDF-Fixtures, ohne LLM | nein |
+| `tests/run_pdf_m07_benchmark.py` | Großdokument-Benchmark (§6.3); `docker stats` nur für laufende Container (`eki-ollama` nur mit Overlay) | ja |
+| `tests/run_pdf_bulk_test.py` | nur Textextraktion + Szenen-Split der PDFs aus `private/` bzw. der synthetischen Fixtures, ohne LLM; überspringt `password_protected.pdf` (Ablehnung ist per Unit-Test abgedeckt) | nein |
 
-Ausgaben unter `tests/reports/` sind per `.gitignore` ausgeschlossen: Läufe mit echten
-Drehbüchern können Report-Inhalte und Dateinamen enthalten. Hinweis: Die PDF-Fixtures
-enthalten echte Drehbücher der Filmakademie (Freigabe-/Rechtefrage beim Auftraggeber,
-siehe `DATENSCHUTZ.md`).
+Die Runner nennen in der Kopfzeile das Quellverzeichnis. Ausgaben unter `tests/reports/` sind
+per `.gitignore` ausgeschlossen: Läufe mit echten Drehbüchern können Report-Inhalte und
+Dateinamen enthalten.
+
+**Fixture-Regel (seit 1.0.1):** Im Repository liegen nur synthetische Fixtures – in
+`.gitignore` einzeln freigegeben, erzeugt von `tests/generate_pdf_fixtures.py` und
+`tests/build_large_fixture.py`; die früher committeten echten Drehbücher sind entfernt
+(`DATENSCHUTZ.md` §8). Echte Drehbücher nur lokal in `tests/fixtures/pdf/private/` (git- und
+docker-ignoriert) oder in einem Verzeichnis unter `EKI_PRIVATE_FIXTURES_DIR`. Neue synthetische
+Fixtures im Generator anlegen und in `.gitignore` freischalten – ein anderes neues PDF unter
+`tests/fixtures/pdf/` wird ignoriert.
 
 ---
 
 ## 7. Konventionen für neue Tests
 
-- **Ablage:** `tests/test_<bereich>.py`; Testdaten unter `tests/fixtures/` (synthetisch,
-  keine echten Drehbuchtexte in Assertions oder Logs).
+- **Ablage:** `tests/test_<bereich>.py`; Testdaten unter `tests/fixtures/` (nur synthetisch,
+  Fixture-Regel §6.4; keine echten Drehbuchtexte in Assertions oder Logs).
+- **Temporal:** Clients und Worker in Tests mit `temporal_client_options(secret)` bzw. dem
+  Produktions-Converter erzeugen (der AST-Wächter in `tests/test_temporal_codec.py` prüft den
+  Produktionscode).
 - **Fixtures** aus `tests/conftest.py` nutzen (`client`, `auth_headers`, `db_session`,
   `mock_redis` …) statt eigene Engines oder Clients zu bauen. Wer per `monkeypatch`
   Umgebungsvariablen ändert, ruft `get_settings.cache_clear()` vorher und nachher.
@@ -354,20 +413,22 @@ siehe `DATENSCHUTZ.md`).
 | Migrationstests: `permission denied to create database` | Nutzer braucht `CREATEDB` (§2) |
 | OCR-Tests übersprungen | `tesseract-ocr`, `-deu`, `-eng` installieren |
 | OCR-Tests laufen in Timeouts | `OMP_THREAD_LIMIT=1` (setzt `conftest.py` per Default) |
+| CI-Job `lint` rot wegen mypy | lokal `mypy api core services workflows worker llm parsers` mit der Lock-Datei-venv ausführen und die Befunde beheben (seit 1.0.1 blockierend) |
+| CI-Job `lint` rot wegen `ruff format` in einer `.md`-Datei | Ruff formatiert auch Python-Codeblöcke in Markdown: `ruff format <datei>.md` |
 
 ---
 
 ## 9. Kennzahlen
 
-Stand 2026-10-15, Python 3.11, gemessen wie der CI-Job `test`:
+Stand 2026-10-16 (Release 1.0.1), Python 3.11, gemessen wie der CI-Job `test`:
 
 | Kennzahl | Wert |
 |---|---|
-| Tests gesamt | 1742 |
-| PostgreSQL-Lauf | 1741 bestanden, 1 `xfail` (Sync-Stub, `test_sync_check_returns_the_real_analysis`) |
-| SQLite-Lauf | 1703 bestanden, 38 übersprungen (nur PostgreSQL), 1 `xfail` |
-| Line-Coverage (PostgreSQL-Lauf) | 98,59 % (Untergrenze, siehe Messartefakt in `docs/COVERAGE_REPORT.md`) |
-| CI-Gate | 95 % |
-| Laufzeit | ~60 s SQLite, ~150 s PostgreSQL mit Coverage |
+| Tests gesamt | 2049 |
+| PostgreSQL-Lauf | 2049 bestanden, kein `xfail` |
+| SQLite-Lauf | 2005 bestanden, 44 übersprungen (nur PostgreSQL), kein `xfail` |
+| Line-Coverage (PostgreSQL-Lauf) | 98,71 % (Untergrenze, siehe Messartefakt in `docs/COVERAGE_REPORT.md`) |
+| CI-Gates | Coverage 95 %; Ruff und mypy (strict) fehlerfrei |
+| Laufzeit | ~125 s SQLite, ~160 s PostgreSQL mit Coverage |
 
 Aufschlüsselung nach Ebene und Modul: `docs/COVERAGE_REPORT.md`.

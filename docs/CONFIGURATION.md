@@ -1,9 +1,17 @@
 # eKI API – Konfigurationsreferenz
 
-Vollständige Referenz aller Einstellungen aus `api/config.py` (`Settings`, 77 Felder)
+Vollständige Referenz aller Einstellungen aus `api/config.py` (`Settings`, 82 Felder)
 plus der Variablen, die nur Docker Compose, die Infrastruktur-Container, Skripte oder
-Tests lesen. Stand: Release 1.0.0. Bei Abweichungen gilt der Code; diese Tabelle bei
+Tests lesen. Stand: Release 1.0.1. Bei Abweichungen gilt der Code; diese Tabelle bei
 jeder Änderung an `Settings` mitpflegen.
+
+**Neu bzw. geändert in 1.0.1:** `CALLBACK_URL_ALLOWED_HOSTS` und `TEMPORAL_PRIORITY_LEVELS`
+(§3.4, §3.6), `METADATA_RETENTION_DAYS`, `METADATA_CLEANUP_ENABLED`, `METADATA_CLEANUP_CRON`
+(§3.13); `KB_CLEANUP_CRON`/`METADATA_CLEANUP_CRON` werden beim Start streng geprüft, und
+`KB_CLEANUP_ENABLED=false` pausiert einen bestehenden Schedule (§3.11); `API_SECRET_KEY` ist
+zusätzlich Schlüsselmaterial der Temporal-Payload-Verschlüsselung (§3.5); `OLLAMA_BASE_URL` muss
+auf eine externe Ollama-Instanz zeigen, weil der Compose-Stack kein Ollama mehr enthält (§3.8);
+neue Temporal-Dynamic-Config für die Priorität (§2.4).
 
 Vorlage mit allen betriebsrelevanten Werten: [`.env.example`](../.env.example).
 Betriebsempfehlungen: [`OPERATIONS_GUIDE.md`](OPERATIONS_GUIDE.md) §3.
@@ -29,7 +37,8 @@ Weitere Regeln:
 
 - Variablennamen sind case-insensitiv (`case_sensitive=False`); unbekannte Variablen
   werden ignoriert.
-- Listen (`CORS_ORIGINS`, `TRUSTED_PROXY_IPS`) als kommagetrennter String oder JSON-Liste.
+- Listen (`CORS_ORIGINS`, `TRUSTED_PROXY_IPS`, `CALLBACK_URL_ALLOWED_HOSTS`) als kommagetrennter
+  String oder JSON-Liste.
 - Änderungen an `.env.local` werden erst nach Neuerzeugung der Container wirksam:
   `docker compose up -d --force-recreate api worker` (ein `docker compose restart` liest
   `env_file` **nicht** neu ein).
@@ -50,7 +59,9 @@ Bei `ENV=production` oder `ENV=prod` (`is_production`) verweigert `Settings` den
 - `LLM_PROVIDER=mistral_cloud` ohne `LLM_ALLOW_EXTERNAL_PROVIDERS=true` gesetzt ist.
 
 Unabhängig von `ENV` wird `LLM_PROVIDER` gegen `local_mistral`, `ollama`, `mistral_cloud`
-geprüft (Bindestrich-Varianten werden mit Hinweis abgelehnt).
+geprüft (Bindestrich-Varianten werden mit Hinweis abgelehnt). Ebenfalls immer geprüft werden
+seit 1.0.1 `KB_CLEANUP_CRON` und `METADATA_CLEANUP_CRON` (5-Felder-Cron, §3.13): Ein ungültiger
+Wert verhindert den Start von API und Worker (vorher entstand nur eine Warnung und kein Schedule).
 
 ---
 
@@ -98,7 +109,8 @@ jeweiligen Overlay wirkungslos:
 | `docker-compose.prod.yml` | `api`, `worker` | `ENV=production`, `DEBUG=false`, `LOG_FORMAT=json`, `LLM_PROVIDER=${LLM_PROVIDER:-local_mistral}` |
 | `docker-compose.observability.yml` | `api`, `worker` | `OTEL_ENABLED=${OTEL_ENABLED:-true}`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318` |
 | `docker-compose.observability.yml` | `worker` | `PROMETHEUS_PORT=9090` |
-| `docker-compose.override.yml.example` | `api`, `worker` | `LLM_PROVIDER=ollama`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL=mistral` – beim Kopieren anpassen oder entfernen |
+| `docker-compose.ollama.yml` (optional, Entwicklung/Offline) | `api`, `worker` | `OLLAMA_BASE_URL=http://ollama:11434`, `LOCAL_MISTRAL_BASE_URL=http://ollama:11434` (zeigen auf den Ollama-Container des Overlays; ein Wert in `.env.local` ist dann wirkungslos) |
+| `docker-compose.override.yml.example` | `api`, `worker` | `LLM_PROVIDER=local_mistral`, `LOCAL_MISTRAL_MODEL=mistral-small3.2` – beim Kopieren anpassen oder entfernen |
 
 ### 2.3 Variablen der Infrastruktur-Container und Images (nicht `Settings`)
 
@@ -109,12 +121,32 @@ jeweiligen Overlay wirkungslos:
 | `POSTGRES_USER`, `POSTGRES_PWD` | `temporal` (auto-setup, über `.env.local`) | gleicher Nutzer/gleiches Passwort wie oben; legt die Datenbanken `temporal` und `temporal_visibility` an |
 | `POSTGRES_INITDB_ARGS` | `postgres` | in `docker-compose.yml` fest `-A md5`: auch `psql` im Container braucht das Passwort |
 | `DEFAULT_NAMESPACE` | `temporal` (auto-setup) | nicht gesetzt ⇒ `default`; nur relevant, wenn `TEMPORAL_NAMESPACE` geändert wird |
+| `DEFAULT_NAMESPACE_RETENTION` | `temporal` (auto-setup) | nicht gesetzt ⇒ `24h`; wirkt nur beim **ersten** Anlegen des Namespace. Spätere Änderung mit der Temporal-CLI (`OPERATIONS_GUIDE.md` §5.11) |
+| `DYNAMIC_CONFIG_FILE_PATH` | `temporal` | in `docker-compose.yml` fest `config/dynamicconfig/eki.yaml` (gemountet aus `docker/temporal/dynamicconfig/`, §2.4) |
+| `OLLAMA_KEEP_ALIVE`, `OLLAMA_NUM_PARALLEL` | Ollama-Container des Overlays `docker-compose.ollama.yml` | dort `30m` bzw. `1`; für die externe Produktionsinstanz dieselben Werte empfohlen (`OPERATIONS_GUIDE.md` §4.11) |
+
+### 2.4 Temporal-Dynamic-Config (`docker/temporal/dynamicconfig/eki.yaml`)
+
+Die Datei wird in den `temporal`-Container gemountet (auch im Prod-Overlay, sie kommt also aus dem
+Checkout, nicht aus einem Image). Temporal liest sie periodisch neu ein; `docker compose restart
+temporal` wendet Änderungen sofort an.
+
+| Schlüssel | Wert | Wirkung |
+|---|---|---|
+| `history.hostLevelCacheMaxSize` | `50000` | begrenzt den Mutable-State-Cache |
+| `history.enableHostLevelEventsCache`, `history.eventsHostLevelCacheMaxSizeBytes` | `true`, 256 MB | Events-Cache mit Byte-Limit |
+| `frontend.keepAliveMaxConnectionAge` | `5m` | begrenzt die Lebensdauer von gRPC-Verbindungen |
+| `matching.useNewMatcher` | `true` (1.0.1) | prioritätsfähiger Matcher; in Temporal 1.29 standardmäßig aus – ohne ihn wird `priority` ignoriert |
+| `matching.priorityLevels` | `10` (1.0.1) | Anzahl Prioritätsstufen (Temporal-Standard 5); muss `TEMPORAL_PRIORITY_LEVELS` entsprechen |
+
+Bei einem extern betriebenen Temporal-Cluster müssen dessen Betreiber die beiden
+`matching.*`-Schlüssel setzen.
 
 ---
 
 ## 3. Alle Einstellungen aus `api/config.py`
 
-Spalte „Gelesen in“: Module, die den Wert verwenden (Stand 1.0.0, per `grep` ermittelt).
+Spalte „Gelesen in“: Module, die den Wert verwenden (Stand 1.0.1, per `grep` ermittelt).
 „ungenutzt (reserviert)“: das Feld existiert, wird aber nirgends gelesen – Setzen hat
 keine Wirkung.
 
@@ -154,16 +186,21 @@ keine Wirkung.
 |---|---|---|---|---|
 | `TEMPORAL_HOST` | str | `localhost:7233` | Temporal-Frontend (`temporal:7233` in Compose) | `api/dependencies.py`, `api/routers/health.py`, `worker/main.py` |
 | `TEMPORAL_NAMESPACE` | str | `default` | Namespace für API **und** Worker; muss existieren (auto-setup legt nur `default` an) | `api/dependencies.py`, `api/routers/health.py`, `worker/main.py` |
-| `TEMPORAL_TASK_QUEUE` | str | `security-check` | Task-Queue für Prüf-Workflows und den KB-Cleanup-Schedule | `api/routers/security.py`, `worker/main.py`, `workflows/maintenance.py` |
-| `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` | int (s) | `36000` | Gesamtlaufzeit eines Prüf-Workflows (≥ 2 h Verarbeitung + 6 h Retry/Pull-TTL) | `api/routers/security.py` |
+| `TEMPORAL_TASK_QUEUE` | str | `security-check` | Task-Queue für Prüf-Workflows und die Wartungs-Schedules (`eki-kb-cleanup`, `eki-metadata-cleanup`); eine Änderung zieht der Worker beim Start in den Schedules nach | `api/routers/security.py`, `worker/main.py`, `workflows/maintenance.py` |
+| `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` | int (s) | `36000` | Gesamtlaufzeit eines Prüf-Workflows (≥ 2 h Verarbeitung + 6 h Retry/Pull-TTL); geht zusammen mit `BUFFER_TTL_SECONDS` in die Schutzregel für verwaiste Jobs ein (§3.13) | `api/routers/security.py`, `workflows/maintenance.py` |
+| `TEMPORAL_PRIORITY_LEVELS` | int 1–100 | `10` | Anzahl der Prioritätsstufen des Temporal-Servers (= Dynamic Config `matching.priorityLevels`, §2.4). Die API bildet das Request-Feld `priority` 1–10 auf Temporal-Schlüssel 1–N ab: `((p - 1) * N) // 10 + 1` (bei 10 identisch). Muss zur Server-Konfiguration passen | `api/routers/security.py` |
 | `WORKER_MAX_CONCURRENT_WORKFLOW_TASKS` | int ≥ 1 | `10` | Temporal-Worker-Cap | `worker/main.py` |
 | `WORKER_MAX_CONCURRENT_ACTIVITIES` | int ≥ 1 | `20` | Temporal-Worker-Cap | `worker/main.py` |
+
+Die Temporal-Payloads (Workflow-/Activity-Ein- und -Ausgaben, Header, Fehlermeldungen) werden seit
+1.0.1 immer verschlüsselt (AES-256-GCM, `core/temporal_codec.py`); es gibt keinen Schalter und
+keine eigene Variable – der Schlüssel wird aus `API_SECRET_KEY` abgeleitet (§3.5).
 
 ### 3.5 Sicherheit & Rate-Limits
 
 | Variable | Typ | Default | Bedeutung | Gelesen in |
 |---|---|---|---|---|
-| `API_SECRET_KEY` | str | `replace-this-secret-key-with-at-least-32-characters` | Master-Secret: Fernet-Schlüssel für SecureBuffer und KB-Originaltexte (SHA-256-Ableitung). Wechsel ⇒ gepufferte Inhalte und KB-Originale nicht mehr entschlüsselbar | `api/routers/security.py`, `api/routers/knowledge_base.py`, `workflows/activities.py`, `workflows/maintenance.py` |
+| `API_SECRET_KEY` | str | `replace-this-secret-key-with-at-least-32-characters` | Master-Secret: Fernet-Schlüssel für SecureBuffer und KB-Originaltexte (SHA-256-Ableitung) und seit 1.0.1 Schlüssel des Temporal-Payload-Codecs (HKDF-SHA256, Label `eki-temporal-codec-v1`). **Muss in API und Worker identisch sein.** Wechsel ⇒ gepufferte Inhalte und KB-Originale nicht mehr entschlüsselbar, offene Workflows nicht mehr dekodierbar (vorher drainen, `OPERATIONS_GUIDE.md` §5.7) | `api/routers/security.py`, `api/routers/knowledge_base.py`, `workflows/activities.py`, `workflows/maintenance.py`; Codec (`core/temporal_codec.py`) über `api/dependencies.py`, `api/routers/health.py`, `worker/main.py` |
 | `API_SECRET_KEY_FILE` | str \| None | – | Datei mit `API_SECRET_KEY` (Vorrang) | `api/config.py` |
 | `API_TOKEN_EXPIRE_MINUTES` | int | `60` | ungenutzt (reserviert) – es gibt keine Tokens; API-Keys laufen über `api_keys.expires_at` ab | – |
 | `RATE_LIMIT_ENABLED` | bool | `true` | Rate-Limiting an/aus (bei Redis-Ausfall wird durchgelassen) | `api/rate_limiting.py` |
@@ -176,13 +213,14 @@ keine Wirkung.
 
 | Variable | Typ | Default | Bedeutung | Gelesen in |
 |---|---|---|---|---|
-| `EPRO_BASE_URL` | str | `https://staging.epro.filmakademie.de/api` | Push-Ziel ist immer `EPRO_BASE_URL/eki/scl/set-risk-assessment/{project_id}` (das Request-Feld `callback_url` wird validiert, aber nicht verwendet) | `workflows/activities.py` |
-| `EPRO_AUTH_TOKEN` | str | leer | optionaler Bearer-Token für Push und Webhook (ePro authentisiert derzeit per IP) | `workflows/activities.py` |
+| `EPRO_BASE_URL` | str | `https://staging.epro.filmakademie.de/api` | Standard-Push-Ziel `EPRO_BASE_URL/eki/scl/set-risk-assessment/{project_id}`; ein `callback_url` im Request ersetzt es für diesen Job (seit 1.0.1) | `workflows/activities.py` |
+| `CALLBACK_URL_ALLOWED_HOSTS` | list[str] (Komma oder JSON-Liste) | `epro.filmakademie.de,staging.epro.filmakademie.de` | Hosts, auf die ein `callback_url` zeigen darf: exakter Vergleich, Groß-/Kleinschreibung und abschließender Punkt egal, keine Wildcards/Subdomains, jeder Port. Leer ⇒ jedes `callback_url` wird mit 422 abgelehnt. Geprüft bei der Anfrage (API) **und** vor jedem Push (Worker, zusätzlich DNS: nur öffentliche Adressen) – API und Worker brauchen denselben Wert; ein entfernter Host lässt laufende Jobs mit Dead Letter `invalid_callback_url` enden | `api/config.py`, `core/models.py`, `core/callback_url.py`, `workflows/activities.py` |
+| `EPRO_AUTH_TOKEN` | str | leer | optionaler Bearer-Token für Push und Webhook (ePro authentisiert derzeit per IP); wird auch an ein `callback_url` gesendet (deshalb die Host-Allow-List) | `workflows/activities.py` |
 | `EPRO_AUTH_TOKEN_FILE` | str \| None | – | Datei mit `EPRO_AUTH_TOKEN` (Vorrang) | `api/config.py` |
 | `EPRO_TIMEOUT` | int (s) | `30` | HTTP-Timeout je Push-/Webhook-Versuch | `workflows/activities.py` |
 | `EPRO_WEBHOOK_URL` | str | leer | `security.delivery.failed`-Webhook; leer = aus | `workflows/activities.py` |
 | `EPRO_WEBHOOK_URL_FILE` | str \| None | – | Datei mit `EPRO_WEBHOOK_URL` (Vorrang) | `api/config.py` |
-| `DELIVERY_MODE` | str | `pull` | faktisch wirkungslos: Den Modus bestimmt das Request-Feld `delivery` (`pull`/`push`, Default `pull`, ein leerer Wert ergibt ebenfalls `pull`); die Einstellung ist nur noch als Fallback im Code verankert | `api/routers/security.py` |
+| `DELIVERY_MODE` | str | `pull` | faktisch wirkungslos: Den Modus bestimmt das Request-Feld `delivery` (`pull`/`push`; fehlt es oder ist es leer, gilt `push`, wenn `callback_url` gesetzt ist, sonst `pull`); die Einstellung ist nur noch als Fallback im Code verankert | `api/routers/security.py` |
 
 ### 3.7 LLM-Provider
 
@@ -203,7 +241,7 @@ Mit `mistral_cloud` ist die Knowledge Base nicht nutzbar (der Provider hat kein 
 
 | Variable | Typ | Default | Bedeutung | Gelesen in |
 |---|---|---|---|---|
-| `OLLAMA_BASE_URL` | str | `http://ollama:11434` | Ollama-Endpoint | `llm/factory.py` |
+| `OLLAMA_BASE_URL` | str | `http://ollama:11434` | Ollama-Endpoint für Inferenz und KB-Embeddings. Seit 1.0.1 enthält der Stack kein Ollama: **die URL der externen Instanz setzen** (`.env.example`: Platzhalter `http://ollama-host.invalid:11434`). Der Code-Default passt nur zum Overlay `docker-compose.ollama.yml`, das den Wert selbst setzt. Ohne erreichbare URL scheitern Jobs beim ersten LLM-Aufruf (`/ready` prüft Ollama nicht) | `llm/factory.py` |
 | `OLLAMA_MODEL` | str | `mistral` | Modell **nur** für `LLM_PROVIDER=ollama` (`.env.example`: `mistral-small3.2`) | `llm/factory.py` |
 | `OLLAMA_TIMEOUT` | int (s) | `300` | HTTP-Timeout je Ollama-Call | `llm/factory.py` |
 | `OLLAMA_THINK` | bool | `false` | Thinking-Modus für gemma4/qwen3.x; von Mistral ignoriert | `llm/factory.py` |
@@ -243,8 +281,8 @@ Mit `mistral_cloud` ist die Knowledge Base nicht nutzbar (der Provider hat kein 
 | `KB_DEFAULT_TENANT_ID` | str (UUID) | `00000000-0000-0000-0000-000000000001` | Mandant aller KB-Dokumente | `api/routers/knowledge_base.py`, `workflows/activities.py` |
 | `KB_TOP_K` | int | `3` | Chunks je Szene | `workflows/activities.py` |
 | `KB_MAX_CHUNK_CHARS_IN_PROMPT` | int | `600` | max. Zeichen je Chunk im Prompt | `workflows/activities.py` |
-| `KB_CLEANUP_ENABLED` | bool | `true` | Worker legt beim Start den Temporal-Schedule `eki-kb-cleanup` an. `false` entfernt einen bestehenden Schedule **nicht** (in der Temporal UI löschen) | `workflows/maintenance.py` |
-| `KB_CLEANUP_CRON` | str | `0 3 * * *` | Cron (UTC) des Schedules. Wirkt nur beim **Anlegen**; für eine Änderung den bestehenden Schedule löschen und den Worker neu starten. In `.env`-Dateien in Anführungszeichen setzen | `workflows/maintenance.py` |
+| `KB_CLEANUP_ENABLED` | bool | `true` | Temporal-Schedule `eki-kb-cleanup`. Bei jedem Worker-Start: fehlt er, wird er angelegt; `false` **pausiert** einen bestehenden Schedule (bzw. legt keinen an), `true` setzt ihn fort (seit 1.0.1; vorher blieb ein bestehender Schedule unverändert) | `workflows/maintenance.py` |
+| `KB_CLEANUP_CRON` | str | `0 3 * * *` | Cron (UTC, 5 Felder, Format §3.13) des Schedules; wird beim Start geprüft. Eine Änderung wirkt nach Neustart des Workers (Schedule wird aktualisiert; früher musste er dafür gelöscht werden). In `.env`-Dateien in Anführungszeichen setzen | `api/config.py`, `workflows/maintenance.py` |
 
 ### 3.12 Observability & Logging
 
@@ -257,6 +295,28 @@ Mit `mistral_cloud` ist die Knowledge Base nicht nutzbar (der Provider hat kein 
 | `LOG_LEVEL` | str | `INFO` | Log-Level | `core/logging_config.py` |
 | `LOG_FORMAT` | str | `json` | `json` oder `console`; Inhalte werden in beiden Formaten maskiert | `core/logging_config.py` |
 
+### 3.13 Metadaten-Aufbewahrung (seit 1.0.1)
+
+| Variable | Typ | Default | Bedeutung | Gelesen in |
+|---|---|---|---|---|
+| `METADATA_RETENTION_DAYS` | int ≥ 1 | `90` | Aufbewahrungsfrist in Tagen für `job_metadata` (Endzustände und verwaiste Jobs), `report_metadata`, `delivery_dead_letters` (auch unquittierte), nicht mehr nutzbare `api_keys` und `audit_logs`; Regeln: `DATENSCHUTZ.md` §4. Verwaiste Jobs werden nur gelöscht, wenn die Frist länger ist als `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` + `BUFFER_TTL_SECONDS` (Standard 16 h, bei ≥ 1 Tag also immer). Nur der Worker liest den Wert | `workflows/maintenance.py` |
+| `METADATA_CLEANUP_ENABLED` | bool | `true` | Temporal-Schedule `eki-metadata-cleanup`; `false` pausiert einen bestehenden bzw. legt keinen an, `true` setzt ihn beim nächsten Worker-Start fort | `workflows/maintenance.py` |
+| `METADATA_CLEANUP_CRON` | str | `30 3 * * *` | Cron (UTC) des Metadaten-Cleanups; wird beim Start geprüft; eine Änderung wirkt nach Neustart des Workers. In `.env`-Dateien in Anführungszeichen setzen | `api/config.py`, `workflows/maintenance.py` |
+
+**Cron-Format** (`KB_CLEANUP_CRON`, `METADATA_CLEANUP_CRON`): genau 5 Felder
+`Minute Stunde Tag Monat Wochentag`, ausgewertet in **UTC**. Je Feld `*`, Zahlen, Bereiche `a-b`,
+Schritte `*/n`, `a-b/n`, `a/n` und Listen mit Komma; Monatsnamen `JAN`–`DEC`, Wochentage
+`SUN`–`SAT` (Groß-/Kleinschreibung egal). Wertebereiche: Minute 0–59, Stunde 0–23, Tag 1–31,
+Monat 1–12, Wochentag 0–6 (0 = Sonntag; `7` wird abgelehnt). Nicht erlaubt: 6/7 Felder
+(Sekunden, Jahr), Kürzel wie `@daily`/`@every`, `?`, `L`, `#`, `CRON_TZ=`. Leerraum wird
+normalisiert. Sind Tag und Wochentag beide eingeschränkt, müssen bei Temporal **beide** passen
+(UND; klassisches cron verknüpft sie mit ODER). Ein ungültiger Wert bricht den Start von API und
+Worker mit einer Meldung ab, die den Variablennamen nennt.
+
+Der Worker gleicht beide Schedules bei jedem Start mit diesen Einstellungen ab (Cron,
+aktiviert/pausiert, Task-Queue, Zielworkflow); Änderungen in der Temporal UI überschreibt der
+nächste Start. Betrieb: `OPERATIONS_GUIDE.md` §5.10.
+
 ---
 
 ## 4. Variablen der Skripte und Tests
@@ -266,7 +326,7 @@ Nicht Teil von `Settings`; nur für die genannten Werkzeuge.
 | Variable | Werkzeug | Default | Bedeutung |
 |---|---|---|---|
 | `EKI_API_URL` | `scripts/seed_kb.py`, `scripts/smoke_prod.py`, `scripts/uat/run_acceptance_tests.py`, `tests/run_*.py` | `http://localhost:8000` | API-Basis-URL |
-| `EKI_API_KEY` | dieselben | – | API-Key (Klartext `eki_…`) |
+| `EKI_API_KEY` | dieselben | – | API-Key (Klartext `eki_…`); für `scripts/seed_kb.py` ein **Admin-Key** (`/v1/kb/*` seit 1.0.1 admin-only, sonst 403 mit Hinweis) |
 | `EKI_ADMIN_KEY` | `scripts/uat/run_acceptance_tests.py` | – | Admin-Key für `/v1/ops/*` (AT4) |
 | `MOCK_URL` | `scripts/uat/run_acceptance_tests.py` | – | Steuer-URL des ePro-Mocks (AT2/AT4) |
 | `EKI_REDIS_URL` | `scripts/uat/run_acceptance_tests.py` | – | optionaler Redis-Zugang für den Buffer-Check |
@@ -274,5 +334,7 @@ Nicht Teil von `Settings`; nur für die genannten Werkzeuge.
 | `EKI_WORKER_METRICS_URL` | `scripts/smoke_prod.py` | – | Worker-Exporter, z. B. `http://worker:9090` (nur im Docker-Netz erreichbar) |
 | `TEST_POSTGRES_URL` | pytest (`tests/conftest.py`) | – | ganze Suite gegen echtes PostgreSQL; **Datenbank wird geleert** |
 | `TEST_REDIS_URL` | pytest (`tests/test_e2e_pipeline.py`) | `redis://localhost:6379/4` | echtes Redis für die E2E-Tests; **DB wird geleert** (DB 0 wird verweigert) |
+| `EKI_PRIVATE_FIXTURES_DIR` | `tests/run_pdf_bulk_test.py`, `tests/run_pdf_full_pipeline.py`, `tests/run_pdf_selected.py` | `tests/fixtures/pdf/private/` | Verzeichnis mit lokalen echten Drehbüchern (git- und docker-ignoriert); ohne PDFs dort nutzen die Runner die synthetischen Fixtures |
+| `EKI_FULL_FIXTURE_SCAN` | pytest (`tests/test_edge_parsers_and_services.py`) | – (aus) | `1` = der Injection-Filter-Scan prüft alle Seiten jedes PDF-Fixtures statt der ersten 8 |
 
 Details zu den Testvariablen: [`TESTING_GUIDE.md`](TESTING_GUIDE.md).

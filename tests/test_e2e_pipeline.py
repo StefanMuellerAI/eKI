@@ -5,8 +5,8 @@ client, workflow tests use stub activities, activity tests call activities in
 isolation). These tests run the *real* production path in one event loop:
 
     HTTP API (FastAPI ``app`` via ASGITransport, real API-key auth)
-      -> ``get_temporal_client`` overridden with the time-skipping test server's
-         client, wrapped with ``temporal_interceptors`` like api/dependencies.py
+      -> the real ``get_temporal_client`` (interceptors + payload encryption codec);
+         only ``TemporalClient.connect`` is redirected to the time-skipping test server
       -> ``worker/main.py:main()`` itself (only ``Client.connect`` is redirected
          to the test server), i.e. exactly the production registration list of
          ``SecurityCheckWorkflow`` and the activities from workflows/activities.py
@@ -23,7 +23,9 @@ isolation). These tests run the *real* production path in one event loop:
 Scenarios mirror the Pflichtenheft acceptance tests (docs/UAT/UAT_TESTPLAN.md):
 AT2 push + delete-on-delivery, AT3 pull one-shot + 410, AT4 hard-4xx failure
 branch with dead letter + webhook, AT5 idempotency, plus processing failures,
-the synchronous endpoint and the "only reference keys in Temporal" invariant.
+the push to a per-job ``callback_url`` with Temporal ``priority`` (1.0.1), the
+removed synchronous endpoint (404) and the "only reference keys in Temporal"
+invariant.
 
 Waiting is bounded and sleep-free: job status is polled once per completed
 activity (observed through a worker interceptor), workflow results are awaited
@@ -50,10 +52,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 import redis
 import redis.asyncio as aioredis
 import sqlalchemy.ext.asyncio as sa_asyncio
+from google.protobuf.message import Message
 from httpx import ASGITransport, AsyncClient
 from redis.exceptions import LockError
 from sqlalchemy import func, select
@@ -61,17 +65,19 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from temporalio import activity
 from temporalio import client as temporal_client
 from temporalio import worker as temporal_worker
+from temporalio.api.common.v1 import Payload
 from temporalio.client import Client, WorkflowExecutionStatus
 from temporalio.testing import WorkflowEnvironment
 
+import api.dependencies as api_dependencies
 import llm.factory
 import worker.main as worker_main
 from api.config import get_settings
 from api.dependencies import get_redis, get_temporal_client
 from api.main import app
 from core.db_models import DeliveryDeadLetter, JobMetadata, ReportMetadata
-from core.models import JobStatus, SyncSecurityCheckResponse
-from core.tracing import temporal_interceptors
+from core.models import JobStatus
+from core.temporal_codec import ENCRYPTED_ENCODING, EncryptionCodec
 from core.version import __version__
 from llm.base import BaseLLMProvider
 from workflows import activities
@@ -466,6 +472,7 @@ class StartedWorkflow:
     task_queue: str
     args: Sequence[Any]
     handle: temporal_client.WorkflowHandle[Any, Any]
+    priority: Any = None  # temporalio.common.Priority passed by the API (1.0.1)
 
 
 class _StartRecorder(temporal_client.Interceptor):
@@ -491,7 +498,11 @@ class _StartRecorderOutbound(temporal_client.OutboundInterceptor):
         handle = await super().start_workflow(input)
         self._rec.starts.append(
             StartedWorkflow(
-                workflow_id=input.id, task_queue=input.task_queue, args=input.args, handle=handle
+                workflow_id=input.id,
+                task_queue=input.task_queue,
+                args=input.args,
+                handle=handle,
+                priority=input.priority,
             )
         )
         return handle
@@ -558,10 +569,20 @@ def _gated_app(asgi_app: Any, gate: asyncio.Lock | None) -> Any:
     return _app
 
 
-def _client_from(base: Client, interceptors: Sequence[Any]) -> Client:
-    """Clone the test-server client (keeping its time-skipping interceptors)."""
+def _client_from(
+    base: Client, interceptors: Sequence[Any], connect_kwargs: dict[str, Any]
+) -> Client:
+    """Clone the test-server client (keeping its time-skipping interceptors).
+
+    The payload codec options of the production ``Client.connect`` call
+    (``data_converter``, ``header_codec_behavior``) are applied as given.
+    """
     config = base.config()
     config["interceptors"] = list(interceptors)
+    if "data_converter" in connect_kwargs:
+        config["data_converter"] = connect_kwargs["data_converter"]
+    if "header_codec_behavior" in connect_kwargs:
+        config["header_codec_behavior"] = connect_kwargs["header_codec_behavior"]
     return Client(**config)
 
 
@@ -743,6 +764,7 @@ async def pipeline_worker(
             return _client_from(
                 env_client,
                 [*env_client.config()["interceptors"], *kwargs.get("interceptors", []), progress],
+                kwargs,
             )
 
     class _RecordingWorker(temporal_worker.Worker):
@@ -787,10 +809,12 @@ class Pipeline:
     db: async_sessionmaker[AsyncSession]
     settings: Any
     routed_engines: list[str] = field(default_factory=list)
+    api_connect_calls: list[dict[str, Any]] = field(default_factory=list)
 
 
 @pytest.fixture
 async def pipeline(
+    monkeypatch: pytest.MonkeyPatch,
     override_get_db: None,
     e2e_settings: Any,
     redis_db: aioredis.Redis,
@@ -804,18 +828,26 @@ async def pipeline(
 ) -> AsyncIterator[Pipeline]:
     recorder = _StartRecorder()
     env_client = temporal_env.client
-    # Like api/dependencies.get_temporal_client: interceptors=temporal_interceptors(settings).
-    api_temporal = _client_from(
-        env_client,
-        [recorder, *env_client.config()["interceptors"], *temporal_interceptors(e2e_settings)],
-    )
+    api_connect_calls: list[dict[str, Any]] = []
 
-    async def _override_temporal() -> AsyncIterator[Client]:
-        yield api_temporal
+    class _ApiConnectToTestServer:
+        """Stands in for ``TemporalClient`` in api/dependencies.py: the real
+        ``get_temporal_client`` runs (interceptors, payload codec), only the
+        connection is redirected to the test server -- like the worker above."""
 
-    # Redis: the real ``get_redis`` dependency, reading the patched settings.redis_url.
+        @staticmethod
+        async def connect(target_host: str, **kwargs: Any) -> Client:
+            api_connect_calls.append({"target_host": target_host, **kwargs})
+            return _client_from(
+                env_client,
+                [recorder, *env_client.config()["interceptors"], *kwargs.get("interceptors", [])],
+                kwargs,
+            )
+
+    # Redis and Temporal: the real dependencies, reading the patched settings.
     assert get_redis not in app.dependency_overrides, "a leaked get_redis override"
-    app.dependency_overrides[get_temporal_client] = _override_temporal
+    assert get_temporal_client not in app.dependency_overrides, "a leaked Temporal override"
+    monkeypatch.setattr(api_dependencies, "TemporalClient", _ApiConnectToTestServer)
     try:
         transport = ASGITransport(app=_gated_app(app, db_gate))
         async with AsyncClient(transport=transport, base_url="http://test") as http:
@@ -829,9 +861,9 @@ async def pipeline(
                 db=db,
                 settings=e2e_settings,
                 routed_engines=activity_db,
+                api_connect_calls=api_connect_calls,
             )
     finally:
-        app.dependency_overrides.pop(get_temporal_client, None)
         # A test that failed early may leave its workflow running; terminate it
         # so the worker does not shut down with live workflow coroutines.
         for start in recorder.starts:
@@ -844,13 +876,13 @@ async def pipeline(
 
 
 @pytest.fixture
-async def sync_api(
+async def api_without_temporal(
     override_get_db: None,
     e2e_settings: Any,
     redis_db: aioredis.Redis,
     fake_llm: FakeLLMProvider,
 ) -> AsyncIterator[AsyncClient]:
-    """API client without any Temporal wiring (the sync endpoint must not need it)."""
+    """API client without any Temporal wiring (a 404 must not need the workflow engine)."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
         yield http
 
@@ -1151,6 +1183,10 @@ async def test_worker_entrypoint_registers_everything_the_workflow_uses(
     assert call["target_host"] == e2e_settings.temporal_host
     assert call["namespace"] == e2e_settings.temporal_namespace
     assert any(type(i).__name__ == "ContextPropagationInterceptor" for i in call["interceptors"])
+    # 1.0.1: payload codec keyed by API_SECRET_KEY (the test server sees ciphertext only).
+    codec = call["data_converter"].payload_codec
+    assert isinstance(codec, EncryptionCodec)
+    assert codec.key_id == EncryptionCodec(e2e_settings.api_secret_key).key_id
 
 
 # ---------------------------------------------------------------------------
@@ -1446,6 +1482,180 @@ async def test_push_fdx_delivers_to_epro_and_deletes_content(
 
 
 # ---------------------------------------------------------------------------
+# c2) Push to a per-job callback_url, with Temporal priority (1.0.1, Decision 10b)
+# ---------------------------------------------------------------------------
+
+_CALLBACK_HOST = "epro-callback.e2e.test"
+_CALLBACK_PUBLIC_IP = "93.184.216.34"  # what the injected DNS answers; never contacted
+
+
+class _ForwardPinnedPushToMock(httpx.AsyncBaseTransport):
+    """Transport of the activity's push client in the callback tests.
+
+    Records the request exactly as the activity built it (HTTPS URL pinned to the
+    validated IP, ``Host`` header, SNI extension) and forwards it unchanged in
+    method, path, query, headers and body to the local ePro mock (plain HTTP on
+    127.0.0.1) -- the only stand-in for the network, no real DNS or connection.
+    """
+
+    def __init__(self, mock: EproMock) -> None:
+        self.seen: list[tuple[httpx.URL, str | None]] = []  # (pinned URL, SNI host)
+        self._mock_port = httpx.URL(mock.base_url).port
+        self._inner = httpx.AsyncHTTPTransport()
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.seen.append((request.url, request.extensions.get("sni_hostname")))
+        request.url = request.url.copy_with(scheme="http", host="127.0.0.1", port=self._mock_port)
+        return await self._inner.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+
+@pytest.fixture
+def callback_route(
+    pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch
+) -> tuple[_ForwardPinnedPushToMock, Any]:
+    """Allow the callback host via settings, inject DNS, route pushes to the mock."""
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(pipeline.settings, "callback_url_allowed_hosts", [_CALLBACK_HOST])
+    resolver = AsyncMock(return_value=[_CALLBACK_PUBLIC_IP])
+    monkeypatch.setattr(activities, "_resolve_callback_host", resolver)
+    forward = _ForwardPinnedPushToMock(pipeline.epro)
+    monkeypatch.setattr(
+        activities,
+        "_push_http_client",
+        lambda timeout: httpx.AsyncClient(timeout=timeout, transport=forward),
+    )
+    return forward, resolver
+
+
+async def test_push_to_callback_url_with_priority(
+    pipeline: Pipeline, auth_headers: dict[str, str], callback_route: Any
+) -> None:
+    """callback_url is the push target (delivery omitted -> push); payload, headers,
+    token and delete-on-delivery as for the default target; priority reaches Temporal."""
+    from temporalio.common import Priority
+
+    forward, resolver = callback_route
+    project_id = _project_id("callback")
+    callback_path = f"{_ASSESSMENT_PREFIX}cb-{project_id}?via=callback"
+    request_id = f"e2e-req-{uuid.uuid4().hex}"
+    resp = await pipeline.http.post(
+        "/v1/security/check:async",
+        json={
+            "script_content": _fixture_b64("fdx/stunt_heavy.fdx"),
+            "script_format": "fdx",
+            "project_id": project_id,
+            "script_id": 4711,
+            "callback_url": f"https://{_CALLBACK_HOST}{callback_path}",
+            "priority": 2,
+        },
+        headers={**auth_headers, "X-Request-ID": request_id},
+    )
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["message"] == "Security check job started (delivery=push)"
+    job_id = resp.json()["job_id"]
+    start = _started(pipeline, job_id)
+    assert start.priority == Priority(priority_key=2)
+    job_input = start.args[0]
+    assert (job_input["delivery_mode"], job_input["priority"]) == ("push", 2)
+    assert job_input["callback_url"] == f"https://{_CALLBACK_HOST}{callback_path}"
+    report_id = job_input["report_id"]
+
+    result = await _workflow_result(pipeline, job_id)
+    assert (result["status"], result["delivered"], result["delivery_mode"]) == (
+        "completed",
+        True,
+        "push",
+    )
+    history = await _started(pipeline, job_id).handle.fetch_history()
+    started_attrs = history.events[0].workflow_execution_started_event_attributes
+    assert started_attrs.priority.priority_key == 2
+
+    # DNS was checked, the connection pinned to the validated address.
+    resolver.assert_awaited_once_with(_CALLBACK_HOST, 443)
+    ((pinned_url, sni),) = forward.seen
+    assert str(pinned_url) == f"https://{_CALLBACK_PUBLIC_IP}{callback_path}"
+    assert sni == _CALLBACK_HOST
+
+    # Exactly one push, to the callback URL -- not to EPRO_BASE_URL/.../{project_id}.
+    (delivery,) = pipeline.epro.deliveries()
+    assert delivery.path == callback_path
+    assert delivery.headers["host"] == _CALLBACK_HOST
+    assert delivery.headers["authorization"] == f"Bearer {_EPRO_TOKEN}"
+    assert delivery.headers["idempotency-key"] == report_id
+    assert delivery.headers["x-eki-job-id"] == job_id
+    assert delivery.headers["x-eki-attempt"] == "1"
+    assert delivery.headers["x-request-id"] == request_id
+    form = delivery.form()
+    assert set(form) == {"script_id", "status", "assessment", "file"}
+    assert delivery.text_field("script_id") == "4711"
+    assert delivery.text_field("status") == "1"
+    assert form["file"]["data"].startswith(b"%PDF")
+
+    status = (await pipeline.http.get(f"/v1/security/jobs/{job_id}", headers=auth_headers)).json()
+    assert status["status"] == "completed"
+    assert status["metadata"]["delivery_status"] == "delivered"
+    assert status["metadata"]["delivery_last_status_code"] == 201
+    assert await _buffer_keys(pipeline.redis) == []
+    assert await _residual_keys(pipeline.redis) == []
+    assert await _dead_letters(pipeline, job_id) == []
+
+
+async def test_callback_url_resolving_to_a_private_address_is_dead_lettered(
+    pipeline: Pipeline,
+    auth_headers: dict[str, str],
+    admin_headers: dict[str, str],
+    callback_route: Any,
+) -> None:
+    """DNS-rebinding defence: allowed host, but its DNS answer is internal at delivery
+    time -> nothing is sent, no retry, failure branch with ``invalid_callback_url``."""
+    forward, resolver = callback_route
+    resolver.return_value = ["10.20.30.40"]
+    project_id = _project_id("callback-rebind")
+    resp = await _submit_json(
+        pipeline,
+        auth_headers,
+        fixture="fdx/stunt_heavy.fdx",
+        script_format="fdx",
+        project_id=project_id,
+        delivery="push",
+        callback_url=f"https://{_CALLBACK_HOST}/cb",
+    )
+    assert resp.status_code == 202, resp.text
+    job_id = resp.json()["job_id"]
+    report_id = _started(pipeline, job_id).args[0]["report_id"]
+
+    result = await _workflow_result(pipeline, job_id)
+    assert result["status"] == "delivery_failed"
+    assert result["failure_reason"] == "invalid_callback_url"
+    assert forward.seen == [] and pipeline.epro.deliveries() == []
+    assert pipeline.progress.count("deliver_report") == 1  # non-retryable
+
+    (webhook,) = pipeline.epro.webhooks()
+    assert json.loads(webhook.body) == {
+        "job_id": job_id,
+        "report_id": report_id,
+        "reason": "invalid_callback_url",
+        "attempts": 0,
+    }
+    status = (await pipeline.http.get(f"/v1/security/jobs/{job_id}", headers=auth_headers)).json()
+    assert status["status"] == "failed"
+    assert status["error_message"] == "delivery_failed:invalid_callback_url"
+    assert status["metadata"]["delivery_status"] == "dead_lettered"
+    assert await _buffer_keys(pipeline.redis) == []
+
+    listing = await pipeline.http.get(
+        "/v1/ops/dead-letters", params={"acknowledged": "false"}, headers=admin_headers
+    )
+    (dead_letter,) = [d for d in listing.json()["items"] if d["job_id"] == job_id]
+    assert (dead_letter["reason"], dead_letter["delivery_mode"]) == ("invalid_callback_url", "push")
+    assert dead_letter["webhook_sent"] is True
+
+
+# ---------------------------------------------------------------------------
 # d) Push hard failure (ePro answers 422)
 # ---------------------------------------------------------------------------
 
@@ -1598,38 +1808,31 @@ async def test_idempotent_resubmission_starts_one_workflow_and_delivers_once(
 
 
 # ---------------------------------------------------------------------------
-# f) Synchronous endpoint (no Temporal)
+# f) Removed synchronous endpoint (1.0.1, Decision 6)
 # ---------------------------------------------------------------------------
 
 
-async def test_sync_check_contract_without_temporal(
-    sync_api: AsyncClient, auth_headers: dict[str, str], redis_db: aioredis.Redis, db: Any
+async def test_removed_sync_endpoint_is_404_without_side_effects(
+    api_without_temporal: AsyncClient,
+    auth_headers: dict[str, str],
+    redis_db: aioredis.Redis,
+    db: Any,
 ) -> None:
-    """The sync endpoint answers in-request, needs no workflow engine and leaves nothing behind."""
-    project_id = _project_id("sync")
+    """``POST /v1/security/check`` (M01 stub) is gone: 404 envelope for anonymous and
+    authenticated callers alike, no workflow engine involved, no job, no buffer entry."""
+    project_id = _project_id("sync-removed")
     body = {
         "script_content": _fixture_b64("fdx/stunt_heavy.fdx"),
         "script_format": "fdx",
         "project_id": project_id,
     }
-    unauthenticated = await sync_api.post("/v1/security/check", json=body)
-    assert unauthenticated.status_code in (401, 403)
-
-    resp = await sync_api.post("/v1/security/check", json=body, headers=auth_headers)
-    assert resp.status_code == 200, resp.text
-    parsed = SyncSecurityCheckResponse.model_validate(resp.json())
-    report = parsed.report
-    assert report.project_id == project_id
-    assert report.script_format.value == "fdx"
-    assert report.total_findings == len(report.findings)
-    assert sum(report.risk_summary.values()) == report.total_findings
-
-    invalid = await sync_api.post(
-        "/v1/security/check",
-        json={**body, "script_content": "%%% not base64 %%%"},
-        headers=auth_headers,
-    )
-    assert invalid.status_code == 422
+    for headers in ({}, auth_headers):
+        resp = await api_without_temporal.post("/v1/security/check", json=body, headers=headers)
+        assert resp.status_code == 404, resp.text
+        error = resp.json()
+        assert (error["error"], error["message"]) == ("NotFound", "Not Found")
+        assert error["request_id"] == resp.headers["X-Request-ID"]
+        assert "report" not in error
 
     assert await _residual_keys(redis_db) == []
     async with db() as session:
@@ -1641,34 +1844,6 @@ async def test_sync_check_contract_without_temporal(
             )
         ).scalar_one()
     assert jobs == 0
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: POST /v1/security/check returns a hard-coded M01 stub report "
-        "(api/routers/security.py security_check_sync) instead of analysing the script"
-    ),
-)
-async def test_sync_check_returns_the_real_analysis(
-    sync_api: AsyncClient, auth_headers: dict[str, str], fake_llm: FakeLLMProvider
-) -> None:
-    project_id = _project_id("sync-real")
-    resp = await sync_api.post(
-        "/v1/security/check",
-        json={
-            "script_content": _fixture_b64("fdx/stunt_heavy.fdx"),
-            "script_format": "fdx",
-            "project_id": project_id,
-        },
-        headers=auth_headers,
-    )
-    assert resp.status_code == 200, resp.text
-    report = resp.json()["report"]
-    assert not report["metadata"].get("stub"), "sync endpoint answered with stub data"
-    assert fake_llm.risk_scenes() == _FDX_SCENES
-    assert _signature(report["findings"]) == _FDX_EXPECTED
-    assert report["risk_summary"] == _FDX_RISK_SUMMARY
 
 
 # ---------------------------------------------------------------------------
@@ -1751,6 +1926,83 @@ async def test_findings_do_not_travel_through_temporal_history(
     history = await _history_bytes(pipeline, job_id)
     assert _STUNT_EVIDENCE.encode() not in history
     assert b"E2E: cliff jump of a stunt performer" not in history
+
+
+def _history_payloads(message: Message) -> Iterator[Payload]:
+    """Every ``Payload`` nested in a history event (repeated and map fields included)."""
+    for fd, value in message.ListFields():
+        if fd.type != fd.TYPE_MESSAGE:
+            continue
+        if isinstance(value, Message):
+            items = [value]
+        elif hasattr(value, "keys"):  # map field
+            items = list(value.values())
+        else:  # repeated field
+            items = list(value)
+        for item in items:
+            if isinstance(item, Payload):
+                yield item
+            elif isinstance(item, Message):
+                yield from _history_payloads(item)
+
+
+async def test_temporal_history_is_encrypted_at_rest(
+    pipeline: Pipeline, pipeline_worker: WorkerRun, auth_headers: dict[str, str]
+) -> None:
+    """1.0.1 payload codec: a real PDF run leaves nothing readable in the Temporal history.
+
+    Before 1.0.1 the history held project/user ids, client ``metadata``, the
+    PDF title and buffer reference keys in plaintext (docs/DATENSCHUTZ.md §3.3).
+    """
+    project_id = _project_id("codec")
+    client_note = f"e2e-client-metadata-{uuid.uuid4().hex[:8]}"
+    resp = await _submit_json(
+        pipeline,
+        auth_headers,
+        fixture="pdf/simple_screenplay.pdf",
+        script_format="pdf",
+        project_id=project_id,
+        delivery="pull",
+        metadata={"note": client_note},
+    )
+    outcome = await _run_pull_flow(pipeline, auth_headers, resp)
+    job_id = outcome["job_id"]
+    job_data = _started(pipeline, job_id).args[0]
+    assert job_data["project_id"] == project_id
+    assert job_data["metadata"]["note"] == client_note
+    assert pipeline.llm.preamble_calls == 1  # the PDF title went through an activity result
+
+    history = await _history_bytes(pipeline, job_id)
+    for plaintext in (
+        project_id,
+        client_note,
+        _USER_ID,
+        "eki:buf:",  # buffer reference keys
+        "E2E Fake Title",  # PDF title from the preamble structuring
+        "LIVING ROOM",  # scene heading
+        "sunlight streaming through windows",  # script text
+        "Birds sing in the trees.",
+    ):
+        assert plaintext.encode() not in history, plaintext
+    assert ENCRYPTED_ENCODING in history
+
+    events = (await _started(pipeline, job_id).handle.fetch_history()).events
+    payloads = [p for event in events for p in _history_payloads(event)]
+    assert len(payloads) > 20
+    assert all(EncryptionCodec.is_encrypted(p) for p in payloads), [
+        dict(p.metadata) for p in payloads if not EncryptionCodec.is_encrypted(p)
+    ]
+
+    # API and worker use the identical converter: the worker's codec decrypts
+    # the workflow input the API wrote.
+    (api_call, *_) = pipeline.api_connect_calls
+    api_codec = api_call["data_converter"].payload_codec
+    worker_converter = pipeline_worker.connect_calls[0]["data_converter"]
+    assert isinstance(api_codec, EncryptionCodec)
+    assert api_codec.key_id == worker_converter.payload_codec.key_id
+    started = events[0].workflow_execution_started_event_attributes
+    (decoded,) = await worker_converter.decode(started.input.payloads, [dict])
+    assert decoded == job_data
 
 
 async def test_report_get_after_push_delivery_does_not_fabricate_an_empty_report(

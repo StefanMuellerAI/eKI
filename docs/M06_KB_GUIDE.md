@@ -1,6 +1,6 @@
 # M06 — LLM-Adapter (Mistral Cloud) & Knowledge Base Guide
 
-**Status:** Implementiert (additive Erweiterung von M05); Stand dieses Leitfadens: Oktober 2026 (Release 1.0.0)
+**Status:** Implementiert (additive Erweiterung von M05); Stand dieses Leitfadens: Oktober 2026 (Release 1.0.1)
 **Default-Verhalten:** Knowledge-Base-Retrieval ist standardmäßig AUS. Der Risk-Flow ist byte-identisch mit M05 bis das Feature-Flag aktiviert wird.
 
 Alle Einstellungen: [`CONFIGURATION.md`](CONFIGURATION.md); Datenhaltung der KB: [`DATENSCHUTZ.md`](DATENSCHUTZ.md) §3.2.
@@ -53,8 +53,10 @@ Wenn das Flag `KB_RETRIEVAL_ENABLED=false` ist, wird der Suchpfad nicht einmal i
 # Neue Python-Dependencies aus pyproject.toml
 uv pip install -e . --python .venv/bin/python   # oder pip install -e .
 
-# Embedding-Modell in Ollama herunterladen (Standard)
-docker compose exec ollama ollama pull mxbai-embed-large
+# Embedding-Modell auf der externen Ollama-Instanz herunterladen (Standard; auf dem Ollama-Host)
+ollama pull mxbai-embed-large
+# lokal mit dem Overlay docker-compose.ollama.yml stattdessen:
+# docker compose -f docker-compose.yml -f docker-compose.ollama.yml exec ollama ollama pull mxbai-embed-large
 ```
 
 **Embedding-Modell vor dem ersten Befüllen festlegen.** Standard ist `mxbai-embed-large`
@@ -71,7 +73,7 @@ einzuspielen (§5).
 ```bash
 docker compose exec api alembic upgrade head
 docker compose exec api alembic current
-# M06 hat die Revision e8f1c2d3a401 eingeführt; aktueller Head: b8d0f2a4c6e3
+# M06 hat die Revision e8f1c2d3a401 eingeführt; aktueller Head: c4e6a8b0d2f1
 ```
 
 Die Migration legt zwei Tabellen an (`kb_documents`, `kb_embeddings`) und einen `ivfflat`-Index. Bestehende Tabellen werden nicht verändert.
@@ -95,13 +97,15 @@ KB_MAX_CHUNK_CHARS_IN_PROMPT=600
 
 `scripts/seed_kb.py` läuft auf einem Rechner mit Python ≥ 3.11 und `requests`
 (`pip install requests`) und spricht die API über HTTP an (`EKI_API_URL`, Standard
-`http://localhost:8000`). Die KB-Endpunkte akzeptieren jeden gültigen API-Key; empfohlen ist der
-Ops-Admin-Key, damit `uploaded_by` eindeutig ist.
+`http://localhost:8000`). Seit 1.0.1 akzeptieren die KB-Endpunkte nur **Admin-Keys**
+(`python scripts/create_api_key.py --insert --admin`, im Container per `docker compose exec api …`);
+ein normaler Key erhält 403, und `seed_kb.py` nennt dann den Befehl zum Anlegen eines Admin-Keys.
+`uploaded_by` ist die `user_id` des Admin-Keys.
 
 ```bash
 # API-Key in env setzen
 export EKI_API_URL="http://localhost:8000"
-export EKI_API_KEY="eki_<dein_key>"
+export EKI_API_KEY="eki_<admin_key>"
 
 # Sechs Placeholder-Dokumente uploaden (idempotent)
 python scripts/seed_kb.py --seed-placeholders
@@ -130,9 +134,10 @@ Die Placeholder decken die wichtigsten Risikokategorien ab:
 
 ## 5. Echte Inhalte einspielen (Bernd liefert)
 
-Der Inhalt von `config/kb_seed/real/` ist git-ignoriert. Trotzdem die Dokumente nach dem
-Einspielen dort entfernen: Die Dockerfiles kopieren `config/` in die Images, ein lokaler
-Image-Build würde sie mitnehmen.
+Der Inhalt von `config/kb_seed/real/` ist git-ignoriert und seit 1.0.1 per `.dockerignore` vom
+Image-Build ausgeschlossen. Im Entwicklungs-Stack sieht der API-Container den Ordner über den
+Bind-Mount; in Produktion (ohne Bind-Mounts) `scripts/seed_kb.py` auf dem Host ausführen. Die
+Dokumente nach dem Einspielen dort trotzdem entfernen.
 
 ```bash
 # Bernds Dokumente in config/kb_seed/real/ ablegen (.pdf / .md / .txt)
@@ -216,9 +221,9 @@ Cloud daher `KB_RETRIEVAL_ENABLED=false` lassen.
 |---|---|
 | Originaltext Fernet-verschlüsselt (Chunk-Texte und Vektoren in `kb_embeddings` dagegen im Klartext, da pgvector nicht auf Chiffraten sucht) | `KnowledgeBaseService.ingest` |
 | Tenant-Filter auf jeder Query | `kb.search`, `kb.list_documents`, `kb.delete_document` |
-| API-Key-Authentifizierung – jeder gültige Key, **kein** Admin-Key erforderlich (auch der ePro-Service-Key darf hochladen und löschen) | `verify_api_key` Dependency in allen `/v1/kb/*` Routen |
+| API-Key-Authentifizierung – seit 1.0.1 nur **Admin-Keys** (`is_admin=true`), sonst 403 `Admin API key required for this endpoint`; der ePro-Service-Key hat keinen Zugriff | `require_admin_key` Dependency in allen `/v1/kb/*` Routen (wie `/v1/ops/*`) |
 | Rate-Limiting (IP + Key) | `rate_limit_combined` Dependency |
-| TTL pro Dokument (`ttl_hours`, Standard 720 h = 30 Tage, max. 8760 h) | `expires_at`-Spalte; automatische Löschung durch den Temporal-Schedule `eki-kb-cleanup` (seit M09, täglich `KB_CLEANUP_CRON` = `0 3 * * *` UTC, abschaltbar mit `KB_CLEANUP_ENABLED=false`) |
+| TTL pro Dokument (`ttl_hours`, Standard 720 h = 30 Tage, max. 8760 h) | `expires_at`-Spalte; automatische Löschung durch den Temporal-Schedule `eki-kb-cleanup` (seit M09, täglich `KB_CLEANUP_CRON` = `0 3 * * *` UTC; `KB_CLEANUP_ENABLED=false` pausiert ihn beim nächsten Worker-Start) |
 | Quellen-Tagging | `tags` JSONB + `source`-Spalte (UPLOAD/SHARE/URL/PLACEHOLDER) |
 | Dedup via SHA-256 pro Mandant (seit Migration `b8d0f2a4c6e3`; vorher global eindeutig) | Unique-Constraint `(tenant_id, content_hash)` — derselbe Text im selben Mandanten ergibt 409, auch bei gleichzeitigem Upload |
 | Prompt-Sanitizer auf Embed-Input | `OllamaProvider.embed` |
@@ -248,7 +253,7 @@ pytest tests/test_kb_service.py tests/test_kb_endpoints.py \
        tests/test_mistral_cloud_structured.py tests/test_prompt_manager_fix.py \
        tests/test_risk_with_kb.py tests/test_seed_kb.py -v
 
-# Erwartetes Ergebnis: 40 passed (Stand Oktober 2026)
+# Erwartetes Ergebnis: 56 passed (Stand Release 1.0.1, SQLite-Modus)
 ```
 
 Die KB-Endpoint-Tests mocken den `KnowledgeBaseService`, weil pgvector in der SQLite-In-Memory-Test-DB
@@ -263,6 +268,5 @@ Ein Lauf gegen den kompletten Stack mit aktivem `KB_RETRIEVAL_ENABLED` ist mit
 
 - Embeddings nur über Ollama (1024 dim, Standard `mxbai-embed-large`, optional `bge-m3`). Mistral-Cloud-Embeddings sind bewusst nicht aktiv, weil §4.3 Pflichtenheft „ohne externe Cloud" für die Prod-Datenverarbeitung fordert; mit `LLM_PROVIDER=mistral_cloud` ist die KB daher nicht nutzbar (§8).
 - Kein OCR für gescannte KB-Dokumente. PDFs müssen Text-PDFs sein.
-- TTL-Cleanup: seit M09 automatisch per Temporal-Schedule `eki-kb-cleanup` (§9). Der Schedule wird beim Worker-Start nur angelegt, wenn er noch nicht existiert – eine spätere Änderung von `KB_CLEANUP_CRON` wirkt erst, nachdem der bestehende Schedule in Temporal gelöscht wurde.
+- TTL-Cleanup: seit M09 automatisch per Temporal-Schedule `eki-kb-cleanup` (§9). Änderungen von `KB_CLEANUP_CRON`/`KB_CLEANUP_ENABLED` wirken seit 1.0.1 beim nächsten Worker-Start (der Schedule wird aktualisiert bzw. pausiert); der Cron wird beim Start geprüft (5 Felder, UTC, `CONFIGURATION.md` §3.13).
 - Single-Tenant — `tenant_id` ist Spalte/Filter, aber `kb_default_tenant_id` ist fix in den Settings.
-- Kein Admin-Gate auf `/v1/kb/*` (§9) – Entscheidung offen (`DATENSCHUTZ.md` §8).

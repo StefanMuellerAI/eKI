@@ -108,7 +108,7 @@ class _WorkflowInbound(worker.WorkflowInboundInterceptor):
 
 
 class _WorkflowOutbound(worker.WorkflowOutboundInterceptor):
-    def start_activity(self, input: worker.StartActivityInput) -> workflow.ActivityHandle:
+    def start_activity(self, input: worker.StartActivityInput) -> workflow.ActivityHandle[Any]:
         input.headers = _with_header(
             input.headers, _WORKFLOW_REQUEST_ID.get(), workflow.payload_converter()
         )
@@ -116,7 +116,7 @@ class _WorkflowOutbound(worker.WorkflowOutboundInterceptor):
 
     def start_local_activity(
         self, input: worker.StartLocalActivityInput
-    ) -> workflow.ActivityHandle:
+    ) -> workflow.ActivityHandle[Any]:
         input.headers = _with_header(
             input.headers, _WORKFLOW_REQUEST_ID.get(), workflow.payload_converter()
         )
@@ -124,7 +124,7 @@ class _WorkflowOutbound(worker.WorkflowOutboundInterceptor):
 
     async def start_child_workflow(
         self, input: worker.StartChildWorkflowInput
-    ) -> workflow.ChildWorkflowHandle:
+    ) -> workflow.ChildWorkflowHandle[Any, Any]:
         input.headers = _with_header(
             input.headers, _WORKFLOW_REQUEST_ID.get(), workflow.payload_converter()
         )
@@ -133,9 +133,12 @@ class _WorkflowOutbound(worker.WorkflowOutboundInterceptor):
 
 @contextmanager
 def activity_log_context(
-    *, request_id: str, workflow_id: str, activity_type: str, attempt: int
+    *, request_id: str, workflow_id: str | None, activity_type: str, attempt: int
 ) -> Iterator[None]:
     """Bind correlation fields for the duration of one activity execution.
+
+    *workflow_id* is ``None`` only for an activity not started by a workflow
+    (``activity.Info.workflow_id``); the fields are then bound as ``None``.
 
     Lives outside the workflow sandbox (activities run in the plain worker
     process), so importing structlog / logging_config here is safe.

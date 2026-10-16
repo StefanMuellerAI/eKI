@@ -5,6 +5,9 @@
 > unzulässig (Pflichtenheft §4.3; der Start-Validator lehnt sie bei `ENV=production` ab).
 > Produktion nutzt `LLM_PROVIDER=local_mistral` mit `mistral-small3.2`; Konfigurationsänderungen
 > mit `docker compose up -d --force-recreate api worker` statt `restart` übernehmen.
+>
+> Seit 1.0.1 enthält der Compose-Stack keinen Ollama-Dienst mehr: Inferenz auf einer externen
+> Instanz (`OLLAMA_BASE_URL`), lokal optional per `docker-compose.ollama.yml`.
 
 # Ollama Integration Setup Guide
 

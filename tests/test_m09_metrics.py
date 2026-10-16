@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from uuid import uuid4
+
 import pytest
 from fastapi import status
 from prometheus_client import REGISTRY
+from sqlalchemy import update
 
 from core import metrics
+from core.db_models import DeliveryDeadLetter
 from core.prompt_sanitizer import PromptSanitizer
 
 
@@ -125,11 +130,11 @@ class TestHttpMiddleware:
 
     def test_error_responses_are_counted(self, client):
         before = _sample(
-            "eki_http_requests_total", method="POST", route="/v1/security/check", status="401"
+            "eki_http_requests_total", method="POST", route="/v1/security/check:async", status="401"
         )
-        client.post("/v1/security/check", json={})
+        client.post("/v1/security/check:async", json={})
         after = _sample(
-            "eki_http_requests_total", method="POST", route="/v1/security/check", status="401"
+            "eki_http_requests_total", method="POST", route="/v1/security/check:async", status="401"
         )
         assert after == before + 1
 
@@ -148,3 +153,52 @@ class TestHttpMiddleware:
         assert "eki_http_requests_total" in body
         assert "eki_jobs_total" in body
         assert "eki_build_info" in body
+
+
+class TestDeadLetterGaugeRefresh:
+    """``eki_dead_letters_unacknowledged`` is recomputed from the database on every
+    scrape.  It used to be set only when a dead letter was written or /v1/ops/*
+    was called, so after an acknowledgement (or the 90-day cleanup) a stale value
+    kept the ``EkiDeadLettersPending`` alert firing."""
+
+    @staticmethod
+    def _scraped_value(client, headers) -> float:
+        body = client.get("/metrics", headers=headers).text
+        line = next(
+            ln for ln in body.splitlines() if ln.startswith("eki_dead_letters_unacknowledged ")
+        )
+        return float(line.split()[1])
+
+    @pytest.mark.asyncio
+    async def test_scrape_reflects_new_and_acknowledged_dead_letters(
+        self, client, db_session, auth_headers
+    ):
+        baseline = self._scraped_value(client, auth_headers)
+        metrics.DEAD_LETTERS_UNACKNOWLEDGED.set(999)  # stale value from elsewhere
+
+        letter_id = uuid4()
+        db_session.add(
+            DeliveryDeadLetter(
+                id=letter_id,
+                job_id=uuid4(),
+                report_id=uuid4(),
+                project_id="p",
+                user_id="u",
+                delivery_mode="push",
+                reason="hard_4xx",
+                attempts=1,
+                last_status_code=422,
+                webhook_sent=False,
+                created_at=datetime.now(UTC),
+            )
+        )
+        await db_session.commit()
+        assert self._scraped_value(client, auth_headers) == baseline + 1
+
+        await db_session.execute(
+            update(DeliveryDeadLetter)
+            .where(DeliveryDeadLetter.id == letter_id)
+            .values(acknowledged_at=datetime.now(UTC))
+        )
+        await db_session.commit()
+        assert self._scraped_value(client, auth_headers) == baseline

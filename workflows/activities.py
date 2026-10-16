@@ -10,7 +10,7 @@ import logging
 import re
 import time
 import urllib.parse
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import Any
 
 import redis.asyncio as aioredis
@@ -19,6 +19,13 @@ from temporalio.exceptions import ApplicationError
 
 from api.config import get_settings
 from core import metrics
+from core.callback_url import (
+    CallbackUrlError,
+    Resolver,
+    check_callback_url,
+    resolve_public_addresses,
+    system_resolver,
+)
 from core.exceptions import LLMException, NotFoundException, ParsingException
 from services.secure_buffer import SecureBuffer
 
@@ -39,6 +46,7 @@ ERROR_TYPE_RISK_ANALYSIS_FAILED = "RiskAnalysisFailed"
 ERROR_TYPE_PARSING_FAILED = "ParsingFailed"
 ERROR_TYPE_BUFFER_EXPIRED = "BufferExpired"
 ERROR_TYPE_INVALID_PROJECT_ID = "InvalidProjectId"
+ERROR_TYPE_INVALID_CALLBACK_URL = "InvalidCallbackUrl"
 ERROR_TYPE_JOB_STATUS_UPDATE_FAILED = "JobStatusUpdateFailed"
 ERROR_TYPE_INVALID_JOB_STATUS = "InvalidJobStatus"
 
@@ -49,6 +57,7 @@ CONTENT_FREE_ERROR_TYPES = frozenset(
         ERROR_TYPE_PARSING_FAILED,
         ERROR_TYPE_BUFFER_EXPIRED,
         ERROR_TYPE_INVALID_PROJECT_ID,
+        ERROR_TYPE_INVALID_CALLBACK_URL,
     }
 )
 
@@ -1038,9 +1047,7 @@ async def _job_created_at(job_id: str) -> Any:
         await engine.dispose()
 
 
-def _elapsed_since(created_at: Any) -> float:
-    from datetime import datetime
-
+def _elapsed_since(created_at: datetime) -> float:
     start = created_at if created_at.tzinfo else created_at.replace(tzinfo=UTC)
     return max(0.0, (datetime.now(UTC) - start).total_seconds())
 
@@ -1342,6 +1349,56 @@ async def _job_delivery_attempts(job_id: str) -> int | None:
     return int(value) if value else None
 
 
+# Decision 10b: DNS resolution for callback_url pushes. Module-level so tests
+# (and the E2E harness) can inject a resolver; never call DNS from tests.
+_resolve_callback_host: Resolver = system_resolver
+
+
+def _push_http_client(timeout: float) -> Any:
+    """HTTP client for ePro pushes (default target and callback_url).
+
+    Never follows redirects (httpx default): a 3xx is a transient failure, so a
+    push can never be bounced to a host outside the allow-list.
+    """
+    import httpx
+
+    return httpx.AsyncClient(timeout=timeout)
+
+
+def _invalid_callback(job_id: Any, reason: str) -> ApplicationError:
+    logger.error("Push aborted: callback_url rejected (%s): job=%s", reason, job_id)
+    return _non_retryable(
+        ERROR_TYPE_INVALID_CALLBACK_URL,
+        f"callback_url für die ePro-Zustellung abgelehnt ({reason}) – Push abgebrochen",
+    )
+
+
+async def _pinned_callback_target(
+    callback_url: str, job_id: Any
+) -> tuple[Any, str, dict[str, Any]]:
+    """Resolve the callback host, require public addresses, pin the connection.
+
+    Returns ``(url_with_ip, host_header, extensions)``: the request goes to the
+    validated IP while ``Host`` header, TLS SNI and certificate verification
+    still use the host name.  DNS errors propagate as ``OSError`` (transient,
+    Temporal retries); a private/internal answer is a final policy failure.
+    """
+    import httpx
+
+    url = httpx.URL(callback_url)
+    host = url.raw_host.decode("ascii")
+    try:
+        addresses = await resolve_public_addresses(host, url.port or 443, _resolve_callback_host)
+    except CallbackUrlError as exc:
+        raise _invalid_callback(job_id, str(exc)) from None
+    logger.info("Push target: callback_url host=%s (pinned to %s)", host, addresses[0])
+    return (
+        url.copy_with(host=addresses[0]),
+        url.netloc.decode("ascii"),
+        {"sni_hostname": host},
+    )
+
+
 @activity.defn(name="deliver_report")
 async def deliver_report_activity(
     report_data: dict[str, Any], delivery_config: dict[str, Any] | None = None
@@ -1358,6 +1415,14 @@ async def deliver_report_activity(
     * ``Idempotency-Key`` (= report_id) and ``X-Request-ID`` headers are sent
       so ePro can de-duplicate retried pushes (Pflichtenheft Abnahmetest 5),
     * 408/425/429 are treated as retryable, other 4xx as hard failures.
+
+    1.0.1 (Decision 10b): ``delivery_config["callback_url"]`` replaces the
+    default target ``{EPRO_BASE_URL}/eki/scl/set-risk-assessment/{project_id}``
+    -- same payload, headers, bearer token, retry window and failure branch.
+    It is re-validated here (HTTPS, ``CALLBACK_URL_ALLOWED_HOSTS``) and its host
+    must resolve to public addresses only; the connection is pinned to the
+    validated address.  Policy violations fail with ``InvalidCallbackUrl``
+    (non-retryable -> dead letter ``invalid_callback_url``).
     """
     report_ref_key = report_data.get("report_ref_key", "")
     report_id = report_data.get("report_id", "")
@@ -1367,6 +1432,7 @@ async def deliver_report_activity(
     project_id = delivery_config.get("project_id", "")
     user_id = delivery_config.get("user_id", "")
     script_format = delivery_config.get("script_format", "fdx")
+    callback_url = str(delivery_config.get("callback_url") or "") or None
     attempt = _current_attempt()
 
     logger.info("Delivering report %s (mode=%s, attempt=%d)", report_id, delivery_mode, attempt)
@@ -1380,6 +1446,16 @@ async def deliver_report_activity(
             ERROR_TYPE_INVALID_PROJECT_ID,
             "Ungültige project_id für die ePro-Zustellung – Push abgebrochen",
         )
+
+    if delivery_mode == "push" and callback_url:
+        # Static policy with the allow-list valid *now* (it may have changed
+        # since the request was accepted). DNS follows right before the POST.
+        from api.config import get_settings as _current_settings
+
+        try:
+            check_callback_url(callback_url, _current_settings().callback_url_allowed_hosts)
+        except CallbackUrlError as exc:
+            raise _invalid_callback(job_id, str(exc)) from None
 
     buffer = _get_buffer()
 
@@ -1488,12 +1564,20 @@ async def deliver_report_activity(
 
         push_started = time.perf_counter()
         try:
-            async with httpx.AsyncClient(timeout=settings.epro_timeout) as client:
+            target_url: Any = push_url
+            post_kwargs: dict[str, Any] = {}
+            if callback_url:
+                target_url, headers["Host"], extensions = await _pinned_callback_target(
+                    callback_url, job_id
+                )
+                post_kwargs["extensions"] = extensions
+            async with _push_http_client(settings.epro_timeout) as client:
                 response = await client.post(
-                    push_url,
+                    target_url,
                     data=form_data,
                     files=files if files else None,
                     headers=headers,
+                    **post_kwargs,
                 )
             metrics.DELIVERY_DURATION.labels(mode="push").observe(
                 time.perf_counter() - push_started
@@ -1566,7 +1650,7 @@ async def deliver_report_activity(
                 response=response,
             )
 
-        except httpx.HTTPStatusError:
+        except (httpx.HTTPStatusError, ApplicationError):
             raise
         except Exception as exc:
             # Transport-Fehler (DNS, Timeout, Connection-Reset).
@@ -1610,7 +1694,7 @@ async def record_dead_letter_activity(payload: dict[str, Any]) -> dict[str, Any]
     """
     from uuid import UUID as UUIDType
 
-    from sqlalchemy import func, select, update
+    from sqlalchemy import select, update
 
     from core.db_models import DeliveryDeadLetter, JobMetadata
 
@@ -1653,15 +1737,9 @@ async def record_dead_letter_activity(payload: dict[str, Any]) -> dict[str, Any]
                 .values(delivery_status="dead_lettered")
             )
             await session.commit()
-
-            unacked = (
-                await session.execute(
-                    select(func.count())
-                    .select_from(DeliveryDeadLetter)
-                    .where(DeliveryDeadLetter.acknowledged_at.is_(None))
-                )
-            ).scalar_one()
-            metrics.DEAD_LETTERS_UNACKNOWLEDGED.set(int(unacked))
+            # eki_dead_letters_unacknowledged is owned by the API (recomputed on
+            # every /metrics scrape); a worker-side value went stale after
+            # acknowledgements and kept the alert firing.
             dead_letter_id = str(record.id)
     except Exception as exc:
         logger.error(

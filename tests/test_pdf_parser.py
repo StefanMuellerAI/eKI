@@ -479,3 +479,128 @@ class TestPageFallbackSplitting:
         assert len(preambles) == 1
         assert len(scenes) == 3
         assert all(b.heading_line.startswith("PAGE ") for b in scenes)
+
+
+# ===================================================================
+# Real-world screenplay layouts (synthetic stand-ins for real scripts)
+# ===================================================================
+
+REALWORLD_HEADINGS = [
+    "1 INT. KÜCHE - TAG",
+    "2 EXT. HOF - NACHT",
+    "3 INT./EXT. AUTO - FORTLAUFEND",
+    "4 INT/EXT. TANKSTELLE - ABEND",
+    "5A EXT. LANDSTRASSE - NACHT",
+    "5B EXT. LANDSTRASSE - SPÄTER",
+    "6. EXT. FELD - TAG",
+    "7. INT. SCHEUNE - NACHT",
+    "12.1 INT. FLUR - TAG",
+    "12.1A. INT. BAD - TAG",
+    "13 I/E. AUTO - NACHT",
+    "14 E/I. TREPPENHAUS - NACHT",
+    "15 INNEN. WOHNUNG - ABEND",
+    "16 AUSSEN. BALKON - NACHT",
+    "17 INNEN-AUSSEN. GARTEN - TAG",
+    "18 INT. CUISINE - JOUR",
+]
+
+
+class _FixtureLLM:
+    """Fake provider: answers the preamble prompt with a title, scenes with a location."""
+
+    provider_name = "fake"
+
+    def __init__(self) -> None:
+        self.scene_calls = 0
+
+    async def generate_structured(self, prompt, schema, system_prompt=None, **kwargs):
+        if "title" in schema.get("properties", {}):
+            return {"title": "DAS UNGESCHRIEBENE HAUS"}
+        self.scene_calls += 1
+        return {
+            "location": f"ORT {self.scene_calls}",
+            "location_type": "INT",
+            "time_of_day": "DAY",
+            "characters": [],
+            "action_text": "Aktion.",
+            "dialogue": [],
+        }
+
+
+class TestRealWorldLayoutFixtures:
+    """``realworld_headings.pdf`` / ``suffix_headings.pdf`` rebuild the layouts of
+    real German screenplays (numbered headings, page numbers, cue extensions,
+    gender colon, French scene) with synthetic text; see tests/generate_pdf_fixtures.py.
+    """
+
+    def test_numbered_heading_variants_are_split_from_the_pdf(self):
+        extraction = extract_pdf_text(_read_pdf("realworld_headings.pdf"))
+        blocks = split_into_scenes(extraction.full_text, page_texts=extraction.page_texts)
+
+        assert len(extraction.page_texts) == 5
+        assert extraction.warnings == []
+        assert blocks[0].is_preamble is True
+        assert blocks[0].text.startswith("DAS UNGESCHRIEBENE HAUS")
+        assert "5. Fassung" in blocks[0].text  # a numbered line without INT/EXT is no heading
+        assert [b.heading_line for b in blocks[1:]] == REALWORLD_HEADINGS
+        assert [b.index for b in blocks] == list(range(len(REALWORLD_HEADINGS) + 1))
+
+    def test_page_numbers_stay_inside_the_running_scene(self):
+        extraction = extract_pdf_text(_read_pdf("realworld_headings.pdf"))
+        blocks = split_into_scenes(extraction.full_text, page_texts=extraction.page_texts)
+        by_heading = {b.heading_line: b.text for b in blocks}
+
+        # Each page starts with its page number ("2.", "3.", "4."); it ends the
+        # previous page's last scene instead of opening a block of its own.
+        assert by_heading["4 INT/EXT. TANKSTELLE - ABEND"].endswith("\n2.")
+        assert by_heading["7. INT. SCHEUNE - NACHT"].endswith("\n3.")
+        assert by_heading["14 E/I. TREPPENHAUS - NACHT"].endswith("\n4.")
+
+    def test_cue_extensions_gender_colon_and_accents_survive_extraction(self):
+        extraction = extract_pdf_text(_read_pdf("realworld_headings.pdf"))
+        blocks = split_into_scenes(extraction.full_text, page_texts=extraction.page_texts)
+        by_heading = {b.heading_line: b.text for b in blocks}
+
+        assert "JONAS (O.S.)" in by_heading["1 INT. KÜCHE - TAG"]
+        assert "JONAS (CONT'D)" in by_heading["5B EXT. LANDSTRASSE - SPÄTER"]
+        assert "MARA (INTER)" in by_heading["13 I/E. AUTO - NACHT"]
+        wohnung = by_heading["15 INNEN. WOHNUNG - ABEND"]
+        assert "User:innen" in wohnung and "Nutzer:innen" in wohnung
+        assert "COMPUTERSTIMME (V.O.)\nSystem: Zugriff verweigert." in wohnung
+        assert "Élodie entre, un café à la main." in by_heading["18 INT. CUISINE - JOUR"]
+
+    def test_suffix_style_headings_fall_back_to_pages_documented(self):
+        # "1 WALDSTRASSE, DÄMMERUNG/AUSSEN": the designation at the END of the
+        # heading is not a scene marker, so the document is split per page.
+        extraction = extract_pdf_text(_read_pdf("suffix_headings.pdf"))
+        blocks = split_into_scenes(extraction.full_text, page_texts=extraction.page_texts)
+
+        assert [b.heading_line for b in blocks] == ["", "PAGE 2", "PAGE 3", "PAGE 4"]
+        assert blocks[0].is_preamble is True
+        assert blocks[1].text.startswith("1 WALDSTRASSE, DÄMMERUNG/AUSSEN")
+        assert blocks[3].text.startswith("3 SEEUFER, NACHT/AUSSEN")
+
+    async def test_pdf_parser_on_realworld_fixture(self):
+        llm = _FixtureLLM()
+        script = await PDFParser(llm_provider=llm).parse(_read_pdf("realworld_headings.pdf"))
+
+        assert script.title == "DAS UNGESCHRIEBENE HAUS"
+        assert [s.heading for s in script.scenes] == REALWORLD_HEADINGS
+        assert [s.number for s in script.scenes] == [str(i) for i in range(1, 17)]
+        assert {s.parse_method for s in script.scenes} == {"pdf_llm"}
+        assert {s.parse_confidence for s in script.scenes} == {1.0}
+        assert llm.scene_calls == len(REALWORLD_HEADINGS)
+        assert not any("No scene markers" in w for w in script.warnings)
+
+    async def test_pdf_parser_on_suffix_fixture_uses_page_fallback(self):
+        llm = _FixtureLLM()
+        script = await PDFParser(llm_provider=llm).parse(_read_pdf("suffix_headings.pdf"))
+
+        assert script.total_scenes == 3
+        assert [s.heading for s in script.scenes] == ["PAGE 2", "PAGE 3", "PAGE 4"]
+        assert {s.parse_method for s in script.scenes} == {"pdf_page_fallback"}
+        assert {s.parse_confidence for s in script.scenes} == {0.3}
+        assert (
+            "No scene markers (INT/EXT) found. Falling back to page-by-page splitting."
+            in script.warnings
+        )

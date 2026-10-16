@@ -1,6 +1,6 @@
 # eKI API - Postman Collection v1.0
 
-Diese Postman Collection enthält alle API-Endpunkte der eKI API v1.0.0: Security-Checks (FDX/PDF, Push/Pull), Knowledge Base (M06), Operations/Dead Letters (M10) und Schnellnachweise für die Abnahmetests (M12).
+Diese Postman Collection enthält alle API-Endpunkte der eKI API v1.0.1: Security-Checks (FDX/PDF, Push/Pull), Knowledge Base (M06), Operations/Dead Letters (M10) und Schnellnachweise für die Abnahmetests (M12).
 
 ## Import
 
@@ -18,19 +18,27 @@ Lokaler Stack gemäß Schnellstart im `README.md` (`.env.local` aus `.env.exampl
 ```bash
 docker compose up -d
 
-# Migrationen ausführen (Head: b8d0f2a4c6e3)
+# Migrationen ausführen (Head: c4e6a8b0d2f1)
 docker compose exec api alembic upgrade head
 
-# LLM-Modell laden – ohne erreichbares Modell enden asynchrone Jobs mit "failed"
-# (die Risikoanalyse ist fail-closed)
-docker compose exec ollama ollama pull mistral-small3.2
+# LLM: die Inferenz läuft auf einer externen Ollama-Instanz (LOCAL_MISTRAL_BASE_URL in
+# .env.local); dort muss das Modell geladen sein – ohne erreichbares Modell enden
+# asynchrone Jobs mit "failed" (die Risikoanalyse ist fail-closed):
+#   ollama pull mistral-small3.2        # auf der Ollama-Instanz
+# Lokal ohne externe Instanz: Overlay docker-compose.ollama.yml (docs/OPERATIONS_GUIDE.md)
 ```
 
-**Push-Tests nur mit ePro-Mock:** Der Push geht immer an `EPRO_BASE_URL` aus der
-eKI-Konfiguration (`.env.local`), nicht an das `callback_url` im Request. In der
-Vorlage zeigt `EPRO_BASE_URL` auf das **echte Stage-ePro**. Vor „Submit FDX Script
-(Push Delivery)" deshalb `EPRO_BASE_URL`/`EPRO_WEBHOOK_URL` auf den Mock umstellen und
-die Container neu erzeugen (`docs/UAT/UAT_TESTPLAN.md` §2.3).
+**Push-Tests nur mit ePro-Mock:** Ohne `callback_url` geht der Push an `EPRO_BASE_URL` aus der
+eKI-Konfiguration (`.env.local`). In der Vorlage zeigt `EPRO_BASE_URL` auf das **echte Stage-ePro**.
+Vor „Submit FDX Script (Push Delivery)" deshalb `EPRO_BASE_URL`/`EPRO_WEBHOOK_URL` auf den Mock
+umstellen und die Container neu erzeugen (`docs/UAT/UAT_TESTPLAN.md` §2.3).
+
+**`callback_url` (seit 1.0.1):** Ein `callback_url` im Request ist das Push-Ziel dieses Jobs (statt
+`EPRO_BASE_URL/...`); ohne `delivery` gilt dann `push`, `delivery=pull` + `callback_url` → 422. Es muss
+HTTPS sein, auf einem Host aus `CALLBACK_URL_ALLOWED_HOSTS` liegen (Standard: `epro.filmakademie.de`,
+`staging.epro.filmakademie.de`) und öffentlich auflösen – auf den lokalen HTTP-Mock kann es daher
+**nicht** zeigen. Die Collection enthält deshalb nur die Validierungs-Tests (Ordner 5), keinen echten
+Callback-Push.
 
 ### 2. API-Key erstellen
 
@@ -61,16 +69,13 @@ In Postman, gehe zu **Variables** Tab und setze:
 - **Root Endpoint** - API-Info (kein Auth)
 - **Metrics** - Prometheus Metrics (Auth)
 
-### 2. PDF Workflow (Async) - Fixture Scripts (Primär)
-Echte Drehbücher aus `tests/fixtures/pdf/` – nur verwenden, solange die Nutzung mit den
-Rechteinhabern geklärt ist (`docs/DATENSCHUTZ.md` §8); synthetische Alternativen sind z. B.
-`german_screenplay.pdf`, `multi_scene.pdf`, `large_120_pages.pdf` (über „Submit: Eigene PDF"):
-- **Submit: Regiefassung (TRANCE)** - TRANCE_REGIEFASSUNG_27042025.pdf
-- **Submit: Drehbuch (Sinkende Schiffe)** - SINKENDE_SCHIFFE_190730.pdf
-- **Submit: Drehbuch (H2Gold)** - H2Gold_250406_h2gold_V3.7.pdf
-- **Submit: Drehbuch (Babystar)** - Babystar_Drehbuch_Babystar_Fünfte_Fassung_240414.pdf
-- **Submit: Drehbuch (Matroshki)** - Matroshki_250515_Matroshki_Screenplay-DE.pdf
-- **Submit: Eigene PDF** - Freie Dateiauswahl
+### 2. PDF Workflow (Async) - Synthetic Fixtures (Primär)
+Ausschließlich synthetische Test-Drehbücher aus `tests/fixtures/pdf/` (echte Drehbücher sind nicht
+mehr im Repository; eigene Dateien nur mit geklärten Rechten, `docs/DATENSCHUTZ.md`):
+- **Submit: Einfaches Drehbuch** - `simple_screenplay.pdf`
+- **Submit: Deutsches Drehbuch** - `german_screenplay.pdf`
+- **Submit: Mehrere Szenen** - `multi_scene.pdf`
+- **Submit: Eigene PDF** - Freie Dateiauswahl (z. B. `large_120_pages.pdf`, `scanned_screenplay.pdf` für OCR)
 - **Poll Job Status** - Warten bis completed
 - **Fetch Report (One-Shot!)** - JSON + PDF Report
 - **Verify One-Shot** - Zweiter Abruf = 410 Gone
@@ -78,25 +83,25 @@ Rechteinhabern geklärt ist (`docs/DATENSCHUTZ.md` §8); synthetische Alternativ
 ### 3. FDX Workflow (Async)
 - **Submit FDX Script** - 4-Szenen Stunt-Script (inline Base64/JSON)
 - **Submit FDX Script (Push Delivery)** - Push an `EPRO_BASE_URL/eki/scl/set-risk-assessment/{project_id}`
-  aus der eKI-Konfiguration; das mitgeschickte `callback_url` wird nur validiert (Whitelist), aber
-  nicht verwendet. Lokal nur mit ePro-Mock ausführen (siehe Setup)
+  aus der eKI-Konfiguration (ohne `callback_url`). Lokal nur mit ePro-Mock ausführen (siehe Setup)
+- **Submit FDX Script (Priority 1 = highest)** - `priority: 1` (1 = höchste … 10 = niedrigste, Standard 5);
+  wird als Temporal-Task-Queue-Priorität gesetzt: wartende Jobs höherer Priorität werden zuerst abgearbeitet
 - **Poll Job Status** - Warten bis completed
 - **Fetch Report (One-Shot!)** - JSON + PDF Report
 
-### 4. Sync Check (Stub)
-- **Sync FDX Check** - Sofortige Stub-Response (kein LLM), inkl. `metadata`
-- **Sync PDF Check** - Sofortige Stub-Response (kein LLM), inkl. `priority` (beim Sync-Endpoint ohne Wirkung)
-
-> **Hinweis:** Der synchrone Endpoint liefert aktuell eine M01-Stub-Response.
-> Für echte LLM-basierte Risikoanalyse den **async Endpoint** verwenden (Sektion 2 und 3).
+### 4. (entfallen)
+Der synchrone M01-Stub `POST /v1/security/check` wurde in 1.0.1 entfernt (Antwort 404); der frühere
+Ordner „4. Sync Check (Stub)" entfällt. Einziger Prüf-Endpunkt ist `POST /v1/security/check:async`.
 
 ### 5. Security Tests
 - **Missing Auth (401)** - Request ohne Authorization Header
 - **Invalid API Key (401)** - Ungültiger API Key
 - **Invalid Base64 (422)** - Ungültiges Base64 in script_content
 - **SQL Injection (422)** - SQL Injection in project_id
-- **SSRF Private IP (422)** - Callback URL mit privater IP
-- **SSRF Non-Whitelisted Domain (422)** - Callback URL mit nicht-whitelisted Domain
+- **SSRF Private IP (422)** - Callback URL mit privater IP (und ohne HTTPS)
+- **SSRF Non-Whitelisted Domain (422)** - Callback URL mit Host außerhalb von `CALLBACK_URL_ALLOWED_HOSTS`
+- **callback_url with delivery=pull (422)** - Widerspruch: `callback_url` ist ein Push-Ziel
+- **Removed sync endpoint (404)** - `POST /v1/security/check` existiert nicht mehr
 - **IDOR Other User's Job (404)** - Zugriff auf fremden Job (benötigt API_KEY_USER2)
 - **Idempotency (Same Key)** - Gleicher idempotency_key = gleicher Job
 
@@ -114,15 +119,18 @@ Rechteinhabern geklärt ist (`docs/DATENSCHUTZ.md` §8); synthetische Alternativ
 - **OpenAPI Spec** - von FastAPI generiertes OpenAPI-JSON (nur bei `DEBUG=true`); verbindlich ist
   `openapi/eki-api-v1.0.yaml`
 
-### 8. Knowledge Base (M06)
+### 8. Knowledge Base (M06, Admin-Key)
+Alle Requests nutzen `ADMIN_API_KEY` – seit 1.0.1 verlangen alle `/v1/kb/*`-Endpunkte einen Key mit
+`is_admin=true` (`scripts/create_api_key.py --insert --admin`).
 - **Upload KB document (Markdown)** - Multipart Upload (PDF/MD/TXT), liefert `doc_id`
 - **List KB documents** - Alle KB-Dokumente, optional gefiltert nach `tag`
 - **List KB documents filtered by tag** - z.B. `?tag=placeholder` für Seed-Inhalte
 - **Get KB document metadata** - Einzelmetadaten (kein Originaltext)
 - **Delete a KB document** - Einzel-Delete, Chunks cascaden
 - **Wipe placeholders (bulk delete by tag)** - `?tag=placeholder` löscht nur Seed-Daten
+- **Test: Non-admin key is 403** - Normaler Key (`API_KEY`) wird abgewiesen
 
-> **Feature-Flag:** Die KB-Endpunkte sind immer verfügbar (jeder gültige API-Key). Ob KB-Treffer in die
+> **Feature-Flag:** Die KB-Endpunkte sind immer verfügbar (nur mit Admin-Key). Ob KB-Treffer in die
 > Risikoanalyse einfließen, steuert `KB_RETRIEVAL_ENABLED` in `.env.local`
 > (Default `false`). Uploads brauchen ein Ollama-Embedding-Modell; mit
 > `LLM_PROVIDER=mistral_cloud` schlagen sie fehl.
@@ -145,13 +153,13 @@ Vollständiger Testplan: `docs/UAT/UAT_TESTPLAN.md`; die Abnahmetests 2–7 auto
 `scripts/uat/run_acceptance_tests.py` (Test 6 nur mit `--with-large-document`).
 
 > **Reihenfolge der Ordner:** In der Collection-Datei stehen die Ordner in der Reihenfolge
-> 1, 2, 3, 4, 5, **8**, 6, 7, 9, 10; Postman zeigt sie so an. Maßgeblich ist die Nummer im
-> Ordnernamen.
+> 1, 2, 3, 5, **8**, 6, 7, 9, 10 (Ordner 4 entfällt seit 1.0.1); Postman zeigt sie so an. Maßgeblich
+> ist die Nummer im Ordnernamen.
 
 ## Testing Workflows
 
 ### Happy Path (PDF - Empfohlen)
-1. In Sektion 2 eine **Submit**-Anfrage wählen (z.B. "Regiefassung TRANCE")
+1. In Sektion 2 eine **Submit**-Anfrage wählen (z.B. "Einfaches Drehbuch (simple_screenplay.pdf)")
 2. Senden -> 202 mit job_id (automatisch gespeichert)
 3. **Poll Job Status** -> wiederholen bis status=completed
 4. **Fetch Report** -> JSON mit Findings + PDF als Base64
@@ -184,6 +192,9 @@ Vollständiger Testplan: `docs/UAT/UAT_TESTPLAN.md`; die Abnahmetests 2–7 auto
 | Input-Validierung | Invalid Base64 | 422 |
 | SQL Injection Schutz | SQL in project_id | 422 |
 | SSRF Prevention | Private IP / Non-Whitelisted | 422 |
+| Push-Ziel eindeutig | callback_url + delivery=pull | 422 |
+| KB nur für Admins | KB mit normalem Key | 403 |
+| Sync-Stub entfernt | POST /v1/security/check | 404 |
 | IDOR Prevention | Fremder Job | 404 |
 | One-Shot Reports | Zweiter Abruf | 410 |
 | Idempotenz | Gleicher Key | Gleiche job_id |
@@ -191,6 +202,6 @@ Vollständiger Testplan: `docs/UAT/UAT_TESTPLAN.md`; die Abnahmetests 2–7 auto
 
 ---
 
-**Version:** 1.0.0
-**Last Updated:** 2026-10-15
+**Version:** 1.0.1
+**Last Updated:** 2026-10-16
 **Status:** Release (M12 UAT-Paket)

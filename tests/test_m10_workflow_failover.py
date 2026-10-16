@@ -15,13 +15,17 @@ from typing import Any
 
 import pytest
 from temporalio import activity, workflow
+from temporalio.client import Client
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
 with workflow.unsafe.imports_passed_through():
+    from core.temporal_codec import temporal_client_options
     from workflows.security_check import SecurityCheckWorkflow
 
 pytestmark = pytest.mark.temporal
+
+_CODEC_SECRET = "m10-codec-test-secret-0123456789abcdef"  # nosec B105 - test key
 
 
 @dataclass
@@ -144,14 +148,17 @@ def _job_data(delivery_mode: str, ttl_seconds: int = 21600) -> dict[str, Any]:
 
 async def _run(rec: Recorder, job_data: dict[str, Any]) -> dict[str, Any]:
     async with await WorkflowEnvironment.start_time_skipping() as env:
+        # Production payload codec (1.0.1): the failover branches must work
+        # with encrypted payloads and encrypted failure messages.
+        client = Client(**{**env.client.config(), **temporal_client_options(_CODEC_SECRET)})
         queue = f"m10-{uuid.uuid4().hex}"
         async with Worker(
-            env.client,
+            client,
             task_queue=queue,
             workflows=[SecurityCheckWorkflow],
             activities=build_stub_activities(rec),
         ):
-            return await env.client.execute_workflow(
+            return await client.execute_workflow(
                 SecurityCheckWorkflow.run,
                 job_data,
                 id=job_data["job_id"],

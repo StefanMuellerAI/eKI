@@ -873,16 +873,16 @@ class TestPreambleTitleExtraction:
 
     async def test_returns_title_and_uses_preamble_prompt(self):
         llm = MagicMock()
-        llm.generate_structured = AsyncMock(return_value={"title": "BABYSTAR"})
+        llm.generate_structured = AsyncMock(return_value={"title": "MUSTERFILM"})
 
-        title = await extract_title_from_preamble("BABYSTAR\nDrehbuch von X", llm)
+        title = await extract_title_from_preamble("MUSTERFILM\nDrehbuch von X", llm)
 
-        assert title == "BABYSTAR"
+        assert title == "MUSTERFILM"
         kwargs = llm.generate_structured.await_args.kwargs
         assert kwargs["schema"] is PREAMBLE_SCHEMA
         assert kwargs["temperature"] == 0.1
         assert "metadata extractor" in kwargs["system_prompt"]
-        assert "BABYSTAR\nDrehbuch von X" in kwargs["prompt"]
+        assert "MUSTERFILM\nDrehbuch von X" in kwargs["prompt"]
         assert "[TEXT START]" in kwargs["prompt"]
 
     async def test_null_title_returns_none(self):
@@ -911,7 +911,7 @@ class TestPreambleTitleExtraction:
 
     @pytest.mark.parametrize(
         ("raw", "expected"),
-        [(123, None), (["A"], None), ("   ", None), ("  Babystar \n", "Babystar")],
+        [(123, None), (["A"], None), ("   ", None), ("  Musterfilm \n", "Musterfilm")],
     )
     async def test_title_is_coerced_to_clean_string_or_none(self, raw, expected):
         llm = MagicMock()

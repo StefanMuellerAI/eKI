@@ -4,13 +4,45 @@ Alle wesentlichen Änderungen der eKI API. Format nach [Keep a Changelog](https:
 Versionierung nach [SemVer](https://semver.org/lang/de/). Ein Minor-Release pro Pflichtenheft-Meilenstein
 (M0x → 0.x.0), `1.0.0` mit dem UAT-Paket (M12). Die Versionsquelle ist `core/version.py`.
 
-## [Unreleased] – Stabilisierung zur Übergabe
+## [1.0.1] – 2026-10-16 – Stabilisierung zur Übergabe
 
-Ergebnis eines Test- und Doku-Reviews vor der Übergabe: 1277 neue Tests (465 → 1742), Coverage
-80,78 % → 98,59 %, die Suite läuft jetzt auch gegen echtes PostgreSQL. Mehrere Fehler traten nur
-dort bzw. bei einer frischen Installation auf und waren für die bisherige SQLite-Suite unsichtbar.
-**Empfehlung:** als Patch-Release (z. B. `1.0.1`) veröffentlichen und die Abnahmetests AT2–AT7 auf
-diesem Stand wiederholen. Neue DB-Revision (head): `b8d0f2a4c6e3`.
+Ergebnis eines Test- und Doku-Reviews vor der Übergabe und der daraus folgenden Projektentscheidungen.
+Tests 465 → 2049, Coverage 80,78 % → 98,71 %; die Suite läuft auch gegen echtes PostgreSQL. Mehrere Fehler traten nur dort bzw. bei einer frischen Installation auf und waren für die
+bisherige SQLite-Suite unsichtbar. **Die Abnahmetests AT2–AT7 sind auf diesem Stand zu wiederholen.**
+DB-Revision (head): `c4e6a8b0d2f1`. Upgrade-Schritte: `docs/OPERATIONS_GUIDE.md` → „Upgrade 1.0.0 → 1.0.1".
+
+### Entfernt / geändert – für Clients sichtbar
+- **`POST /v1/security/check` entfernt** (Antwort 404). Der Endpunkt war ein M01-Stub ohne Analyse und
+  lieferte immer einen festen Platzhalter-Report; produktiv ist ausschließlich `check:async`.
+- **`/v1/kb/*` nur noch mit Admin-API-Key** (vorher genügte jeder Key, auch der ePro-Service-Key).
+- **`callback_url` ist jetzt aktiv:** Push-Ziel des Jobs statt `EPRO_BASE_URL/...`; impliziert
+  `delivery=push`, `delivery=pull` + `callback_url` → 422. Nur HTTPS, keine Zugangsdaten in der URL,
+  Hosts aus `CALLBACK_URL_ALLOWED_HOSTS`, nur öffentliche IP-Adressen (bei der Zustellung erneut geprüft).
+- **`priority` ist jetzt aktiv:** 1 (höchste) … 10 wird als Temporal-Task-Queue-Priorität übergeben
+  (`TEMPORAL_PRIORITY_LEVELS`; Temporal-Dynamic-Config `matching.useNewMatcher`/`matching.priorityLevels`).
+
+### Sicherheit & Datenschutz
+- **Temporal-Payloads verschlüsselt** (AES-256-GCM, Schlüssel aus `API_SECRET_KEY` abgeleitet): Workflow-
+  und Activity-Daten, Fehlermeldungen und Header stehen nicht mehr im Klartext in der Temporal-History
+  bzw. -UI. Ältere Klartext-Historien bleiben lesbar.
+- **Aufbewahrung 90 Tage** (`METADATA_RETENTION_DAYS`): nächtlicher Lösch-Zeitplan `eki-metadata-cleanup`
+  für Job-/Report-Metadaten, Dead Letters, inaktive/abgelaufene API-Keys und Audit-Logs (Migration
+  `c4e6a8b0d2f1` mit Indizes). Zeitplan-Änderungen (Cron/aktiviert) greifen jetzt beim Worker-Start,
+  auch für `eki-kb-cleanup`.
+- **Echte Drehbücher entfernt** aus Repository und Docker-Images (synthetische Ersatz-Fixtures; lokale
+  Testdaten in `tests/fixtures/pdf/private/`, git-ignoriert). In der Git-Historie und in Images ≤ 1.0.0
+  sind sie weiterhin enthalten.
+
+### Betrieb & Abhängigkeiten
+- **Ollama läuft extern:** der `ollama`-Dienst ist nicht mehr Teil des Compose-Stacks; optionales Overlay
+  `docker-compose.ollama.yml` für Entwicklung/Offline, gepinnt auf `ollama/ollama:0.33.3`.
+- **Redis auf `7.2-alpine` gepinnt** (letzte BSD-lizenzierte Linie). Bestehende Volumes aus Redis 7.4
+  sind mit 7.2 nicht lesbar → vor dem Upgrade leeren (siehe Upgrade-Schritte). 7.2 wird upstream nicht
+  unbegrenzt unterstützt; danach Wechsel auf Valkey oder Redis ≥ 8 (AGPLv3) nötig.
+- **Unbenutzte Abhängigkeiten entfernt** (u. a. `python-jose` mit bekannten CVEs, PyJWT, passlib, bcrypt,
+  aiohttp; 99 → 78 Laufzeitpakete); `requests` explizit deklariert.
+- **Typprüfung:** mypy (strict) ohne Befunde (71 → 0) über `api core services workflows worker llm parsers`;
+  der CI-Schritt ist jetzt blockierend.
 
 ### Behoben – kritisch
 - **Frische Installation lief nicht:** `sqlalchemy` ohne `[asyncio]`-Extra; SQLAlchemy ≥ 2.1 installiert
@@ -51,6 +83,8 @@ diesem Stand wiederholen. Neue DB-Revision (head): `b8d0f2a4c6e3`.
 - **Betrieb:** Metrik „completed" wurde seit M10 nie erfasst (SLO-Erfolgsquote 0); DB-Fehler bei
   Statusupdates wurden verschluckt (Jobs hingen in RUNNING); Parsing-Fehler nicht mehr wiederholt; echte
   Verarbeitungszeit statt fest 1,0 s; Engines im `finally` freigegeben; Log-Rotation im Prod-Overlay.
+- **Alarm `EkiDeadLettersPending`** feuerte nach dem Quittieren weiter (veralteter Gauge-Wert des
+  Workers); der Wert wird jetzt bei jedem `/metrics`-Scrape aus der Datenbank berechnet.
 - **KB:** Dedupe pro Mandant auch im Schema (Migration `b8d0f2a4c6e3`; vorher 503 für den zweiten Mandanten),
   paralleler Duplikat-Upload → 409.
 - **Robustheit gegen LLM-Ausgaben:** fehlerhafte Felder degradieren eine Szene statt den Parse abzubrechen;

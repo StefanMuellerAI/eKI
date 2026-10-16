@@ -35,7 +35,7 @@ class PromptManager:
         if not path.exists():
             raise FileNotFoundError(f"Prompt YAML not found: {path}")
         self._prompts: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
-        self._version = self._prompts.get("version", "unknown")
+        self._version = str(self._prompts.get("version", "unknown"))
         logger.info("PromptManager loaded v%s from %s", self._version, path)
 
     @property
@@ -66,9 +66,10 @@ class PromptManager:
     def get_system(self, section: str, name: str) -> str:
         """Return only the system prompt (no variable substitution needed)."""
         try:
-            return self._prompts[section][name]["system"].strip()
+            system: str = self._prompts[section][name]["system"]
         except KeyError:
             raise KeyError(f"Prompt not found: {section}.{name}")
+        return system.strip()
 
     def sections(self) -> list[str]:
         """List available top-level sections (excluding 'version')."""
