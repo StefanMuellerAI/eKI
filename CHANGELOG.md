@@ -42,6 +42,8 @@ DB-Revision (head): `c4e6a8b0d2f1`. Upgrade-Schritte: `docs/OPERATIONS_GUIDE.md`
   unbegrenzt unterstützt; danach Wechsel auf Valkey oder Redis ≥ 8 (AGPLv3) nötig.
 - **Unbenutzte Abhängigkeiten entfernt** (u. a. `python-jose` mit bekannten CVEs, PyJWT, passlib, bcrypt,
   aiohttp; 99 → 78 Laufzeitpakete); `requests` explizit deklariert.
+- **Typprüfung:** mypy (strict) ohne Befunde (71 → 0) über `api core services workflows worker llm parsers`;
+  der CI-Schritt ist jetzt blockierend.
 
 ### Behoben – kritisch
 - **Frische Installation lief nicht:** `sqlalchemy` ohne `[asyncio]`-Extra; SQLAlchemy ≥ 2.1 installiert
