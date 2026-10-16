@@ -6,9 +6,8 @@ Versionierung nach [SemVer](https://semver.org/lang/de/). Ein Minor-Release pro 
 
 ## [1.0.1] – 2026-10-16 – Stabilisierung zur Übergabe
 
-Ergebnis eines Test- und Doku-Reviews vor der Übergabe und der daraus folgenden Entscheidungen des
-Auftragnehmers. Tests 465 → über 2000, Coverage 80,78 % → 98,78 %; die Suite läuft auch gegen echtes
-PostgreSQL. Mehrere Fehler traten nur dort bzw. bei einer frischen Installation auf und waren für die
+Ergebnis eines Test- und Doku-Reviews vor der Übergabe und der daraus folgenden Projektentscheidungen.
+Tests 465 → 2049, Coverage 80,78 % → 98,71 %; die Suite läuft auch gegen echtes PostgreSQL. Mehrere Fehler traten nur dort bzw. bei einer frischen Installation auf und waren für die
 bisherige SQLite-Suite unsichtbar. **Die Abnahmetests AT2–AT7 sind auf diesem Stand zu wiederholen.**
 DB-Revision (head): `c4e6a8b0d2f1`. Upgrade-Schritte: `docs/OPERATIONS_GUIDE.md` → „Upgrade 1.0.0 → 1.0.1".
 

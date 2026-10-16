@@ -4,8 +4,8 @@
 # cp docker-compose.override.yml.example docker-compose.override.yml
 #
 # Inference runs on an EXTERNAL Ollama instance; its URL comes from .env.local
-# (LOCAL_MISTRAL_BASE_URL for LLM_PROVIDER=local_mistral, OLLAMA_BASE_URL for
-# LLM_PROVIDER=ollama and the KB embeddings). For a local Ollama container
+# (LLM_PROVIDER=local_mistral: LOCAL_MISTRAL_BASE_URL, falling back to OLLAMA_BASE_URL,
+# for chat and KB embeddings; LLM_PROVIDER=ollama: OLLAMA_BASE_URL). For a local Ollama container
 # (development / offline) use the separate overlay instead of this file:
 #   docker compose -f docker-compose.yml -f docker-compose.ollama.yml up -d
 

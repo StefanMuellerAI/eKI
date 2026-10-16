@@ -1,15 +1,17 @@
-# Datenschutz und Datenhaltung – eKI API v1.0.0
+# Datenschutz und Datenhaltung – eKI API v1.0.1
 
 Datenschutz-Inventar für die Übergabe: Welche personenbezogenen oder vertraulichen Daten
 die eKI verarbeitet, wo sie liegen, ob sie verschlüsselt sind, wann sie gelöscht werden
-und wer darauf zugreifen kann. Alle Angaben sind gegen den Code geprüft (Stand Oktober 2026,
-Release 1.0.0 einschließlich der Korrekturen vom 15.10.2026). Das Dokument ist eine
-technische Zuarbeit für das Verzeichnis von Verarbeitungstätigkeiten und die TOM-Dokumentation
-der Filmakademie; es ersetzt keine rechtliche Bewertung.
+und wer darauf zugreifen kann. Alle Angaben sind gegen den Code geprüft (Stand 16.10.2026,
+Release 1.0.1). Das Dokument ist eine technische Zuarbeit für das Verzeichnis von
+Verarbeitungstätigkeiten und die TOM-Dokumentation der Filmakademie; es ersetzt keine
+rechtliche Bewertung.
 
-> **Wichtigster offener Punkt:** Im Repository liegen **echte Drehbücher und Projektmappen**
-> (`tests/fixtures/pdf/`), und sie werden in **beide Docker-Images** kopiert – also auch in
-> die GHCR-Images. Siehe [§8](#8-offene-entscheidungen-für-die-filmakademie), Punkt 1.
+> **Neu in 1.0.1 (Projektentscheidungen):** Metadaten werden nach **90 Tagen**
+> automatisch gelöscht (§4); die **Temporal-Historie ist verschlüsselt** (§3.3); die **echten
+> Drehbücher** sind aus Repository und Images entfernt – in der Git-Historie und in Images bis
+> einschließlich 1.0.0 sind sie weiterhin enthalten (§8); die **Knowledge Base** ist nur noch mit
+> Admin-Keys zugänglich (§6); die Inferenz läuft auf einer **externen Ollama-Instanz** (§5).
 
 ---
 
@@ -19,16 +21,22 @@ Die eKI arbeitet nach dem Processing-Only-Prinzip (Pflichtenheft §4.1/§4.2): D
 Report liegen nur transient und verschlüsselt im Redis-Buffer und werden nach Zustellung
 gelöscht. Dauerhaft gespeichert werden Metadaten.
 
-Davon gibt es drei Abweichungen, die bei der datenschutzrechtlichen Bewertung zu
-berücksichtigen sind:
+Bei der datenschutzrechtlichen Bewertung sind folgende Punkte zu berücksichtigen:
 
-1. **Temporal-Historie:** Drehbuchtext und Findings laufen seit Oktober 2026 nur als
-   Buffer-Referenz durch den Workflow. Unverschlüsselt in der Workflow-Historie in PostgreSQL
-   stehen aber Metadaten (`project_id`, `user_id`, `script_id`, Client-`metadata`) und bei PDFs
-   der **Titel des Drehbuchs** (§3.3).
+1. **Temporal-Historie:** Drehbuchtext und Findings laufen nur als Buffer-Referenz durch den
+   Workflow. Seit 1.0.1 sind zusätzlich alle Temporal-Payloads (Workflow- und Activity-Ein- und
+   -Ausgaben, Header, Fehlermeldungen und Stacktraces) AES-256-GCM-verschlüsselt (Schlüssel aus
+   `API_SECRET_KEY`, HKDF-Label `eki-temporal-codec-v1`). Im Klartext bleiben nur technische
+   Kennungen: `job_id` (als Workflow-ID), Workflow-/Activity-Namen, Task-Queue, Zeitstempel,
+   Retry-Zähler, Priorität und Fehlertypen. Historien von Workflows, die **vor dem 1.0.1-Update**
+   gestartet wurden, enthalten weiterhin unverschlüsselt Metadaten (`project_id`, `user_id`,
+   `script_id`, Client-`metadata`) und bei PDFs den **Titel des Drehbuchs**, bis die
+   Namespace-Retention sie löscht; ein über das Update hinweg laufender Workflow hat eine
+   gemischte Historie (§3.3).
 2. **Knowledge Base:** Die Chunk-Texte der KB-Dokumente liegen im Klartext in
    `kb_embeddings.chunk_text`; nur der Originaltext ist verschlüsselt (§3.2).
-3. **Metadaten** (Jobs, Reports, Dead Letters, API-Keys) werden nie automatisch gelöscht (§4).
+3. **Metadaten** (Jobs, Reports, Dead Letters, API-Keys, Audit-Log) werden dauerhaft gespeichert,
+   seit 1.0.1 aber nach **90 Tagen** automatisch gelöscht (§4).
 
 ---
 
@@ -82,55 +90,78 @@ verschlüsselt; Verschlüsselung des Volumes `postgres_data` ist Sache des Hosts
 
 | Tabelle | Inhalt | Klartext / verschlüsselt | Automatische Löschung |
 |---|---|---|---|
-| `api_keys` | `user_id`, `organization_id`, `name`, `description`, `key_hash` (SHA-256), `is_active`, `is_admin`, `created_at`, `expires_at`, `last_used_at`, `usage_count` | Klartext; der Key selbst nur als Hash | nie (Deaktivierung per `is_active=false`, Ablauf per `expires_at`, Standard 365 Tage) |
-| `job_metadata` | `job_id`, `project_id`, `user_id`, `script_format`, `status`, `priority`, `progress_percentage`, `report_id`, `error_message` (max. 1000 Zeichen, inhaltsfrei), `idempotency_key`, `delivery_mode`, `script_id`, Zustell-Buchhaltung (`delivery_*`, `delivered_at`), Zeitstempel. `extra_metadata` und `workflow_id` werden nicht befüllt. | Klartext, keine Drehbuchinhalte | nie |
-| `report_metadata` | `report_id`, `job_id`, `project_id`, `user_id`, `script_format`, `total_findings`, `processing_time_seconds`, `report_ref_key` (Redis-Schlüssel), `is_retrieved`, `retrieved_at`, `delivery_mode` | Klartext, keine Findings | nie |
-| `delivery_dead_letters` | `job_id`, `report_id`, `project_id`, `user_id`, `delivery_mode`, `reason`, `attempts`, `last_status_code`, `last_error_type` (derzeit nie befüllt), `webhook_sent`, `acknowledged_at`, `acknowledged_by` (Admin-`user_id`), `note` (Freitext des Operators, max. 1000 Zeichen) | Klartext; inhaltsfrei (geprüft: keine Report- oder Drehbuchfelder) | nie |
-| `audit_logs` | Tabelle angelegt (Endpoint, Methode, `user_id`, `project_id`, `request_id`, Status …), wird aber **nirgends beschrieben** | – | – (immer leer) |
+| `api_keys` | `user_id`, `organization_id`, `name`, `description`, `key_hash` (SHA-256), `is_active`, `is_admin`, `created_at`, `expires_at`, `last_used_at`, `usage_count` | Klartext; der Key selbst nur als Hash | nur nicht mehr nutzbare Keys: gesperrte 90 Tage nach letzter Nutzung, abgelaufene 90 Tage nach Ablauf (§4); aktive Keys nie (Ablauf per `expires_at`, Standard 365 Tage) |
+| `job_metadata` | `job_id`, `project_id`, `user_id`, `script_format`, `status`, `priority` (Request-Wert 1–10), `progress_percentage`, `report_id`, `error_message` (max. 1000 Zeichen, inhaltsfrei), `idempotency_key`, `delivery_mode`, `script_id`, Zustell-Buchhaltung (`delivery_*`, `delivered_at`), Zeitstempel. `extra_metadata` und `workflow_id` werden nicht befüllt; `callback_url` wird nicht gespeichert. | Klartext, keine Drehbuchinhalte | ja, 90 Tage nach Anlage und letzter Änderung (§4) |
+| `report_metadata` | `report_id`, `job_id`, `project_id`, `user_id`, `script_format`, `total_findings`, `processing_time_seconds`, `report_ref_key` (Redis-Schlüssel), `is_retrieved`, `retrieved_at`, `delivery_mode` | Klartext, keine Findings | ja, 90 Tage nach Anlage bzw. Abruf (§4) |
+| `delivery_dead_letters` | `job_id`, `report_id`, `project_id`, `user_id`, `delivery_mode`, `reason`, `attempts`, `last_status_code`, `last_error_type` (derzeit nie befüllt), `webhook_sent`, `acknowledged_at`, `acknowledged_by` (Admin-`user_id`), `note` (Freitext des Operators, max. 1000 Zeichen) | Klartext; inhaltsfrei (geprüft: keine Report- oder Drehbuchfelder) | ja, 90 Tage nach Anlage bzw. Quittierung, auch unquittiert (§4) |
+| `audit_logs` | Tabelle angelegt (Endpoint, Methode, `user_id`, `project_id`, `request_id`, Status …), wird aber **nirgends beschrieben** | – | ja, 90 Tage (§4; derzeit immer leer) |
 | `kb_documents` | `title`, `source`, `tenant_id`, `tags`, `uploaded_by` (`user_id`), `content_hash` (SHA-256 des Texts), `ttl_hours`, `created_at`, `expires_at`; `original_text_encrypted` | Metadaten Klartext; **Originaltext Fernet-verschlüsselt** (Schlüssel = SHA-256(`API_SECRET_KEY` + `eki-kb-doc-v1`)) | ja, nach `expires_at` (siehe §4) |
 | `kb_embeddings` | `chunk_text`, `vector` (1024 dim), `chunk_offset`, `length`, `hash` | **`chunk_text` im Klartext** (pgvector kann nicht auf Chiffraten suchen); die Chunks ergeben zusammen den vollständigen Dokumenttext | mit dem Dokument (`ON DELETE CASCADE`) |
 | `alembic_version` | Migrationsstand | – | – |
 
-Hinweis zu `API_SECRET_KEY`: Wird der Schlüssel gewechselt, sind Buffer-Inhalte und die
-verschlüsselten KB-Originaltexte nicht mehr lesbar. Die KB-Suche arbeitet mit `chunk_text`
-und Vektoren und funktioniert weiter; für einen konsistenten Stand die KB neu einspielen
-(`scripts/seed_kb.py --reseed`).
+Hinweis zu `API_SECRET_KEY`: Wird der Schlüssel gewechselt, sind Buffer-Inhalte, die
+verschlüsselten KB-Originaltexte und (seit 1.0.1) die Temporal-Payloads nicht mehr lesbar. Die
+KB-Suche arbeitet mit `chunk_text` und Vektoren und funktioniert weiter; für einen konsistenten
+Stand die KB neu einspielen (`scripts/seed_kb.py --reseed`, Admin-Key).
 
 ### 3.3 PostgreSQL – Temporal (`temporal`, `temporal_visibility`)
 
 Temporal (`temporalio/auto-setup`) legt seine Datenbanken im selben PostgreSQL-Server an.
 Die Workflow-Historie enthält Eingaben und Ergebnisse jeder Activity. Geprüft
-(`workflows/security_check.py`, `workflows/activities.py`):
+(`workflows/security_check.py`, `workflows/activities.py`, `workflows/maintenance.py`):
 
-| In der Historie | Inhalt |
+| In der Historie | Inhalt (seit 1.0.1 verschlüsselt, siehe unten) |
 |---|---|
-| Workflow-Eingabe `job_data` | Buffer-Referenzschlüssel (kein Drehbuchtext), `job_id`, `report_id`, `project_id`, `user_id`, `script_id`, `delivery_mode`, Client-`metadata`, Konfigurationswerte |
+| Workflow-Eingabe `job_data` | Buffer-Referenzschlüssel (kein Drehbuchtext), `job_id`, `report_id`, `project_id`, `user_id`, `script_id`, `delivery_mode`, `priority`, `callback_url` (falls gesetzt), Client-`metadata`, Konfigurationswerte |
 | Ergebnisse von `parse_fdx`, `extract_pdf_text`, `split_scenes`, `aggregate_script` | Referenzschlüssel, Zähler, OCR-Seitennummern, Warnungen – kein Text |
 | Ergebnis von `structure_scene_llm` für den Vorspann (PDF), Eingabe von `aggregate_script` | **Titel des Drehbuchs** |
 | Ergebnisse von `analyze_scene_risk`, Eingabe von `aggregate_report` | Szenennummer und Referenzschlüssel auf die verschlüsselten Findings im Buffer – keine Findings im Klartext |
 | Ergebnis von `deliver_report` (Push) | Statuscode und Antwort-Body von ePro |
 | Fehlerpfade | inhaltsfreie Meldungen (`delivery_failed:<reason>`, „Parsing fehlgeschlagen: …“, „Szene 7: Risikoanalyse fehlgeschlagen (LLMException)“); Webhook-/Dead-Letter-Payload ist inhaltsfrei |
+| Wartungs-Workflows (`KBCleanupWorkflow`, `MetadataCleanupWorkflow`) | nur Zähler und der Stichtag, keine IDs |
 
-Bis Oktober 2026 liefen die Findings (einschließlich wörtlicher Zitate im Feld `evidence`)
-im Klartext durch die Historie. Workflows, die vor dem Update gestartet wurden, enthalten sie
-bis zum Ablauf ihrer Retention noch.
+**Verschlüsselung (seit 1.0.1).** Ein Payload-Codec (`core/temporal_codec.py`) verschlüsselt
+jede Payload, bevor sie API oder Worker verlässt: AES-256-GCM mit zufälliger Nonce; Schlüssel per
+HKDF-SHA256 aus `API_SECRET_KEY` (Label `eki-temporal-codec-v1`, unabhängig von den Schlüsseln für
+Buffer und KB). Erfasst sind Workflow-Eingabe und -Ergebnis, alle Activity-Ein- und -Ausgaben, die
+Temporal-Header (`request_id`, Trace-Kontext) sowie Fehlermeldungen, Stacktraces und Fehlerdetails.
+Lesbar bleiben nur, was Temporal selbst braucht: Workflow-ID (= `job_id`), Run-IDs, Workflow- und
+Activity-Namen, Task-Queue, Timer, Zeitstempel, Versuchszähler und Retry-Zustand, Timeouts, die
+Task-Priorität (eine aus `priority` abgeleitete Zahl) und die Namen von Fehlertypen
+(Exception-Klassen wie `ParsingFailed`). Memos und Search Attributes werden nicht verwendet. Die
+Schedule-Definitionen (`eki-kb-cleanup`, `eki-metadata-cleanup`: Cron, Task-Queue) enthalten keine
+Payloads.
 
-Ein Payload-Codec (Verschlüsselung der Temporal-Payloads) ist **nicht** konfiguriert.
-Aufbewahrung: Laufzeit des Workflows (bis zur Zustellung bzw. bis Ablauf der Pull-TTL,
-höchstens `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` = 10 h) **plus** die Retention des Namespaces.
-Der Compose setzt keine eigene Retention; das Image `temporalio/auto-setup` legt den
-Namespace `default` nach unserem Kenntnisstand mit 24 h an (`DEFAULT_NAMESPACE_RETENTION`).
-Vor dem Go-Live prüfen:
+Historien von Workflows, die **vor dem 1.0.1-Update** gestartet wurden, bleiben im Klartext
+(Metadaten, Client-`metadata`, Drehbuchtitel wie in der Tabelle; bei sehr alten Workflows bis
+Oktober 2026 auch Findings mit Zitaten im Feld `evidence`), bis die Retention sie löscht. Ein
+Workflow, der über das Update hinweg lief, hat eine gemischte Historie.
+
+**Aufbewahrung:** Laufzeit des Workflows (bis zur Zustellung bzw. bis Ablauf der Pull-TTL,
+höchstens `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` = 10 h) **plus** die Retention des Namespace. Der
+Compose setzt `DEFAULT_NAMESPACE_RETENTION` nicht; `temporalio/auto-setup` legt den Namespace
+`default` deshalb mit **24 h** an – nur beim ersten Anlegen, eine spätere Variable ändert ihn
+nicht. Die Retention ist eine eigene Einstellung und wird vom Metadaten-Cleanup (§4) nicht
+erfasst. Vor dem Go-Live prüfen und bei Bedarf ändern (z. B. 72 h):
 
 ```bash
-docker compose exec temporal tctl --address temporal:7233 --namespace default namespace describe
+docker compose exec temporal temporal operator namespace describe --namespace default --address temporal:7233
+docker compose exec temporal temporal operator namespace update --namespace default --retention 72h --address temporal:7233
 ```
 
-Die Temporal-UI zeigt diese Daten an. Sie ist in Produktion nicht veröffentlicht
+Die Temporal-UI zeigt seit 1.0.1 Eingaben und Ergebnisse nur als `binary/encrypted`
+(Base64-Chiffrat) und Fehlermeldungen als `Encoded failure`; lesbar sind IDs, Activity-Namen,
+Zeiten und Fehlertypen. Entschlüsseln kann nur, wer `API_SECRET_KEY` hat (optionaler Codec-Server:
+`OPERATIONS_GUIDE.md` §8.2). Die UI ist in Produktion nicht veröffentlicht
 (`docker-compose.prod.yml`), im Entwicklungs-Compose aber ohne Anmeldung auf Port 8080.
 
-Nachweis: `tests/test_e2e_pipeline.py` prüft die Historie eines echten Workflow-Laufs auf
-Drehbuchtext.
+Nachweis: `tests/test_temporal_codec.py` (die gespeicherte Historie eines Prüf-Workflows enthält
+keinen Klartext von Workflow-Eingabe, Activity-Ergebnis, Header und Fehlermeldung; ein
+Kontrolllauf ohne Codec enthält ihn; Historien von vor 1.0.1 und ein über das Update laufender
+Workflow spielen weiter ab) und
+`tests/test_e2e_pipeline.py::test_temporal_history_is_encrypted_at_rest` (echter PDF-Lauf: die
+Historie enthält weder `project_id`, `user_id`, Client-`metadata`, Drehbuchtitel,
+Buffer-Schlüssel `eki:buf:` noch Skripttext; jede Payload ist `binary/encrypted`).
 
 ### 3.4 Logs
 
@@ -146,11 +177,16 @@ Drehbuchtext.
 - **Access-Logs:** In Produktion schreibt Gunicorn Access-Logs (`--access-logfile -`) mit
   **Client-IP**, Zeitstempel, Request-Zeile (inkl. Job-/Report-ID) und User-Agent; im
   Entwicklungs-Compose tut Uvicorn Entsprechendes.
-- **Aufbewahrung:** Die Logs gehen an den Docker-Logging-Treiber. Die Compose-Dateien
-  konfigurieren **keine Rotation**; ohne Einstellung im Docker-Daemon wachsen die Logs bis zum
-  Entfernen des Containers. Rotation/Weiterleitung legt der Betrieb fest (§8).
-- **Ollama** protokolliert im Normalbetrieb keine Prompt-Inhalte. Den Debug-Modus
-  (`OLLAMA_DEBUG`) im Betrieb nicht aktivieren.
+- **Aufbewahrung:** Die Logs gehen an den Docker-Logging-Treiber (`json-file`). Das Prod-Overlay
+  (`docker-compose.prod.yml`) begrenzt sie für alle Dienste **nach Größe**: 20 MB × 5 Dateien je
+  Container (ca. 100 MB; die älteste Datei fällt weg, wenn alle voll sind). Eine **zeitliche**
+  Frist kennt Docker nicht – wie lange eine Logzeile erhalten bleibt, hängt vom Log-Volumen ab.
+  Der Entwicklungs-Compose setzt keine Rotation (Docker-Daemon-Standard). Ist eine zeitliche
+  Grenze gefordert (z. B. 90 Tage), die Logs an einen zentralen Log-Speicher mit entsprechender
+  Retention weiterleiten (journald/syslog/Loki o. Ä.) – siehe §8.
+- **Ollama** läuft seit 1.0.1 als externe Instanz außerhalb des Compose-Stacks; ihre Logs liegen
+  beim Betreiber der Instanz. Im Normalbetrieb protokolliert Ollama keine Prompt-Inhalte; den
+  Debug-Modus (`OLLAMA_DEBUG`) im Betrieb nicht aktivieren.
 
 ### 3.5 Observability (nur mit `docker-compose.observability.yml`)
 
@@ -166,13 +202,18 @@ Drehbuchtext.
 
 - `tests/reports/` (git-ignoriert): Ausgaben von Abnahme-, Benchmark- und Paritätsläufen;
   kann echte Report-Inhalte enthalten. Nicht in Tickets/E-Mails weitergeben.
+- `tests/fixtures/pdf/private/` (bzw. `EKI_PRIVATE_FIXTURES_DIR`): einzige vorgesehene Ablage für
+  echte Drehbücher, die Entwickler lokal mit den Stack-Runnern (`tests/run_pdf_*.py`) prüfen;
+  git- und docker-ignoriert. Im Repository liegen nur synthetische Fixtures (§8, Punkt 1).
 - `config/kb_seed/real/`: lokale Ablage echter KB-Dokumente vor dem Einspielen. Der Inhalt ist
-  git-ignoriert, aber die Dockerfiles kopieren `config/` in die Images (es gibt keine
-  `.dockerignore`): Bei einem lokalen Image-Build landen dort liegende Dokumente im Image.
-  Nach dem Einspielen entfernen.
-- Backups: Ein `pg_dump` von `eki_db` enthält Metadaten und die KB (Chunk-Texte im Klartext).
-  Wird der ganze PostgreSQL-Server gesichert, sind auch die Temporal-Datenbanken (Metadaten,
-  Drehbuchtitel) enthalten.
+  git-ignoriert und seit 1.0.1 per `.dockerignore` vom Image-Build ausgeschlossen (vorher konnte
+  ein lokaler Build ihn ins Image übernehmen). Im Entwicklungs-Stack sieht der API-Container den
+  Ordner über den Bind-Mount. Nach dem Einspielen trotzdem entfernen.
+- Backups: Ein `pg_dump` von `eki_db` enthält Metadaten (bis zu ihrer 90-Tage-Löschung in der
+  Datenbank, im Backup bis zu dessen Löschung) und die KB (Chunk-Texte im Klartext). Wird der
+  ganze PostgreSQL-Server gesichert, sind auch die Temporal-Datenbanken enthalten: deren Payloads
+  seit 1.0.1 verschlüsselt (lesbar nur mit dem `API_SECRET_KEY`, der beim Workflow-Lauf galt),
+  Historien von vor 1.0.1 im Klartext (Metadaten, Drehbuchtitel), bis ihre Retention abgelaufen ist.
 
 ---
 
@@ -182,26 +223,34 @@ Drehbuchtext.
 |---|---|---|---|
 | Drehbuch, Zwischenergebnisse | Redis | ja, nach dem jeweiligen Verarbeitungsschritt, spätestens nach `BUFFER_TTL_SECONDS` (6 h) | Activities, Redis-TTL |
 | Report-Paket (JSON + PDF) | Redis | ja: Push nach 2xx, Pull beim One-Shot-GET, bei endgültigem Fehler sofort, spätestens nach 6 h | `deliver_report`, `GET /v1/security/reports/{id}`, `cleanup_buffer`, Redis-TTL |
-| Drehbuchtitel (PDF), Client-`metadata`, IDs | Temporal-Historie | ja, nach Workflow-Ende + Namespace-Retention (§3.3) | Temporal |
-| KB-Dokumente inkl. Chunks | `kb_documents`, `kb_embeddings` | ja, nach `expires_at` (`ttl_hours`, Standard 720 h = 30 Tage, max. 8760 h) | Temporal-Schedule `eki-kb-cleanup`, täglich 03:00 UTC (`KB_CLEANUP_CRON`), angelegt beim Worker-Start; zusätzlich manuell per `DELETE /v1/kb/documents…` |
+| Workflow-Historie (Drehbuchtitel, Client-`metadata`, IDs – seit 1.0.1 verschlüsselt, im Klartext nur `job_id` und technische Namen) | Temporal-Historie (PostgreSQL `temporal`) | ja, nach Workflow-Ende + Namespace-Retention (Standard von `temporalio/auto-setup`: **24 h**, §3.3) | Temporal |
+| KB-Dokumente inkl. Chunks | `kb_documents`, `kb_embeddings` | ja, nach `expires_at` (`ttl_hours`, Standard 720 h = 30 Tage, max. 8760 h) | Temporal-Schedule `eki-kb-cleanup`, täglich 03:00 UTC (`KB_CLEANUP_CRON`); zusätzlich manuell per `DELETE /v1/kb/documents…` (Admin-Key) |
 | Rate-Limit-Zähler (IP) | Redis | ja, 60 s bzw. 1 h | Redis-TTL |
 | Metriken | Prometheus | ja, 30 Tage | Prometheus |
-| Job-/Report-Metadaten | `job_metadata`, `report_metadata` | **nein** | – |
-| Dead Letters | `delivery_dead_letters` | **nein** (auch nicht nach Quittierung) | – |
-| API-Keys (auch abgelaufene/deaktivierte) | `api_keys` | **nein** | – |
-| Container-Logs | Docker | **nein** (keine Rotation konfiguriert) | Betrieb |
+| Job-Metadaten | `job_metadata` | ja, **90 Tage** (`METADATA_RETENTION_DAYS`) nach Anlage **und** letzter Änderung – in den Endzuständen `completed`/`failed`/`cancelled` und ebenso **verwaiste** Jobs, die noch `pending`/`running`/`delivering` zeigen (ein Workflow lebt höchstens `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` = 10 h plus Pull-Fenster 6 h; ohne Änderung seit 90 Tagen kann er nicht mehr laufen). **Ausnahme:** Ein Job mit Änderung innerhalb der Frist wird (noch) nicht gelöscht; verwaiste Jobs nur, wenn die Frist länger ist als Workflow-Timeout + Buffer-TTL (Sicherung im Code) | Temporal-Schedule `eki-metadata-cleanup`, täglich 03:30 UTC (`METADATA_CLEANUP_CRON`) |
+| Report-Metadaten | `report_metadata` | ja, 90 Tage nach Anlage und (falls erfolgt) Abruf, auch die Reports verwaister Jobs. **Ausnahme:** solange der zugehörige Job noch läuft | dto. |
+| Dead Letters | `delivery_dead_letters` | ja, 90 Tage nach Anlage und (falls erfolgt) Quittierung – **auch unquittierte**. Der Betrieb muss Dead Letters innerhalb der Frist bearbeiten | dto. |
+| API-Keys | `api_keys` | nur nicht mehr nutzbare Keys: gesperrte Keys 90 Tage nach **letzter Nutzung** bzw. Anlage (der Zeitpunkt der Sperrung wird nicht gespeichert), abgelaufene Keys 90 Tage nach Ablauf (und frühestens 90 Tage nach letzter Nutzung). **Ausnahme:** aktive, nicht abgelaufene Keys werden nie gelöscht | dto. |
+| Audit-Log | `audit_logs` | ja, 90 Tage (die Tabelle wird derzeit nicht beschrieben) | dto. |
+| Container-Logs (Access-Logs mit Client-IP) | Docker (`json-file`) | Produktion: **nur nach Größe** (20 MB × 5 Dateien je Container), keine zeitliche Frist; Entwicklungs-Compose: keine Rotation | Docker / Betrieb (zeitliche Frist nur per zentraler Log-Weiterleitung, §8) |
 
-Eine Löschfrist für die Metadaten muss die Filmakademie festlegen (§8). Bis eine Funktion
-dafür existiert, wäre eine manuelle Bereinigung möglich, zum Beispiel (Vorschlag, nicht
-Teil des Release, vorher sichern und mit dem Datenschutz abstimmen):
+**Metadaten-Aufbewahrung (seit 1.0.1).** Die Frist ist auf **90 Tage** festgelegt (Standard; die
+Filmakademie als Verantwortliche kann sie über `METADATA_RETENTION_DAYS` ≥ 1 anpassen,
+`CONFIGURATION.md` §3.13). Regel:
+Eine Zeile wird erst gelöscht, wenn **alle** ihre Zeitstempel älter als der Stichtag (jetzt minus
+Frist) sind; ein fehlender Zeitstempel (z. B. nie abgerufen, nie quittiert) zählt als „Ereignis
+fand nicht statt“. Gelöscht wird in Stapeln von 1000 Zeilen je Transaktion, mit erneuter Prüfung
+beim Löschen (eine inzwischen geänderte Zeile, etwa ein reaktivierter Key, bleibt). Der Cleanup
+protokolliert nur Zähler je Tabelle und den Stichtag – keine IDs, keine Nutzer- oder
+Projektkennungen; seine Temporal-Historie enthält ebenfalls nur Zähler und Stichtag. Werden
+verwaiste Jobs gelöscht, warnt der Worker im Log (Hinweis auf Workflows ohne abschließendes
+DB-Update). Betrieb und Kontrollabfragen: `OPERATIONS_GUIDE.md` §5.10.
 
-```sql
--- in: docker compose exec postgres psql -U eki_user -d eki_db
-DELETE FROM report_metadata       WHERE created_at < now() - interval '90 days';
-DELETE FROM job_metadata          WHERE created_at < now() - interval '90 days'
-                                    AND status IN ('completed', 'failed');
-DELETE FROM delivery_dead_letters WHERE acknowledged_at < now() - interval '90 days';
-```
+Nicht vom Metadaten-Cleanup erfasst und weiter eine Einstellung des Betriebs: die Retention des
+Temporal-Namespace (§3.3) und eine zeitliche Grenze für Container-Logs. Für Logs mit Client-IPs
+wird empfohlen, sie an einen zentralen Log-Speicher mit 90 Tagen Retention weiterzuleiten, weil
+Docker nur nach Größe rotiert. Backups enthalten gelöschte Metadaten bis zu ihrer eigenen
+Löschung (§7).
 
 ---
 
@@ -209,9 +258,15 @@ DELETE FROM delivery_dead_letters WHERE acknowledged_at < now() - interval '90 d
 
 | Provider | Wo läuft die Inferenz | Zulässig |
 |---|---|---|
-| `local_mistral` (Standard in Produktion, Modell `mistral-small3.2`) | lokal im Container `eki-ollama` | Produktion |
-| `ollama` (beliebiges lokales Modell) | lokal im Container `eki-ollama` | Produktion möglich (Paritätsreport beachten) |
+| `local_mistral` (Standard in Produktion, Modell `mistral-small3.2`) | lokal auf der externen Ollama-Instanz der Filmakademie (`OLLAMA_BASE_URL`, GPU-Host im internen Netz) | Produktion |
+| `ollama` (beliebiges lokales Modell) | ebenda | Produktion möglich (Paritätsreport beachten) |
 | `mistral_cloud` | **Mistral AI (Cloud-API `api.mistral.ai`)** – Drehbuchszenen verlassen das Netz der Filmakademie | nur Stage/Test |
+
+- Seit 1.0.1 ist Ollama nicht mehr Teil des Compose-Stacks: Drehbuchszenen gehen per HTTP an die
+  externe Ollama-Instanz. Sie gehört damit zur Verarbeitungsumgebung: nur im internen Netz
+  betreiben, Port 11434 nur für die eKI-Hosts freigeben (die Ollama-API hat keine Anmeldung),
+  keine Prompt-Protokollierung (`OLLAMA_DEBUG` aus); für die Instanz dieselben TOM ansetzen wie
+  für die eKI selbst (`OPERATIONS_GUIDE.md` §4.11).
 
 - Der Produktions-Validator (`api/config.py`) verweigert den Start mit
   `LLM_PROVIDER=mistral_cloud`, solange `LLM_ALLOW_EXTERNAL_PROVIDERS` nicht ausdrücklich auf
@@ -224,7 +279,8 @@ DELETE FROM delivery_dead_letters WHERE acknowledged_at < now() - interval '90 d
 - **Stage-Sign-off (Abnahmetest 8) mit Mistral Cloud:** Vorher einen
   Auftragsverarbeitungsvertrag (AVV/DPA nach Art. 28 DSGVO) mit Mistral AI abschließen und
   die Bedingungen zur Datennutzung prüfen – oder ausschließlich synthetische bzw. zur Nutzung
-  freigegebene Testdrehbücher verwenden.
+  freigegebene Testdrehbücher verwenden. Den AVV schließt die Filmakademie als
+  Verantwortliche selbst ab.
 - Embeddings für die KB entstehen immer lokal über Ollama; mit `mistral_cloud` ist die KB nicht
   nutzbar (`M06_KB_GUIDE.md`).
 
@@ -236,14 +292,15 @@ DELETE FROM delivery_dead_letters WHERE acknowledged_at < now() - interval '90 d
 |---|---|---|
 | `POST /v1/security/check:async`, `GET /v1/security/jobs/{id}`, `GET /v1/security/reports/{id}` | jeder gültige API-Key | nur **eigene** Jobs und Reports: Abfragen sind auf die `user_id` des Keys gefiltert, fremde IDs liefern 404 (IDOR-Schutz); Idempotenz-Keys gelten pro `user_id` |
 | `X-Actor-User-Id` | optionaler Header | muss zur `user_id` des Keys passen, sonst 403; wird nicht gespeichert |
-| `X-Actor-Project-Id` | optionaler Header | nur informativ (erscheint lediglich in der Stub-Antwort des synchronen Endpoints), nicht gespeichert |
-| `/v1/kb/*` | **jeder** gültige API-Key | alle KB-Dokumente des (einzigen) Mandanten auflisten, hochladen und löschen; der Originaltext wird nie ausgeliefert |
+| `X-Actor-Project-Id` | optionaler Header | nur informativ, wird weder gespeichert noch ausgegeben |
+| `/v1/kb/*` | seit 1.0.1 nur Keys mit `is_admin=true` (sonst 403) | alle KB-Dokumente des (einzigen) Mandanten auflisten, hochladen und löschen; `uploaded_by` = `user_id` des Admin-Keys; der Originaltext wird nie ausgeliefert. Der ePro-Service-Key hat keinen Zugriff |
 | `/v1/ops/*` | nur Keys mit `is_admin=true` | Metadaten **aller** Jobs und Dead Letters (`project_id`, `user_id`, Fehlermeldung) – keine Inhalte |
 | `/metrics`, `/ready` | jeder gültige API-Key | Metriken bzw. Dienststatus |
 | `/health` | ohne Anmeldung | Version und Status |
 | Swagger/ReDoc/`/openapi.json` | nur bei `DEBUG=true` | – (in Produktion abgeschaltet; der Validator erzwingt `DEBUG=false`) |
-| PostgreSQL, Redis, Temporal, Ollama | nur im internen Docker-Netz | wer Shell-Zugriff auf den Host hat, sieht Metadaten, KB-Chunks und Temporal-Historien (Titel, Client-`metadata`); mit zusätzlich `API_SECRET_KEY` auch die Buffer-Inhalte |
-| Temporal-UI | Produktion: nur per SSH-Tunnel | alle Workflow-Eingaben und -Ergebnisse (Metadaten, Drehbuchtitel, Fehlermeldungen) |
+| PostgreSQL, Redis, Temporal | nur im internen Docker-Netz | wer Shell-Zugriff auf den Host hat, sieht Metadaten und KB-Chunks; Temporal-Historien seit 1.0.1 nur verschlüsselt (ältere Historien bis zum Ablauf der Retention im Klartext: Titel, Client-`metadata`); mit zusätzlich `API_SECRET_KEY` auch die Buffer-Inhalte und die Temporal-Payloads |
+| Ollama (externe Instanz) | eKI-Hosts über das interne Netz (die Ollama-API hat keine Anmeldung) | wer die Instanz betreibt bzw. erreicht, kann Modelle nutzen; Prompts mit Drehbuchszenen werden nicht gespeichert, solange `OLLAMA_DEBUG` aus ist |
+| Temporal-UI | Produktion: nur per SSH-Tunnel | Workflow-IDs (`job_id`), Activity-Namen, Zeiten, Fehlertypen; Eingaben, Ergebnisse und Fehlermeldungen seit 1.0.1 nur verschlüsselt (`binary/encrypted`, `Encoded failure`) |
 
 Weitere Punkte:
 
@@ -258,47 +315,82 @@ Weitere Punkte:
 - Transport: Die API spricht selbst nur HTTP; TLS terminiert der Reverse-Proxy (Go-Live-Checkliste).
   Der Push zu ePro und der Webhook gehen an `EPRO_BASE_URL`/`EPRO_WEBHOOK_URL`, optional mit
   `Authorization: Bearer <EPRO_AUTH_TOKEN>`.
+- `callback_url` (seit 1.0.1): Ein Request kann ein eigenes Push-Ziel angeben; Report, PDF und
+  ggf. der ePro-Bearer-Token gehen dann dorthin. Deshalb sind nur HTTPS-URLs ohne Zugangsdaten auf
+  Hosts aus `CALLBACK_URL_ALLOWED_HOSTS` (Standard: die beiden ePro-Hosts) zulässig; vor jedem Push
+  prüft der Worker die Allow-List erneut, löst den Host auf, verlangt ausschließlich öffentliche
+  Adressen und verbindet sich mit der geprüften Adresse (Schutz gegen DNS-Rebinding); das
+  TLS-Zertifikat wird gegen den Hostnamen geprüft. Die URL wird nicht in PostgreSQL gespeichert,
+  sondern läuft (verschlüsselt) in der Workflow-Eingabe durch Temporal.
 
 ---
 
 ## 7. Löschung auf Anfrage
 
-- **Ein einzelner Job:** Inhalte sind spätestens nach 6 h aus Redis verschwunden. Titel und
-  Metadaten in der Temporal-Historie verschwinden mit der Namespace-Retention; die Metadatenzeilen
-  (`job_metadata`, `report_metadata`, ggf. `delivery_dead_letters`) per SQL nach `job_id`
-  löschen.
+Ohne Anfrage löscht der Metadaten-Cleanup nach 90 Tagen ohnehin (§4); die folgenden Schritte
+sind nur nötig, wenn früher gelöscht werden soll.
+
+- **Ein einzelner Job:** Inhalte sind spätestens nach 6 h aus Redis verschwunden. Die
+  Temporal-Historie (seit 1.0.1 verschlüsselt) verschwindet mit der Namespace-Retention; die
+  Metadatenzeilen (`job_metadata`, `report_metadata`, ggf. `delivery_dead_letters`) per SQL nach
+  `job_id` löschen. Achtung: `job_metadata.status` speichert die Enum-Namen in **Großbuchstaben**
+  (`'COMPLETED'`, `'FAILED'`, `'CANCELLED'` …) – eigene SQL-Filter auf den Status müssen sie so
+  schreiben.
 - **Ein Nutzer/API-Key:** Key deaktivieren (`UPDATE api_keys SET is_active=false …`), die
-  Metadaten nach `user_id` löschen.
-- **KB-Dokument:** `DELETE /v1/kb/documents/{doc_id}` löscht Dokument und Chunks.
+  Metadaten nach `user_id` löschen. Der gesperrte Key selbst wird automatisch gelöscht, sobald
+  seine letzte Nutzung 90 Tage zurückliegt (§4).
+- **KB-Dokument:** `DELETE /v1/kb/documents/{doc_id}` (Admin-Key) löscht Dokument und Chunks.
 - Backups und Redis-AOF enthalten gelöschte Daten bis zu ihrem eigenen Ablauf.
 
 ---
 
-## 8. Offene Entscheidungen für die Filmakademie
+## 8. Entscheidungen und offene Punkte für die Filmakademie
 
-1. **Echte Drehbücher im Repository und in den Images (dringend).** `tests/fixtures/pdf/`
-   enthält 15 echte Drehbücher, Treatments, Projektmappen und eine Production Bible von
+### 8.1 Entschieden und umgesetzt (Release 1.0.1)
+
+1. **Echte Drehbücher – aus Repository und Images entfernt; Git-Historie und alte Images
+   bleiben.** Die 15 echten Drehbücher, Treatments, Projektmappen und die Production Bible von
    Filmakademie-Produktionen (u. a. TRANCE, Sinkende Schiffe, H2Gold, Babystar, Matroshki,
-   Königskinder, Gaïa). Sie sind seit März 2026 in der Git-Historie und werden über
-   `COPY tests/fixtures ./tests/fixtures` in **beide** Images (`eki-api`, `eki-worker`)
-   kopiert, also auch in die GHCR-Images. Projektmappen können Kontaktdaten realer Personen
-   enthalten. Zu klären: Rechte und Einwilligung der Urheber und Beteiligten, Sichtbarkeit
-   des Repositorys und der GHCR-Pakete. Empfehlung unabhängig davon: die Dateien aus den
-   Images entfernen (zur Laufzeit wird nichts aus `tests/fixtures/` benötigt; nur
-   `scripts/smoke_prod.py` nutzt synthetische FDX-Dateien und läuft auf dem Host) und – falls
-   keine Freigabe vorliegt – aus Repository, Git-Historie und bereits veröffentlichten Images
-   entfernen. Die übrigen PDF- und alle FDX-Fixtures sind synthetisch
-   (`tests/generate_pdf_fixtures.py`, `tests/build_large_fixture.py`).
-2. **Löschfrist für Metadaten** (`job_metadata`, `report_metadata`, `delivery_dead_letters`,
-   deaktivierte `api_keys`) festlegen; bis zu einer automatischen Lösung manuell (§4).
-3. **Temporal-Historie:** Retention des Namespaces festlegen und prüfen (§3.3); entscheiden,
-   ob die verbliebenen Klartext-Metadaten (Titel, Client-`metadata`) zusätzlich verschlüsselt
-   werden sollen (Temporal-Payload-Codec, Code-Änderung).
-4. **AVV mit Mistral AI** für den Stage-Sign-off, oder nur freigegebene Testdrehbücher (§5).
-5. **Log-Aufbewahrung:** Rotation und Aufbewahrungsdauer der Container-Logs (enthalten
-   IP-Adressen) im Docker-Daemon oder per Log-Weiterleitung festlegen.
-6. **KB-Zugriff:** Soll das Hochladen und Löschen von KB-Dokumenten auf Admin-Keys beschränkt
-   werden? Derzeit genügt jeder gültige Key, also auch der ePro-Service-Key (Code-Änderung).
-7. **Verschlüsselung der Volumes** (`postgres_data`, `redis_data`) auf Host-Ebene und
+   Königskinder, Gaïa) wurden mit Release 1.0.1 aus dem Repository
+   (Arbeitsstand) und aus beiden Images entfernt: Das API-Image enthält nur noch die synthetischen
+   FDX-Dateien (`tests/fixtures/fdx/`, Standardeingabe von `scripts/smoke_prod.py`), das
+   Worker-Image keine Testdaten; `.dockerignore` hält `tests/fixtures/pdf/` (inkl. `private/`),
+   Testberichte, Secrets und `.env*` aus jedem Build heraus. Ersetzt wurden sie durch
+   reproduzierbare synthetische Fixtures mit denselben Layout-Merkmalen.
+   **Sie bleiben aber in der Git-Historie** (seit März 2026) und in **bereits veröffentlichten
+   GHCR-Images bis einschließlich 1.0.0**. Projektmappen können Kontaktdaten realer Personen
+   enthalten. Die Historie wird nach Projektentscheidung nicht umgeschrieben. Eine
+   vollständige Entfernung bräuchte ein Umschreiben der Historie (z. B. je Datei
+   `git filter-repo --path tests/fixtures/pdf/<datei> --invert-paths`, Force-Push, Neuklonen aller
+   Kopien und Forks, Bitte an den GitHub-Support, zwischengespeicherte Ansichten/Pull-Requests zu
+   bereinigen) und das Löschen der alten GHCR-Image-Versionen. Empfehlung: Sichtbarkeit von
+   Repository und GHCR-Paketen prüfen (privat halten) und die GHCR-Versionen ≤ 1.0.0 löschen
+   bzw. den Zugriff beschränken.
+   **Fixture-Regel:** Im Repository liegen nur synthetische Fixtures (in `.gitignore` einzeln
+   freigegeben, erzeugt von `tests/generate_pdf_fixtures.py` und `tests/build_large_fixture.py`);
+   ein neues PDF unter `tests/fixtures/pdf/` wird ignoriert, solange es nicht bewusst freigegeben
+   wird. Echte Drehbücher gehören nur lokal nach `tests/fixtures/pdf/private/` (§3.6).
+2. **Löschfrist für Metadaten: 90 Tage**, automatisch per `eki-metadata-cleanup` (§4). Dazu
+   entschieden: Dead Letters werden nach Ablauf gelöscht, **quittiert oder nicht** (der Betrieb
+   bearbeitet sie innerhalb der Frist); **verwaiste** Jobs (`pending`/`running`/`delivering` ohne
+   Änderung seit Fristbeginn) werden mitgelöscht; es gibt **keine** Spalte für den
+   Sperrzeitpunkt von API-Keys – die Frist eines gesperrten Keys läuft ab seiner letzten Nutzung.
+3. **Temporal-Historie verschlüsselt:** Payload-Codec mit AES-256-GCM (§3.3). Offen bleibt die
+   Namespace-Retention (§8.2).
+4. **KB-Zugriff nur mit Admin-Keys:** `/v1/kb/*` verlangt `is_admin=true` (§6).
+5. **Inferenz auf externer Ollama-Instanz** statt eines Ollama-Containers im Stack (§5).
+
+### 8.2 Offen
+
+1. **Temporal-Namespace-Retention** festlegen, setzen und prüfen (Standard 24 h, §3.3); sie ist
+   eine Betriebseinstellung und wird vom Metadaten-Cleanup nicht erfasst.
+2. **AVV mit Mistral AI** für den Stage-Sign-off – schließt die Filmakademie selbst ab – oder nur
+   freigegebene Testdrehbücher (§5).
+3. **Log-Aufbewahrung:** Das Prod-Overlay begrenzt Container-Logs nur nach Größe (20 MB × 5 je
+   Container). Eine zeitliche Grenze für die Logs (sie enthalten IP-Adressen) nur per
+   Weiterleitung an einen zentralen Log-Speicher; empfohlen 90 Tage (§3.4).
+4. **Verschlüsselung der Volumes** (`postgres_data`, `redis_data`) auf Host-Ebene und
    Aufbewahrung der Backups.
-8. **Konvention für `user_id`** (pseudonym, §6).
+5. **Konvention für `user_id`** (pseudonym, §6).
+6. **Alte GHCR-Images ≤ 1.0.0** löschen bzw. Zugriff beschränken; über ein Umschreiben der
+   Git-Historie bei Bedarf gesondert entscheiden (§8.1, Punkt 1).

@@ -3,6 +3,9 @@
 > **Widerspricht den Produktionsregeln:** Der Wechsel auf `mistral_cloud` ist nur für Stage/Test
 > zulässig; die eKI liest außerdem in Docker `.env.local` (nicht `.env`), und `docker compose
 > restart` übernimmt geänderte Werte nicht (`up -d --force-recreate api worker`).
+>
+> Seit 1.0.1 enthält der Compose-Stack keinen Ollama-Dienst mehr: Inferenz auf einer externen
+> Instanz (`OLLAMA_BASE_URL`), lokal optional per `docker-compose.ollama.yml`.
 
 # 🚀 Ollama Quick Start - 5 Minuten Setup
 

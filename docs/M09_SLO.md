@@ -9,6 +9,15 @@
 > geht dafür ebenfalls der Webhook `security.delivery.failed` raus. LLM-Störungen schlagen damit
 > direkt auf S6 und `EkiJobFailureRateHigh` durch; `EkiPromptSanitizerBlockedSpike` bedeutet
 > abgebrochene Jobs. (3) Grafana-Zugangsdaten und Start-Reihenfolge siehe §5.
+>
+> **Ergänzung Release 1.0.1.** Dead Letters werden nach 90 Tagen automatisch gelöscht, quittiert
+> oder nicht (Schedule `eki-metadata-cleanup`) – der Alarm `EkiDeadLettersPending` ist innerhalb
+> dieser Frist zu bearbeiten. Der Zähler `eki_dead_letters_unacknowledged` wird nur von den
+> `/v1/ops/*`-Endpunkten (API) und beim Anlegen eines Dead Letters (Worker) neu berechnet, nicht vom
+> Cleanup; nach einer Löschung z. B. `GET /v1/ops/summary` aufrufen, damit die API-Serie stimmt. Neue Worker-Metrik
+> `eki_metadata_cleanup_deleted_total{table}` (gelöschte Zeilen je Tabelle,
+> `OPERATIONS_GUIDE.md` §5.10). Ollama läuft als externe Instanz; `EkiLlmErrorRateHigh` kann daher
+> auch eine falsche oder nicht erreichbare `OLLAMA_BASE_URL` bedeuten.
 
 Stand: M09. Ableitung aus Pflichtenheft v1 §3.4 (Erfolgskriterien), §5
 (Leistung, Zuverlässigkeit), §6 (Dashboards mit Kennzahlen) und §7

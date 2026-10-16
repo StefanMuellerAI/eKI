@@ -1,10 +1,14 @@
 > **Historischer Nachweis** (Stand 21.05.2026, M06). Beschreibt den damaligen Stand und wird
 > nicht fortgeschrieben. Aktueller Stand: [M06_KB_GUIDE.md](M06_KB_GUIDE.md),
 > [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md), [CONFIGURATION.md](CONFIGURATION.md).
-> Heute gilt: Migrations-Head ist `b8d0f2a4c6e3` (KB-Dubletten jetzt pro Mandant eindeutig statt
-> global); `docker compose restart` liest `.env.local`
+> Heute gilt: Migrations-Head ist `c4e6a8b0d2f1` (Release 1.0.1; KB-Dubletten seit `b8d0f2a4c6e3` pro
+> Mandant eindeutig statt global); `docker compose restart` liest `.env.local`
 > nicht neu ein (statt dessen `docker compose up -d --force-recreate api worker`); `sed -i ''`
 > funktioniert nur mit BSD-sed (macOS).
+>
+> **Stand 1.0.1:** Der hier benutzte echte Drehbuch-Testfall `tests/fixtures/pdf/SINKENDE_SCHIFFE_190730.pdf`
+> ist nicht mehr im Repository (echte Drehbücher entfernt, `DATENSCHUTZ.md` §8); `/v1/kb/*` verlangt
+> einen Admin-Key; Ollama läuft extern statt als Compose-Dienst.
 
 # M06 Acceptance Evidence
 

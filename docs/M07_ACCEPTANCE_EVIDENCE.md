@@ -2,6 +2,9 @@
 > nicht fortgeschrieben. Aktueller Stand: [UAT/UAT_TESTPLAN.md](UAT/UAT_TESTPLAN.md) (AT6),
 > [CONFIGURATION.md](CONFIGURATION.md), [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md). Die Befehle in
 > §6.2/§6.3 wurden am 15.10.2026 korrigiert (Container neu erzeugen statt `restart`, portables `sed`).
+>
+> **Stand 1.0.1:** Den Container `eki-ollama` gibt es nur noch mit dem Entwicklungs-Overlay
+> `docker-compose.ollama.yml`; der Benchmark misst `docker stats` nur für laufende Container.
 
 # M07 Acceptance Evidence – Großdokument-Optimierung
 

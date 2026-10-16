@@ -47,15 +47,18 @@ KB are skipped (409 Conflict suppressed). Re-running is safe.
 
 The seeder talks to the running API over HTTP (`EKI_API_URL`, default
 `http://localhost:8000`, plus `EKI_API_KEY`) and needs `requests` on the
-machine that runs it. The embedding model must be chosen before the first
+machine that runs it. Since 1.0.1 `/v1/kb/*` requires an **admin** API key
+(`python scripts/create_api_key.py --insert --admin`); a normal key gets 403. The embedding model must be chosen before the first
 seed (`docs/M06_KB_GUIDE.md` §3.1); switching it later means wiping and
 re-seeding the whole KB.
 
-**Do not ship real documents.** The contents of `real/` are git-ignored, but
-the Dockerfiles copy `config/` into the API and worker images (there is no
-`.dockerignore`), so anything left in `real/` during a local image build ends
-up in the image. Remove the files from `real/` once they are ingested (the KB
-keeps the original text encrypted, see `docs/DATENSCHUTZ.md`).
+**Do not ship real documents.** The contents of `real/` are git-ignored and,
+since 1.0.1, excluded from every image build by `.dockerignore` (before, a
+local build copied them into the images together with `config/`). In the
+development stack the API container still sees `real/` through the `./config`
+bind mount; in production (no bind mounts) run `scripts/seed_kb.py` on the host.
+Remove the files from `real/` once they are ingested (the KB keeps the original
+text encrypted, see `docs/DATENSCHUTZ.md`).
 
 ## Re-creating the seeded test KB from scratch
 

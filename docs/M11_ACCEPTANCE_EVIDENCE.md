@@ -4,6 +4,10 @@
 > Korrektur: „keine Host-Ports für Infra, keine Bind-Mounts" (§4) traf erst mit der Änderung vom
 > 15.10.2026 zu (`!reset` in `docker-compose.prod.yml`); vorher wurden die Listen mit der
 > Basisdatei zusammengeführt, der Quellcode des Hosts eingebunden und die Temporal-UI veröffentlicht.
+>
+> **Stand 1.0.1:** Ollama ist nicht mehr Teil des Compose-Stacks; Modelle werden auf der externen
+> Instanz gepullt (`OPERATIONS_GUIDE.md` §4.11), `docker compose exec ollama …` gilt nur noch mit dem
+> Entwicklungs-Overlay `docker-compose.ollama.yml`.
 
 # M11 Acceptance Evidence – Lokaler LLM-Adapter & Paritätstests
 

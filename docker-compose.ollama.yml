@@ -1,8 +1,8 @@
 # OPTIONAL local Ollama for development / offline use.
 #
-# Inference normally runs on an EXTERNAL Ollama instance: set LOCAL_MISTRAL_BASE_URL
-# (LLM_PROVIDER=local_mistral) and OLLAMA_BASE_URL (LLM_PROVIDER=ollama, KB embeddings)
-# in .env.local. The default stack (docker-compose.yml) and the production overlay
+# Inference normally runs on an EXTERNAL Ollama instance, configured in .env.local:
+# LLM_PROVIDER=local_mistral uses LOCAL_MISTRAL_BASE_URL (falls back to OLLAMA_BASE_URL)
+# for chat AND KB embeddings; LLM_PROVIDER=ollama uses OLLAMA_BASE_URL. The default stack (docker-compose.yml) and the production overlay
 # therefore contain no Ollama service. This overlay adds one and points API and
 # worker at it:
 #

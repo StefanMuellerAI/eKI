@@ -1,6 +1,6 @@
 # eKI API -- KI-gestuetzte Sicherheitspruefung fuer Drehbuecher
 
-**Version:** 1.0.0 (Release -- Meilenstein M12 abgeschlossen)
+**Version:** 1.0.1 (Patch-Release zur Uebergabe; Meilenstein M12 abgeschlossen)
 **Auftraggeber:** Filmakademie Baden-Wuerttemberg
 **Auftragnehmer:** StefanAI -- Research & Development
 
@@ -11,10 +11,10 @@ Die eKI ist eine modulare REST-API, die Drehbuecher aus dem eProjekt-System der 
 ### Kernprinzipien
 
 - **Design-First:** Der OpenAPI-3.1.1-Vertrag `openapi/eki-api-v1.0.yaml` ist massgeblich. Das von FastAPI erzeugte `/openapi.json` (nur mit `DEBUG=true` ausgeliefert) wird per Contract-Test (`tests/test_m12_openapi_contract.py`) mit ihm deckungsgleich gehalten
-- **Processing-Only:** Keine persistente Speicherung von Drehbuechern/Reports (nur Audit-Metadaten)
+- **Processing-Only:** Keine persistente Speicherung von Drehbuechern/Reports (nur Metadaten, nach 90 Tagen automatisch geloescht)
 - **Write-Through:** Ergebnisse werden sofort an eProjekt zurueckgespielt
 - **Minimalinvasiv:** Integration nur ueber REST, keine direkten DB-Zugriffe
-- **Security-First:** Verschluesselte transiente Daten, kein Klartext in Logs oder Workflow-History
+- **Security-First:** Verschluesselte transiente Daten, kein Klartext in Logs; Temporal-Payloads AES-256-GCM-verschluesselt (seit 1.0.1)
 
 ---
 
@@ -40,9 +40,14 @@ Die eKI ist eine modulare REST-API, die Drehbuecher aus dem eProjekt-System der 
      └──────┬─────┘   └──────────────┘   └────────────┘
             │
      ┌──────▼──────┐
-     │   Worker    │──▶ FDX/PDF Parser ──▶ LLM (Ollama/Mistral)
+     │   Worker    │──▶ FDX/PDF Parser ──▶ LLM (externe Ollama-Instanz)
      └─────────────┘
 ```
+
+Die LLM-Inferenz (und die KB-Embeddings) laufen auf einer **externen Ollama-Instanz** (GPU-Host),
+die nicht Teil des Compose-Stacks ist; API und Worker erreichen sie ueber `OLLAMA_BASE_URL` bzw.
+`LOCAL_MISTRAL_BASE_URL`. Fuer lokale Entwicklung/Offline gibt es das optionale Overlay
+`docker-compose.ollama.yml`.
 
 ### Zwei getrennte Workflows (M03)
 
@@ -65,7 +70,7 @@ Beide Workflows teilen sich die Risikoanalyse (pro Szene) und Delivery-Activitie
 
 1. **Upload**: API empfaengt Drehbuch (JSON/Base64 oder Multipart FDX/PDF-Upload)
 2. **SecureBuffer**: Inhalt wird AES-verschluesselt in Redis gespeichert (TTL max 6h)
-3. **Temporal**: Workflow erhaelt nur einen Redis-Referenzschluessel -- kein Skriptinhalt
+3. **Temporal**: Workflow erhaelt nur einen Redis-Referenzschluessel -- kein Skriptinhalt; alle Temporal-Payloads sind zusaetzlich verschluesselt (AES-256-GCM)
 4. **Parser**: FDX wird direkt geparsed, PDF wird per INT/EXT-Split + LLM strukturiert
 5. **Risikoanalyse**: Jede Szene wird einzeln per LLM auf physische, umgebungs- und psychische Risiken geprueft
 6. **Report**: Findings werden aggregiert, JSON-Report + PDF-Report (Executive Summary, To-Do-Liste) generiert
@@ -81,13 +86,13 @@ Beide Workflows teilen sich die Risikoanalyse (pro Szene) und Delivery-Activitie
 | Framework | Python 3.11 / FastAPI | REST-API (ASGI); Abhaengigkeiten gepinnt in `requirements.lock` / `requirements-dev.lock` |
 | Workflow-Engine | Temporal 1.29.4 | Asynchrone Verarbeitung, 6h-Retry-Fenster, Schedules |
 | Datenbank | PostgreSQL 16 + pgvector | Metadaten, Dead Letters, Knowledge-Base-Embeddings |
-| Cache | Redis 7 | SecureBuffer, Rate Limiting |
-| LLM | Ollama (mistral-small3.2 via LocalMistralProvider) | Lokale Inferenz in Produktion (Strukturierung + Risikoanalyse) |
+| Cache | Redis 7.2 (`redis:7.2-alpine`, BSD-3-Clause) | SecureBuffer, Rate Limiting; Support-Risiko der 7.2-Linie: `docs/OPERATIONS_GUIDE.md` §4.9 |
+| LLM | Ollama (mistral-small3.2 via LocalMistralProvider) auf externer Instanz | Lokale Inferenz in Produktion (Strukturierung + Risikoanalyse), kein Cloud-Verkehr |
 | LLM (Cloud) | Mistral Cloud API | Stage-Umgebung (in Produktion gesperrt) |
 | FDX-Parser | defusedxml | Sicheres XML-Parsing (XXE-Schutz) |
 | PDF-Parser | pdfplumber (MIT) + Tesseract OCR | Text-Extraktion aus PDFs, OCR-Fallback fuer Scans |
 | Prompt-Management | YAML + PromptManager | Versionierbare LLM-Prompts |
-| Verschluesselung | cryptography (Fernet) | AES-Verschluesselung transienter Daten |
+| Verschluesselung | cryptography (Fernet, AES-256-GCM) | Verschluesselung transienter Daten (Redis) und der Temporal-Payloads |
 | Container | Docker / Docker Compose | Deployment |
 | Monitoring | Prometheus, Grafana, Alertmanager, OpenTelemetry/Jaeger | Metriken, Dashboards, Alerts, Tracing |
 
@@ -103,10 +108,15 @@ analog). Produktion: `docs/OPERATIONS_GUIDE.md`.
 - Docker mit Docker Compose >= 2.24 (`docker compose version`)
 - Python 3 auf dem Host (nur fuer `scripts/generate_secrets.py`); fuer Entwicklung und Tests
   Python 3.11 wie CI/Docker (siehe `docs/TESTING_GUIDE.md`)
-- ca. 25 GB Plattenplatz (Images, `mistral-small3.2` ~15 GB, `mxbai-embed-large`)
-- NVIDIA-GPU empfohlen (>= 24 GB VRAM); ohne GPU laeuft Ollama auf der CPU und eine Pruefung
-  dauert entsprechend lange. GPU fuer den `ollama`-Service: `deploy`-Block aus
-  `docker-compose.override.yml.example` uebernehmen (nur diesen, siehe `docs/CONFIGURATION.md` §2.2)
+- Eine erreichbare **Ollama-Instanz** mit den Modellen `mistral-small3.2` (~15 GB) und
+  `mxbai-embed-large`. Der Compose-Stack enthaelt kein Ollama mehr: im Normalfall eine externe
+  Instanz auf einem GPU-Host (NVIDIA, >= 24 GB VRAM empfohlen), deren URL in `.env.local` steht.
+  Fuer lokale Entwicklung oder offline: Overlay `docker-compose.ollama.yml` (startet
+  `ollama/ollama:0.33.3` im Stack; GPU-Reservierung braucht das NVIDIA Container Toolkit, auf
+  Hosts ohne NVIDIA-GPU den `deploy:`-Block im Overlay loeschen -- dann laeuft Ollama auf der CPU und
+  eine Pruefung dauert entsprechend lange)
+- Plattenplatz fuer Images, Datenbank und Logs; die Modelle (`mistral-small3.2` ~15 GB,
+  `mxbai-embed-large` ~1 GB) liegen auf dem Ollama-Host bzw. mit dem Overlay im Volume `ollama_data`
 - Fuer Tests ohne Docker: `tesseract-ocr tesseract-ocr-deu tesseract-ocr-eng` (OCR-Fallback; im Docker-Image enthalten)
 
 ### Setup
@@ -120,19 +130,23 @@ PW=$(cat secrets/db_password.txt); KEY=$(cat secrets/api_secret_key.txt)
 sed -i.bak -e "s/CHANGE_ME_STRONG_PASSWORD_HERE/$PW/g" \
            -e "s/CHANGE_ME_256_BIT_SECRET_KEY_HERE/$KEY/" .env.local && rm .env.local.bak
 
-# 2. Stack bauen und starten (7 Services; api/worker mounten den Quellcode)
+# 2. Externe Ollama-Instanz: Modelle dort einmalig laden (auf dem Ollama-Host ausfuehren) ...
+ollama pull mistral-small3.2      # LLM (LLM_PROVIDER=local_mistral)
+ollama pull mxbai-embed-large     # KB-Embeddings (OLLAMA_EMBEDDING_MODEL)
+#    ... und ihre URL in .env.local eintragen (gilt fuer Inferenz und Embeddings):
+#    OLLAMA_BASE_URL=http://<ollama-host>:11434
+#    (Variante ohne externe Instanz: Overlay docker-compose.ollama.yml, siehe unten)
+
+# 3. Stack bauen und starten (6 Services; api/worker mounten den Quellcode)
 docker compose up -d --build
 docker compose ps                     # postgres, redis, temporal, api: healthy
 
-# 3. Modelle einmalig laden (Volume ollama_data)
-docker compose exec ollama ollama pull mistral-small3.2      # LLM (LLM_PROVIDER=local_mistral)
-docker compose exec ollama ollama pull mxbai-embed-large     # KB-Embeddings (OLLAMA_EMBEDDING_MODEL)
-
 # 4. Datenbankschema anlegen
-docker compose exec api alembic upgrade head                 # head: b8d0f2a4c6e3
+docker compose exec api alembic upgrade head                 # head: c4e6a8b0d2f1
 
-# 5. API-Key erstellen (interaktiv, Klartext wird nur einmal angezeigt)
-docker compose exec api python scripts/create_api_key.py --insert
+# 5. API-Keys erstellen (interaktiv, Klartext wird nur einmal angezeigt)
+docker compose exec api python scripts/create_api_key.py --insert           # Nutzer-Key (Pruefungen)
+docker compose exec api python scripts/create_api_key.py --insert --admin   # Admin-Key (/v1/kb/*, /v1/ops/*)
 export EKI_API_KEY=eki_...
 
 # 6. Pruefen
@@ -153,6 +167,22 @@ Aenderungen an `.env.local` wirken erst nach `docker compose up -d --force-recre
 `EKI_IMAGE_TAG` oder `GHCR_OWNER` liest Docker Compose aus der Shell bzw. einer Projekt-`.env`,
 nicht aus `.env.local` (`docs/CONFIGURATION.md` §2).
 
+**Ohne externe Ollama-Instanz (lokale Entwicklung, offline):** Das Overlay
+`docker-compose.ollama.yml` fuegt einen Ollama-Container hinzu (gepinnt auf `ollama/ollama:0.33.3`,
+Volume `ollama_data`) und setzt `OLLAMA_BASE_URL`/`LOCAL_MISTRAL_BASE_URL` fuer `api` und `worker`
+selbst auf `http://ollama:11434`. Statt der Schritte 2 und 3:
+
+```bash
+export COMPOSE_FILE=docker-compose.yml:docker-compose.ollama.yml   # gilt fuer alle folgenden Aufrufe
+docker compose up -d --build                                       # 7 Services inkl. ollama
+docker compose exec ollama ollama pull mistral-small3.2
+docker compose exec ollama ollama pull mxbai-embed-large
+```
+
+Der GPU-Block des Overlays braucht das NVIDIA Container Toolkit; ohne NVIDIA-GPU den `deploy:`-Block
+des `ollama`-Dienstes loeschen, sonst startet der Container nicht. In Produktion wird das Overlay
+nicht verwendet (`docs/OPERATIONS_GUIDE.md` §4.11).
+
 ### Services
 
 Veroeffentlicht werden nur Port 8000 (API) und im Entwicklungs-Stack 8080 (Temporal UI).
@@ -162,8 +192,8 @@ Veroeffentlicht werden nur Port 8000 (API) und im Entwicklungs-Stack 8080 (Tempo
 | API | http://localhost:8000 | FastAPI; Swagger UI `/docs` nur mit `DEBUG=true` |
 | Temporal UI | http://localhost:8080 | Workflow-Monitoring; nur Entwicklung (Produktion: SSH-Tunnel, `docs/OPERATIONS_GUIDE.md` §8.2) |
 | PostgreSQL | nur intern: `docker compose exec postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'` | Datenbanken `eki_db`, `temporal`, `temporal_visibility` |
-| Redis | nur intern: `docker compose exec redis redis-cli` | SecureBuffer + Rate-Limit-Zaehler |
-| Ollama | nur intern: `docker compose exec ollama ollama list` | Lokale LLM-Inferenz + Embeddings |
+| Redis | nur intern: `docker compose exec redis redis-cli` | SecureBuffer + Rate-Limit-Zaehler (Redis 7.2) |
+| Ollama | extern (nicht Teil des Stacks): `curl http://<ollama-host>:11434/api/tags`; mit Overlay `docker-compose.ollama.yml`: `docker compose exec ollama ollama list` | LLM-Inferenz + Embeddings |
 | Grafana / Jaeger | http://localhost:3000 / http://localhost:16686 | nur mit `docker-compose.observability.yml` |
 
 ---
@@ -204,16 +234,30 @@ markierte Dokumente (`docs/DEPLOYMENT_GUIDE.md`, `docs/OLLAMA_*.md`, `docs/QUICK
 
 | Methode | Endpunkt | Beschreibung |
 |---|---|---|
-| `POST` | `/v1/security/check` | **Stub (M01):** validiert JSON (Base64) oder Multipart-Upload und liefert einen festen Platzhalter-Report **ohne Analyse** -- fuer echte Pruefungen `check:async` verwenden |
-| `POST` | `/v1/security/check:async` | Asynchroner Check via Temporal Workflow (FDX oder PDF) |
+| `POST` | `/v1/security/check:async` | Asynchroner Check via Temporal Workflow (FDX oder PDF) -- einziger Pruef-Endpunkt |
 | `GET` | `/v1/security/jobs/{job_id}` | Echtes Job-Status-Tracking aus DB (M05) |
 | `GET` | `/v1/security/reports/{id}` | One-Shot-Report: JSON + PDF, danach geloescht (M05); Header `X-One-Shot: true` (M10) |
 
-Das Request-Feld `callback_url` wird validiert (HTTPS, keine privaten Adressen), aber **nicht
-verwendet**: Push-Zustellungen gehen immer an `EPRO_BASE_URL/eki/scl/set-risk-assessment/{project_id}`.
-`priority` wird gespeichert, beeinflusst die Abarbeitung aber nicht.
+Der fruehere synchrone Stub `POST /v1/security/check` (M01, ohne Analyse) ist seit 1.0.1 entfernt
+und antwortet mit `404`.
 
-### Knowledge Base Endpoints (M06, Auth erforderlich)
+Seit 1.0.1 wirken die Request-Felder `callback_url` und `priority`
+(Details: `docs/EPRO_INTEGRATION_GUIDE.md` §2, §4b):
+
+- **`callback_url`** ersetzt fuer diesen Job das Push-Ziel
+  `EPRO_BASE_URL/eki/scl/set-risk-assessment/{project_id}` und impliziert `delivery=push`
+  (`delivery=pull` zusammen mit `callback_url` → 422). Erlaubt sind nur HTTPS-URLs ohne
+  Zugangsdaten auf Hosts aus `CALLBACK_URL_ALLOWED_HOSTS` (Standard `epro.filmakademie.de`,
+  `staging.epro.filmakademie.de`) mit oeffentlicher IP; vor jedem Push prueft der Worker Host und
+  DNS erneut und verbindet sich mit der geprueften Adresse.
+- **`priority`** (1 = hoechste ... 10, Default 5) wird zur Temporal-Task-Queue-Prioritaet: Warten
+  mehr Jobs als Worker-Slots frei sind, kommen hoeher priorisierte zuerst dran. Laufende Jobs werden
+  nicht verdraengt.
+
+### Knowledge Base Endpoints (M06, Admin-Key erforderlich)
+
+Alle `/v1/kb/*`-Endpunkte verlangen seit 1.0.1 einen Admin-Key (`create_api_key.py --insert --admin`);
+ein normaler Key (z. B. der ePro-Service-Key) erhaelt `403`.
 
 | Methode | Endpunkt | Beschreibung |
 |---|---|---|
@@ -327,8 +371,8 @@ Beim Abruf via `GET /v1/security/reports/{id}` enthaelt die Response beides: `re
 
 | Modus | Beschreibung | Konfiguration |
 |---|---|---|
-| **Pull** (Default) | Report bleibt in Redis (verschluesselt, TTL 6h). ePro holt ihn via One-Shot-GET. Nach erstem Abruf sofort geloescht. | `delivery: "pull"` |
-| **Push** | eKI sendet Report per POST an `EPRO_BASE_URL/eki/scl/set-risk-assessment/{project_id}`. Bei 2xx sofort geloescht, bei Fehler Retry. | `delivery: "push"` |
+| **Pull** (Default ohne `callback_url`) | Report bleibt in Redis (verschluesselt, TTL 6h). ePro holt ihn via One-Shot-GET. Nach erstem Abruf sofort geloescht. | `delivery: "pull"` |
+| **Push** | eKI sendet Report per POST an `EPRO_BASE_URL/eki/scl/set-risk-assessment/{project_id}` bzw. an die `callback_url` des Requests. Bei 2xx sofort geloescht, bei Fehler Retry. | `delivery: "push"` oder `callback_url` |
 
 Ein Abruf nach Ablauf der Buffer-TTL oder nach einer Push-Zustellung liefert `410 Gone` (der Inhalt
 ist geloescht). Ist Redis nicht erreichbar, antwortet der Abruf mit `503`, und der Report bleibt
@@ -370,22 +414,25 @@ Die KB speichert verschluesselte Sicherheits-Dokumente (Stunt-SOPs, SFX-Leitfaed
 nutzen. Ein Wechsel nach dem ersten Ingest erfordert Leeren und Neubefuellen der KB, weil Vektoren
 verschiedener Modelle nicht vergleichbar sind (`docs/OPERATIONS_GUIDE.md` §4.8, §5.6).
 
-**Test-KB befuellen (Bernd-Stand-in)** -- im API-Container (Entwicklung: `config/` ist gemountet):
+**Test-KB befuellen (Bernd-Stand-in)** -- im API-Container (Entwicklung: `config/` ist gemountet);
+`EKI_API_KEY` muss ein **Admin-Key** sein (`/v1/kb/*` ist seit 1.0.1 admin-only):
 
 ```bash
-docker compose exec -e EKI_API_KEY="eki_..." api python scripts/seed_kb.py --seed-placeholders   # 6 Beispiel-SOPs
-docker compose exec -e EKI_API_KEY="eki_..." api python scripts/seed_kb.py --status              # Uebersicht
+docker compose exec -e EKI_API_KEY="eki_<admin>" api python scripts/seed_kb.py --seed-placeholders   # 6 Beispiel-SOPs
+docker compose exec -e EKI_API_KEY="eki_<admin>" api python scripts/seed_kb.py --status              # Uebersicht
 ```
 
 **Echte Inhalte einspielen** (`config/kb_seed/real/` anlegen; echte Dokumente nicht committen):
 
 ```bash
 mkdir -p config/kb_seed/real && cp ~/Bernd-Stunt-Leitfaden.pdf config/kb_seed/real/
-docker compose exec -e EKI_API_KEY="eki_..." api python scripts/seed_kb.py --wipe-placeholders   # nur Tag 'placeholder' weg
-docker compose exec -e EKI_API_KEY="eki_..." api python scripts/seed_kb.py --reseed              # ingestet alles aus real/
+docker compose exec -e EKI_API_KEY="eki_<admin>" api python scripts/seed_kb.py --wipe-placeholders   # nur Tag 'placeholder' weg
+docker compose exec -e EKI_API_KEY="eki_<admin>" api python scripts/seed_kb.py --reseed              # ingestet alles aus real/
 ```
 
-Alternativ laeuft `scripts/seed_kb.py` auf dem Host gegen `http://localhost:8000` (braucht `requests`).
+Im Entwicklungs-Stack sieht der API-Container `config/kb_seed/real/` ueber den Bind-Mount; in Images
+gelangt der Ordner nicht (`.dockerignore`). In Produktion (keine Bind-Mounts) laeuft
+`scripts/seed_kb.py` daher auf dem Host gegen `http://localhost:8000` (braucht `requests`).
 Details in `docs/M06_KB_GUIDE.md`.
 
 ## Grossdokument-Optimierung (M07)
@@ -469,7 +516,8 @@ API und Worker exportieren dieselben Prometheus-Metrikfamilien aus `core/metrics
 (Prefix `eki_`): HTTP-Raten/-Latenzen je Route-Template, Job-Laufzeiten und
 Terminalzustaende, LLM-Latenz/-Fehler/-Queue-Wait je Provider und Operation,
 Push/Pull-Zustellversuche, One-Shot-Abrufe, Buffer-Loeschungen (Delete-on-Delivery-Nachweis),
-Webhook-Ergebnisse, KB-Bestand, Sanitizer-Treffer und `eki_build_info`.
+Webhook-Ergebnisse, KB-Bestand, Sanitizer-Treffer, geloeschte Metadaten-Zeilen
+(`eki_metadata_cleanup_deleted_total{table}`, nur Worker) und `eki_build_info`.
 
 | Prozess | Endpoint | Schutz |
 |---|---|---|
@@ -500,11 +548,17 @@ Alert-Regeln: `docker/observability/alerts.yml`. SLO-Definitionen, Error-Budgets
 Alert-Mapping: `docs/M09_SLO.md`. Dashboards werden aus
 `scripts/observability/build_dashboards.py` generiert.
 
-### KB-TTL-Cleanup
+### Wartungs-Schedules
 
-Der Worker legt beim Start idempotent den Temporal-Schedule `eki-kb-cleanup`
-(`KB_CLEANUP_CRON`, Default taeglich 03:00 UTC) an, der abgelaufene KB-Dokumente loescht
-und `eki_kb_documents` aktualisiert.
+Der Worker gleicht bei jedem Start zwei Temporal-Schedules mit den Einstellungen ab (fehlt einer,
+wird er angelegt; abweichender Cron wird aktualisiert, `*_ENABLED=false` pausiert ihn):
+
+- `eki-kb-cleanup` (`KB_CLEANUP_CRON`, Default taeglich 03:00 UTC): loescht abgelaufene
+  KB-Dokumente und aktualisiert `eki_kb_documents`.
+- `eki-metadata-cleanup` (`METADATA_CLEANUP_CRON`, Default taeglich 03:30 UTC, seit 1.0.1): loescht
+  Job-/Report-Metadaten, Dead Letters, nicht mehr nutzbare API-Keys und Audit-Logs, deren
+  Zeitstempel aelter als `METADATA_RETENTION_DAYS` (90 Tage) sind. Regeln: `docs/DATENSCHUTZ.md` §4,
+  Betrieb: `docs/OPERATIONS_GUIDE.md` §5.10.
 
 ## Outbound-Adapter Hardening (M10)
 
@@ -521,6 +575,7 @@ erst nach echtem 2xx von ePro (vorher `delivering`). Jeder Versuch wird in
 | 5xx, 408/425/429, Netzwerkfehler | Temporal-Retry (2 s bis 10 min Backoff) bis 6 h |
 | sonstige 4xx | Hard-Fail ohne Retry |
 | 6 h erschoepft / Pull nicht abgeholt | Cleanup, Job `failed`, Webhook, **Dead Letter** |
+| `callback_url` bei der Zustellung abgelehnt (Host nicht mehr erlaubt, DNS liefert private Adresse) | kein Request, kein Retry: Cleanup, Job `failed`, Webhook, Dead Letter `invalid_callback_url` |
 
 Push-Requests tragen `Idempotency-Key: <report_id>`, `X-EKI-Job-Id`, `X-EKI-Attempt`
 und `X-Request-ID`, damit ePro Retries dedupliziert. Idempotenz auf der Eingangsseite ist
@@ -538,7 +593,9 @@ je API-Key gescoped (`(user_id, idempotency_key)` unique) und race-sicher.
 
 Admin-Keys: `docker compose exec api python scripts/create_api_key.py --insert --admin`. Ein Replay aus der DLQ ist
 bewusst nicht vorgesehen -- der Inhalt wird beim endgueltigen Scheitern geloescht
-(Delete-on-Delivery); ePro stoesst den Check neu an. Runbook: `docs/M10_FAILOVER_RUNBOOK.md`.
+(Delete-on-Delivery); ePro stoesst den Check neu an. Dead Letters werden nach 90 Tagen
+geloescht, quittiert oder nicht (`eki-metadata-cleanup`) -- innerhalb dieser Frist bearbeiten.
+Runbook: `docs/M10_FAILOVER_RUNBOOK.md`.
 
 ## Lokaler LLM-Adapter & Paritaetstests (M11)
 
@@ -552,8 +609,8 @@ konfigurierbar (`LLM_PROVIDER=ollama`, `OLLAMA_MODEL=gemma4:31b`).
 ```bash
 # Prod-Cutover-Smoke: E2E-Job, One-Shot, Delete-on-Delivery, keine externen LLM-Calls
 docker compose exec -e EKI_API_KEY=eki_... api python scripts/smoke_prod.py --worker-metrics http://worker:9090
-# Paritaet auf dem Golden-Set (16 Szenen) -- im API-Container, weil Ollama nur im Docker-Netz
-# erreichbar ist; Kommandos: docs/OPERATIONS_GUIDE.md §7
+# Paritaet auf dem Golden-Set (16 Szenen) -- im API-Container (dort liegen Konfiguration und
+# Ollama-URL bereit); Kommandos: docs/OPERATIONS_GUIDE.md §7
 ```
 
 Report-Rahmen und Schwellen: `docs/M11_PARITY_REPORT.md`. Betriebsleitfaden:
@@ -565,7 +622,7 @@ Docker Compose aus Shell bzw. Projekt-`.env`, nicht aus `.env.local`).
 
 | Artefakt | Pfad |
 |---|---|
-| OpenAPI 1.0.0 (API-Vertrag, Spectral 0 Errors, Contract-Test) | `openapi/eki-api-v1.0.yaml`, `tests/test_m12_openapi_contract.py` |
+| OpenAPI 1.0.1 (API-Vertrag, Spectral 0 Errors, Contract-Test) | `openapi/eki-api-v1.0.yaml`, `tests/test_m12_openapi_contract.py` |
 | Postman Collection + Environment | `postman/eKI-API-v1.0.postman_collection.json`, `postman/eKI-API.postman_environment.json` |
 | Aenderungsprotokoll | `CHANGELOG.md` |
 | Testplan fuer die 9 Abnahmetests, Protokollvorlage | `docs/UAT/UAT_TESTPLAN.md`, `docs/UAT/UAT_PROTOCOL_TEMPLATE.md` |
@@ -619,14 +676,18 @@ Prompts koennen angepasst werden ohne Code-Aenderung. Variablen (`{scene_text}`,
 
 - **SecureBuffer**: AES-verschluesselter Redis-Store (Fernet/HMAC-SHA256)
 - **TTL**: Maximal 6 Stunden, dann automatische Loeschung
-- **Temporal-Schutz**: Workflow-History enthaelt nur Redis-Referenzschluessel, keinen Klartext
+- **Temporal-Schutz**: Workflow-History enthaelt nur Redis-Referenzschluessel, keinen Klartext;
+  seit 1.0.1 sind alle Temporal-Payloads (Ein-/Ausgaben, Header, Fehlermeldungen) AES-256-GCM-verschluesselt
+  (Schluessel per HKDF aus `API_SECRET_KEY`; `core/temporal_codec.py`)
 - **Explizite Loeschung**: Buffer-Keys werden nach jeder Verarbeitungsstufe bereinigt
+- **Aufbewahrung**: Metadaten werden nach 90 Tagen geloescht (Schedule `eki-metadata-cleanup`, `docs/DATENSCHUTZ.md`)
 
 ### API-Sicherheit
 
 - **Authentifizierung**: Database-backed API Keys (SHA-256 Hashing, Ablaufdatum)
-- **Autorisierung**: Ownership-Checks gegen IDOR-Angriffe
-- **Input Validation**: Base64 (FDX), PDF-Magic-Byte-Check, SSRF-Prevention
+- **Autorisierung**: Ownership-Checks gegen IDOR-Angriffe; `/v1/kb/*` und `/v1/ops/*` nur mit Admin-Key
+- **Input Validation**: Base64 (FDX), PDF-Magic-Byte-Check, SSRF-Prevention fuer `callback_url`
+  (HTTPS, Host-Allow-List, nur oeffentliche Adressen, DNS-Pruefung mit Verbindungs-Pinning bei der Zustellung)
 - **Rate Limiting**: IP-basiert (60/min) + API-Key-basiert (1000/h)
 - **Prompt Injection Protection**: 15+ Muster-Erkennung fuer LLM-Inputs
 - **XML-Sicherheit**: defusedxml (XXE, Entity Bombs, DTD blockiert)
@@ -664,6 +725,8 @@ eKI_API/
 │   ├── metrics.py                # Prometheus-Registry API + Worker (M09)
 │   ├── tracing.py                # OpenTelemetry-Setup opt-in (M09)
 │   ├── temporal_context.py       # request_id-Propagation in Activities (M09)
+│   ├── temporal_codec.py         # AES-256-GCM-Payload-Codec fuer Temporal (1.0.1)
+│   ├── callback_url.py           # callback_url-Policy: Allow-List, DNS-Pruefung (1.0.1)
 │   └── prompt_sanitizer.py       # Prompt Injection Protection
 ├── parsers/                      # Drehbuch-Parser
 │   ├── base.py                   # Async ParserBase + Factory
@@ -682,10 +745,10 @@ eKI_API/
 │   ├── parity.py                 # Cloud<->Lokal Paritaets-Harness (M11)
 ├── workflows/                    # Temporal Workflows
 │   ├── security_check.py         # FDX/PDF Workflow-Router (M03)
-│   ├── maintenance.py            # KB-TTL-Cleanup als Temporal-Schedule (M09, 1 Activity)
+│   ├── maintenance.py            # KB-TTL- und Metadaten-Cleanup als Temporal-Schedules (2 Activities)
 │   └── activities.py             # 13 Activities inkl. LLM-Risikoanalyse und Zustellung (M03-M10)
 ├── worker/
-│   └── main.py                   # Temporal Worker (2 Workflows, 14 Activities registriert)
+│   └── main.py                   # Temporal Worker (3 Workflows, 15 Activities registriert)
 ├── llm/                          # LLM Provider Abstraktion
 │   ├── base.py                   # BaseLLMProvider Interface (+ embed() M06)
 │   ├── factory.py                # Provider Factory
@@ -702,16 +765,18 @@ eKI_API/
 │   ├── run_*.py                  # Runner gegen einen laufenden Stack (keine pytest-Tests)
 │   ├── parity/                   # Golden-Set fuer den Paritaetslauf (M11)
 │   ├── fixtures/fdx/             # 12 synthetische FDX-Testdateien
-│   └── fixtures/pdf/             # synthetische PDFs UND echte Drehbuecher (siehe "Bekannte Grenzen")
+│   └── fixtures/pdf/             # nur synthetische PDFs; private/ fuer lokale echte Drehbuecher (git-/docker-ignoriert)
 ├── scripts/                      # create_api_key, generate_secrets, seed_kb, smoke_prod, run_parity, test_llm, uat/
 ├── openapi/                      # OpenAPI 3.1.1 Vertrag
 ├── postman/                      # Postman Collection + Environment
 ├── secrets/                      # lokal erzeugte Secrets (git-ignoriert), siehe secrets/README.md
-├── docker/                       # Dockerfiles (API + Worker), Temporal-Dynamic-Config, Observability
+├── docker/                       # Dockerfiles (API + Worker), Temporal-Dynamic-Config (Cache-Limits, Prioritaet), Observability
 ├── requirements.lock             # gepinnte Laufzeit-Abhaengigkeiten (Dockerfiles)
 ├── requirements-dev.lock         # gepinnte Dev-Abhaengigkeiten (CI, Entwicklung)
-├── docker-compose.yml            # 7 Services (Entwicklung; Basis fuer die Overlays)
-├── docker-compose.prod.yml       # Prod-Overlay: GHCR-Images, nur Port 8000, Gunicorn, GPU
+├── .dockerignore                 # haelt Secrets, .env*, PDFs, tests/fixtures/pdf, kb_seed/real u. a. aus dem Build-Kontext
+├── docker-compose.yml            # 6 Services (Entwicklung; Basis fuer die Overlays), ohne Ollama
+├── docker-compose.prod.yml       # Prod-Overlay: GHCR-Images, nur Port 8000, Gunicorn, Limits, Log-Rotation
+├── docker-compose.ollama.yml     # optional: lokales Ollama (ollama/ollama:0.33.3) fuer Entwicklung/offline
 └── docker-compose.observability.yml  # Prometheus, Alertmanager, Grafana, Jaeger
 ```
 
@@ -731,10 +796,12 @@ Die CI laeuft die Suite zweimal: im SQLite-Modus und gegen PostgreSQL + pgvector
 Redis und Coverage-Gate 95 %. SQLite allein reicht nicht -- es hat zwei Produktionsfehler
 (`VARCHAR(9)`-Statusspalte, Zeitzonen bei API-Key-Ablauf) verdeckt. Marker: `temporal`
 (Time-Skipping-Testserver, Download beim ersten Lauf) und `ocr` (Tesseract `deu`+`eng`).
+Ruff (Lint + Format) und mypy (strict, `api core services workflows worker llm parsers`, 0 Befunde)
+sind blockierende CI-Gates.
 
-**Stand 2026-10-15:** 1742 Tests – PostgreSQL-Lauf 1741 bestanden + 1 dokumentiertes `xfail`
-(Sync-Stub), SQLite-Lauf 1703 bestanden / 38 übersprungen (reine PostgreSQL-Tests); Line-Coverage
-**98,59 %**. Details je Modul: `docs/COVERAGE_REPORT.md`.
+**Stand 2026-10-16 (Release 1.0.1):** 2049 Tests – PostgreSQL-Lauf 2049 bestanden, SQLite-Lauf
+2005 bestanden / 44 uebersprungen (reine PostgreSQL-Tests), kein `xfail` mehr; Line-Coverage
+**98,71 %**. Details je Modul: `docs/COVERAGE_REPORT.md`.
 
 Testebenen, E2E-Pipeline, Abnahmetests gegen den Stack, CI-Jobs und Konventionen:
 `docs/TESTING_GUIDE.md`.
@@ -744,10 +811,12 @@ Testebenen, E2E-Pipeline, Abnahmetests gegen den Stack, CI-Jobs und Konventionen
 ## LLM Provider
 
 ```bash
-# Standard und Produktion (.env.example): lokales Mistral ueber Ollama
+# Standard und Produktion (.env.example): lokales Mistral ueber die externe Ollama-Instanz
 LLM_PROVIDER=local_mistral
 LOCAL_MISTRAL_MODEL=mistral-small3.2
-OLLAMA_BASE_URL=http://ollama:11434            # Compose-Service; eigener GPU-Host: LOCAL_MISTRAL_BASE_URL
+OLLAMA_BASE_URL=http://<ollama-host>:11434     # externe Instanz (Inferenz + Embeddings)
+# LOCAL_MISTRAL_BASE_URL=http://<anderer-host>:11434   # optional: eigener Endpoint nur fuer local_mistral
+# Mit docker-compose.ollama.yml setzt das Overlay beide URLs auf http://ollama:11434
 
 # Alternative lokale Modelle ueber den generischen Ollama-Provider
 LLM_PROVIDER=ollama
@@ -759,25 +828,40 @@ MISTRAL_API_KEY=your-key
 ```
 
 Ollama direkt auf dem Docker-Host (`OLLAMA_BASE_URL=http://host.docker.internal:11434`) braucht unter
-Linux `extra_hosts: ["host.docker.internal:host-gateway"]` fuer `api` und `worker`. Im Prod-Overlay
-setzt Docker Compose `LLM_PROVIDER` selbst (Default `local_mistral`); Abweichungen per `export` oder
-Projekt-`.env`, nicht per `.env.local` (`docs/CONFIGURATION.md` §2).
+Linux `extra_hosts: ["host.docker.internal:host-gateway"]` fuer `api` und `worker` (die Compose-Dateien
+setzen das nicht). Im Prod-Overlay setzt Docker Compose `LLM_PROVIDER` selbst (Default `local_mistral`);
+Abweichungen per `export` oder Projekt-`.env`, nicht per `.env.local` (`docs/CONFIGURATION.md` §2).
+Ist keine Ollama-URL erreichbar, startet der Stack trotzdem (`/ready` prueft Ollama nicht); Jobs
+scheitern dann beim ersten LLM-Aufruf (fail-closed).
 
 ---
 
-## Bekannte Grenzen (Release 1.0.0)
+## Bekannte Grenzen (Release 1.0.1)
 
-- **Echte Drehbuecher im Repository:** `tests/fixtures/pdf/` enthaelt neben synthetischen Dateien
-  echte Drehbuecher und Projektmappen; beide Docker-Images kopieren `tests/fixtures` mit, sie stecken
-  also auch in den GHCR-Images. Ob sie bleiben duerfen (Rechte/Einwilligung), muss der Auftraggeber
-  entscheiden -- bis dahin Images nicht ausserhalb der Filmakademie verteilen.
-- `POST /v1/security/check` (synchron) ist ein M01-Stub ohne Analyse; `callback_url` wird nicht
-  verwendet; `priority` beeinflusst die Abarbeitung nicht; der Jobstatus `cancelled` wird nie gesetzt.
-- Die Tabelle `audit_logs` wird nicht beschrieben; `job_metadata`, `report_metadata`,
-  `delivery_dead_letters` und `api_keys` werden nie automatisch bereinigt (`docs/DATENSCHUTZ.md`).
+- **Echte Drehbuecher in Git-Historie und alten Images:** Seit 1.0.1 enthalten Repository
+  (Arbeitsstand) und Images nur synthetische Fixtures. Die frueher committeten echten Drehbuecher und
+  Projektmappen stecken aber weiter in der **Git-Historie** (seit Maerz 2026) und in bereits
+  veroeffentlichten **GHCR-Images bis einschliesslich 1.0.0**. Die Historie wird nach
+  Projektentscheidung nicht umgeschrieben; Images <= 1.0.0 loeschen bzw. nicht ausserhalb der Filmakademie
+  verteilen (`docs/DATENSCHUTZ.md` §8).
+- Die Tabelle `audit_logs` wird nicht beschrieben (sie unterliegt trotzdem der 90-Tage-Loeschung).
+- `priority` ordnet nur **wartende** Aufgaben einer Task-Queue; laufende Jobs werden nicht verdraengt,
+  bei mehreren Task-Queue-Partitionen (Temporal-Standard: 4) ist die Reihenfolge nur naeherungsweise.
+  Wirkt nur mit der Temporal-Dynamic-Config aus `docker/temporal/dynamicconfig/eki.yaml`
+  (`matching.useNewMatcher: true`, `matching.priorityLevels: 10`).
+- `callback_url` funktioniert nur mit Hosts aus `CALLBACK_URL_ALLOWED_HOSTS`, die auf oeffentliche
+  Adressen aufloesen und ein gueltiges Zertifikat haben; lokal laesst sich ein Push an `callback_url`
+  nicht gegen den HTTP-ePro-Mock testen.
 - Knowledge Base nur mit `local_mistral`/`ollama` (Mistral Cloud hat kein `embed()`).
-- Ungenutzte Abhaengigkeiten in `pyproject.toml` (u. a. `python-jose` mit bekannten CVEs, `PyJWT`,
-  `passlib`, `bcrypt`, `aiohttp`) -- Entfernen empfohlen; mypy (strict) laeuft in der CI nur beratend.
+- **Redis 7.2:** gepinnt als letzte BSD-lizenzierte Linie; upstream wird 7.2 nur so lange unterstuetzt
+  wie 7.4 (keine Termine veroeffentlicht). Danach Wechsel auf Valkey oder Redis >= 8 (AGPLv3-Option)
+  noetig (`docs/OPERATIONS_GUIDE.md` §4.9).
+- **Ollama-Version:** Die eKI ist nicht gegen eine bestimmte Ollama-Version getestet (die Tests ersetzen
+  Ollama an der HTTP-Grenze). Den Pin im Overlay (`0.33.3`) an die Version der externen
+  Produktionsinstanz angleichen und nach Ollama-Updates den Paritaetslauf wiederholen.
+- **Offen (zurueckgestellt):** Abstimmung des fail-closed-Verhaltens mit ePro --
+  ePro muss `failed`, `cancelled` und 410 beim Abruf als „keine automatische Bewertung" behandeln,
+  nie als „kein Risiko" (`docs/EPRO_INTEGRATION_GUIDE.md` §3).
 
 ---
 

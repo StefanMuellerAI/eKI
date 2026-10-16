@@ -2,6 +2,9 @@
 > sich auf den damaligen Stand. Maßgeblich sind [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md),
 > [CONFIGURATION.md](CONFIGURATION.md), [DATENSCHUTZ.md](DATENSCHUTZ.md) und
 > [UAT/GO_LIVE_CHECKLIST.md](UAT/GO_LIVE_CHECKLIST.md).
+>
+> Hinweis 1.0.1: JWT/PyJWT wurde nie zur Authentifizierung genutzt (nur API-Keys, SHA-256-Hash);
+> die ungenutzten Abhängigkeiten `PyJWT`, `python-jose`, `passlib`, `bcrypt` sind entfernt.
 
 # 🔒 Security Implementation Complete
 

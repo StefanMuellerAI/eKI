@@ -18,12 +18,14 @@ Lokaler Stack gemäß Schnellstart im `README.md` (`.env.local` aus `.env.exampl
 ```bash
 docker compose up -d
 
-# Migrationen ausführen (Head: b8d0f2a4c6e3)
+# Migrationen ausführen (Head: c4e6a8b0d2f1)
 docker compose exec api alembic upgrade head
 
-# LLM-Modell laden – ohne erreichbares Modell enden asynchrone Jobs mit "failed"
-# (die Risikoanalyse ist fail-closed)
-docker compose exec ollama ollama pull mistral-small3.2
+# LLM: die Inferenz läuft auf einer externen Ollama-Instanz (LOCAL_MISTRAL_BASE_URL in
+# .env.local); dort muss das Modell geladen sein – ohne erreichbares Modell enden
+# asynchrone Jobs mit "failed" (die Risikoanalyse ist fail-closed):
+#   ollama pull mistral-small3.2        # auf der Ollama-Instanz
+# Lokal ohne externe Instanz: Overlay docker-compose.ollama.yml (docs/OPERATIONS_GUIDE.md)
 ```
 
 **Push-Tests nur mit ePro-Mock:** Ohne `callback_url` geht der Push an `EPRO_BASE_URL` aus der

@@ -1,5 +1,8 @@
 > **Historischer Nachweis** (Stand des damaligen Meilensteins). Beschreibt den damaligen Stand und wird
 > nicht fortgeschrieben. Aktueller Stand: `docs/COVERAGE_REPORT.md` und `docs/TESTING_GUIDE.md`.
+>
+> Der hier beschriebene synchrone Endpunkt `POST /v1/security/check` (Stub) wurde in 1.0.1
+> entfernt (404); geprüft wird nur über `POST /v1/security/check:async`.
 
 # eKI API - Vollständiger Test-Report
 

@@ -31,8 +31,10 @@ Hinweise:
 - In `ENV=production` lehnt der Start-Validator (`api/config.py`) Platzhalter wie
   `CHANGE_ME`/`replace-me` in `API_SECRET_KEY` und `DATABASE_URL` sowie Schlüssel
   unter 32 Zeichen ab. Echte Werte trotzdem immer selbst erzeugen.
-- `API_SECRET_KEY` ist zugleich Schlüsselmaterial für SecureBuffer und KB-Originale:
-  sicher aufbewahren (Passwort-Tresor) und nur nach Runbook rotieren.
+- `API_SECRET_KEY` ist zugleich Schlüsselmaterial für SecureBuffer, KB-Originale und (seit
+  1.0.1) die Temporal-Payload-Verschlüsselung: API und Worker müssen denselben Wert haben;
+  sicher aufbewahren (Passwort-Tresor) und nur nach Runbook rotieren
+  (`docs/OPERATIONS_GUIDE.md` §5.7).
 
 ## 2. Optional: `*_FILE`-Variablen (Docker-Secret-Muster)
 
@@ -79,7 +81,9 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compos
 ```
 
 Die Reihenfolge ist wichtig: Die Datei muss **nach** `docker-compose.prod.yml` kommen,
-weil das Prod-Overlay die Volumes von `api`/`worker` mit `!reset []` leert.
+weil das Prod-Overlay die Volumes von `api`/`worker` mit `!reset []` leert. `api` und `worker`
+müssen dieselbe Schlüsseldatei mounten (gemeinsamer Temporal-Payload-Schlüssel).
+`secrets/` gelangt nie in ein Image (`.dockerignore`).
 
 ## 3. Observability (M09): Prometheus-Scraper-Key
 

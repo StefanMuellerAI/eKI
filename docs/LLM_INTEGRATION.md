@@ -1,6 +1,6 @@
 # LLM Integration Guide
 
-Stand: Oktober 2026 (Release 1.0.0). Bei Abweichungen gilt der Code in `llm/`; alle
+Stand: Oktober 2026 (Release 1.0.1). Bei Abweichungen gilt der Code in `llm/`; alle
 Einstellungen mit Default und Bedeutung stehen in [`CONFIGURATION.md`](CONFIGURATION.md).
 
 ## Architektur
@@ -60,6 +60,13 @@ verschlüsselt im SecureBuffer; durch Temporal läuft nur der Referenzschlüssel
 - Daten verlassen das Netz der Filmakademie: nur mit AVV/DPA einsetzen ([`DATENSCHUTZ.md`](DATENSCHUTZ.md) §5).
 
 ### Ollama (`ollama`) und lokales Mistral (`local_mistral`)
+
+Beide Provider sprechen per HTTP mit einer **externen Ollama-Instanz** (GPU-Host), die seit 1.0.1
+nicht mehr Teil des Compose-Stacks ist (`OLLAMA_BASE_URL`, optional `LOCAL_MISTRAL_BASE_URL`;
+Betrieb: [`OPERATIONS_GUIDE.md`](OPERATIONS_GUIDE.md) §4.11). Für lokale Entwicklung startet das
+Overlay `docker-compose.ollama.yml` einen gepinnten Ollama-Container (`ollama/ollama:0.33.3`).
+Beim Start prüft weder API noch Worker die Erreichbarkeit; ein falscher Endpoint fällt erst beim
+ersten LLM-Aufruf auf (fail-closed).
 
 `LocalMistralProvider` erbt von `OllamaProvider` und unterscheidet sich nur in:
 
@@ -155,7 +162,7 @@ provider = get_llm_provider(settings)
 | `LLM_ALLOW_EXTERNAL_PROVIDERS` | `false` | erlaubt `mistral_cloud` bei `ENV=production` |
 | `LOCAL_MISTRAL_MODEL` | `mistral-small3.2` | Modell für `local_mistral` |
 | `LOCAL_MISTRAL_BASE_URL` | – (→ `OLLAMA_BASE_URL`) | Ollama-Endpoint für `local_mistral` |
-| `OLLAMA_BASE_URL` | `http://ollama:11434` | Ollama-Endpoint |
+| `OLLAMA_BASE_URL` | `http://ollama:11434` | Ollama-Endpoint (Inferenz und Embeddings). Seit 1.0.1 ohne Ollama im Compose-Stack: auf die externe Instanz setzen; der Default passt nur zum Entwicklungs-Overlay `docker-compose.ollama.yml` |
 | `OLLAMA_MODEL` | `mistral` | Modell für `ollama` (`.env.example`: `mistral-small3.2`) |
 | `OLLAMA_TIMEOUT` | `300` | Timeout pro Request in Sekunden (gilt auch für `local_mistral`) |
 | `OLLAMA_THINK` | `false` | Denkmodus für Thinking-Modelle |

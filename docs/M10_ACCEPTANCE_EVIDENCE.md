@@ -3,7 +3,11 @@
 > [EPRO_INTEGRATION_GUIDE.md](EPRO_INTEGRATION_GUIDE.md), [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md).
 > Seit M10 sind weitere Migrationen hinzugekommen: `a7c9e1f3b5d2` (verlängert
 > `job_metadata.status`; ohne sie scheiterte auf PostgreSQL das Setzen von `delivering`) und
-> `b8d0f2a4c6e3` (aktueller Head, KB-Dedupe pro Mandant).
+> `b8d0f2a4c6e3` (KB-Dedupe pro Mandant), `c4e6a8b0d2f1` (1.0.1, aktueller Head, Indizes für die
+> Metadaten-Aufbewahrung).
+>
+> Release 1.0.1 (16.10.2026): Migrations-Head ist `c4e6a8b0d2f1`. Neu ist u. a. der Dead-Letter-Grund `invalid_callback_url`;
+> `callback_url` ist seit 1.0.1 das Push-Ziel des Jobs, Dead Letters werden nach 90 Tagen gelöscht.
 
 # M10 Acceptance Evidence – Outbound-Adapter Hardening (Push/Pull)
 
@@ -107,7 +111,7 @@ nicht zustellbar, Worker-Ausfall mid-delivery, Redis-Ausfall, doppelte Einreichu
 ## 7. Manuelle Smoke-Prüfung
 
 ```bash
-docker compose exec api alembic upgrade head          # damals f1a2b3c4d5e6 (head), heute b8d0f2a4c6e3
+docker compose exec api alembic upgrade head          # damals f1a2b3c4d5e6 (head), heute c4e6a8b0d2f1
 docker compose exec api python scripts/create_api_key.py --insert --admin
 curl -sH "Authorization: Bearer $EKI_ADMIN_KEY" localhost:8000/v1/ops/summary | jq
 # Push gegen nicht erreichbares ePro (EPRO_BASE_URL auf Dummy setzen), Job starten,

@@ -1,5 +1,8 @@
 > **Veraltet** – Zusammenfassung des M01-Audits vom 30.01.2026, wird nicht fortgeschrieben.
 > Maßgeblich sind [DATENSCHUTZ.md](DATENSCHUTZ.md) und [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md).
+>
+> Hinweis 1.0.1: JWT/PyJWT wurde nie zur Authentifizierung genutzt (nur API-Keys, SHA-256-Hash);
+> die ungenutzten Abhängigkeiten `PyJWT`, `python-jose`, `passlib`, `bcrypt` sind entfernt.
 
 # 🔒 Security Audit - Executive Summary
 
