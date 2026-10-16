@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Bulk-test all PDFs in the fixtures directory through the extraction + splitting pipeline.
+"""Bulk-test PDFs through the extraction + splitting pipeline (no API, no LLM).
+
+Source: every PDF in tests/fixtures/pdf/private/ (git-ignored, local real
+scripts; override with EKI_PRIVATE_FIXTURES_DIR), otherwise the synthetic
+fixtures in tests/fixtures/pdf/.
 
 Run:  python tests/run_pdf_bulk_test.py
 """
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -14,6 +19,20 @@ from parsers.pdf import extract_pdf_text
 from parsers.pdf_scene_splitter import split_into_scenes
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "pdf"
+# Real screenplays are never committed: keep them in the git-ignored
+# tests/fixtures/pdf/private/ (or point EKI_PRIVATE_FIXTURES_DIR elsewhere).
+# Without local real scripts the runner uses the synthetic fixtures.
+PRIVATE_DIR = Path(os.environ.get("EKI_PRIVATE_FIXTURES_DIR") or FIXTURES_DIR / "private")
+
+
+def pdf_sources() -> tuple[Path, list[Path]]:
+    """Return (directory, PDFs): local real scripts if present, else the synthetic fixtures."""
+    if PRIVATE_DIR.is_dir():
+        private = sorted(PRIVATE_DIR.glob("*.pdf"))
+        if private:
+            return PRIVATE_DIR, private
+    return FIXTURES_DIR, sorted(FIXTURES_DIR.glob("*.pdf"))
+
 
 RESET = "\033[0m"
 GREEN = "\033[92m"
@@ -96,13 +115,15 @@ def run_single(pdf_path: Path) -> dict:
 
 
 def main():
-    pdfs = sorted(FIXTURES_DIR.glob("*.pdf"))
+    source_dir, found = pdf_sources()
+    # Rejection of encrypted PDFs is covered by tests/test_pdf_parser.py.
+    pdfs = [p for p in found if p.name != "password_protected.pdf"]
     if not pdfs:
-        print(f"{RED}No PDFs found in {FIXTURES_DIR}{RESET}")
+        print(f"{RED}No PDFs found in {source_dir}{RESET}")
         sys.exit(1)
 
     print(f"\n{BOLD}{CYAN}{'=' * 90}{RESET}")
-    print(f"{BOLD}{CYAN}  PDF Bulk Processing Test -- {len(pdfs)} files{RESET}")
+    print(f"{BOLD}{CYAN}  PDF Bulk Processing Test -- {len(pdfs)} files from {source_dir}{RESET}")
     print(f"{BOLD}{CYAN}{'=' * 90}{RESET}\n")
 
     results = []

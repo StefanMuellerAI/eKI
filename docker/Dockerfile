@@ -49,7 +49,9 @@ COPY llm ./llm
 COPY parsers ./parsers
 COPY config ./config
 COPY scripts ./scripts
-COPY tests/fixtures ./tests/fixtures
+# Only the small synthetic FDX fixtures: default input of scripts/smoke_prod.py,
+# which runs inside this container. No PDFs, never real screenplays (.dockerignore).
+COPY tests/fixtures/fdx ./tests/fixtures/fdx
 COPY alembic.ini ./
 
 # Ensure /app is in Python path for module resolution

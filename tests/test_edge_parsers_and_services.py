@@ -642,7 +642,7 @@ class TestPromptSanitizer:
             "=====================",
             "---",
             "Szene 3 - Explosion -- Rauch --- Feuer === Ende",
-            "User:innen passen. Der Avatar ist",  # Babystar fixture, page 22
+            "User:innen passen. Der Avatar ist",  # gender colon, see realworld_headings.pdf
             "Die User:innen und Nutzer:innen",
             "user:in",
             "Die User: Anna",
@@ -781,13 +781,16 @@ class TestPromptSanitizer:
 
 
 # ---------------------------------------------------------------------------
-# Regression: the fail-closed screen must pass every real fixture scene
+# Regression: the fail-closed screen must pass every fixture scene
 # ---------------------------------------------------------------------------
 
-# Default: first 3 pages of each PDF (pdfplumber costs ~0.2 s/page on the real
-# screenplays; all pages take ~60 s).  EKI_FULL_FIXTURE_SCAN=1 scans everything.
+# All committed fixtures are synthetic (no real screenplays in the repository;
+# tests/run_pdf_bulk_test.py covers local real scripts).  Default: the first 8
+# pages of each PDF, i.e. every page of the small layout fixtures; the 120/300
+# page benchmark PDFs only repeat their templates.  EKI_FULL_FIXTURE_SCAN=1
+# scans everything.
 _FULL_SCAN = os.environ.get("EKI_FULL_FIXTURE_SCAN") == "1"
-_SCAN_PAGES = None if _FULL_SCAN else 3
+_SCAN_PAGES = None if _FULL_SCAN else 8
 _PDF_SCAN = sorted(p.name for p in PDF_FIXTURES.glob("*.pdf") if p.name != "password_protected.pdf")
 _FDX_SCAN = sorted(
     p.name
@@ -852,13 +855,19 @@ class TestInjectionScreenOnFixtures:
         ]
         assert offenders == []
 
-    def test_babystar_gender_colon_page_passes(self):
-        # The real evidence for the lead decision: "User:innen" on page 22.
-        raw = next(PDF_FIXTURES.glob("Babystar*.pdf")).read_bytes()
+    def test_scan_covers_the_realworld_layout_fixtures(self):
+        # Guard against the parametrisation silently shrinking to nothing.
+        assert {"realworld_headings.pdf", "suffix_headings.pdf"} <= set(_PDF_SCAN)
+        assert "password_protected.pdf" not in _PDF_SCAN
+
+    def test_gender_colon_page_passes(self):
+        # Evidence for the lead decision on "User:innen" (German gender colon),
+        # rebuilt synthetically after the real screenplays left the repository.
+        raw = (PDF_FIXTURES / "realworld_headings.pdf").read_bytes()
         with pdfplumber.open(io.BytesIO(raw)) as pdf:
-            page = pdf.pages[21].extract_text()
-        assert "User:innen" in page
-        assert _screen_offenders("babystar p22", page) == []
+            page = pdf.pages[4].extract_text()
+        assert "User:innen" in page and "Nutzer:innen" in page
+        assert _screen_offenders("realworld p5", page) == []
 
 
 # ===========================================================================

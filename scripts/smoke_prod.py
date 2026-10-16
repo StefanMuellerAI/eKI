@@ -14,7 +14,7 @@ Usage:
     export EKI_API_URL=http://localhost:8000
     export EKI_API_KEY=eki_...                 # normal key (job + report)
     export EKI_WORKER_METRICS_URL=http://localhost:9090   # optional, if reachable
-    python scripts/smoke_prod.py [--fixture tests/fixtures/fdx/simple.fdx] [--timeout 900]
+    python scripts/smoke_prod.py [--fixture tests/fixtures/fdx/simple_scene.fdx] [--timeout 900]
 
 Exit code 0 = all checks passed, 1 = a check failed. Output is content-free
 (counts, ids, durations) so it can be attached to the acceptance protocol.

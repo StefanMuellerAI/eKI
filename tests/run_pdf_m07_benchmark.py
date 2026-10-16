@@ -39,10 +39,31 @@ from pathlib import Path
 
 import requests
 
+# eki-ollama only exists with the optional docker-compose.ollama.yml overlay; the
+# default stack uses an external Ollama instance. Containers that are not
+# running are left out (docker stats fails as a whole on an unknown name).
 CONTAINERS = ["eki-api", "eki-worker", "eki-ollama"]
 POLL_INTERVAL_SEC = 15
 STATS_INTERVAL_SEC = 10
 ACCEPTANCE_LIMIT_SEC = 7200  # 120 Min laut Pflichtenheft §5
+
+
+def running_containers(candidates: list[str]) -> list[str]:
+    """Return the subset of *candidates* that is currently running."""
+    try:
+        proc = subprocess.run(
+            ["docker", "ps", "--format", "{{.Names}}"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except Exception as exc:
+        print(f"  [warn] docker ps failed: {exc}", file=sys.stderr)
+        return []
+    if proc.returncode != 0:
+        return []
+    names = set(proc.stdout.split())
+    return [c for c in candidates if c in names]
 
 
 @dataclass
@@ -70,9 +91,15 @@ def _fmt_time(s: float) -> str:
 class DockerStatsCollector(threading.Thread):
     """Sammelt periodisch docker stats für die eKI-Container."""
 
-    def __init__(self, csv_path: Path, interval: float = STATS_INTERVAL_SEC) -> None:
+    def __init__(
+        self,
+        csv_path: Path,
+        containers: list[str],
+        interval: float = STATS_INTERVAL_SEC,
+    ) -> None:
         super().__init__(daemon=True)
         self.csv_path = csv_path
+        self.containers = containers
         self.interval = interval
         self._stop = threading.Event()
         self.rows: list[dict[str, str]] = []
@@ -93,7 +120,7 @@ class DockerStatsCollector(threading.Thread):
                             "--no-stream",
                             "--format",
                             "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}",
-                            *CONTAINERS,
+                            *self.containers,
                         ],
                         capture_output=True,
                         text=True,
@@ -122,7 +149,7 @@ class DockerStatsCollector(threading.Thread):
     def summary(self) -> dict[str, dict[str, float]]:
         """Aggregate per-container peak CPU and average memory percentage."""
         out: dict[str, dict[str, float]] = {}
-        for container in CONTAINERS:
+        for container in self.containers:
             cpu_vals: list[float] = []
             mem_vals: list[float] = []
             for r in self.rows:
@@ -286,9 +313,13 @@ def main() -> int:
 
     have_docker = shutil.which("docker") is not None
     collector: DockerStatsCollector | None = None
-    if have_docker:
-        collector = DockerStatsCollector(stats_path)
+    containers = running_containers(CONTAINERS) if have_docker else []
+    if containers:
+        print(f"  Containers:    {', '.join(containers)}")
+        collector = DockerStatsCollector(stats_path, containers)
         collector.start()
+    elif have_docker:
+        print(f"  [warn] none of {CONTAINERS} is running -- stats won't be collected")
     else:
         print("  [warn] docker CLI not found -- stats won't be collected")
 

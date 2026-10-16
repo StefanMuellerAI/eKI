@@ -18,9 +18,11 @@ services:
       - eki-network
     restart: unless-stopped
 
-  # Redis Cache
+  # Redis Cache (SecureBuffer + rate limits). Pinned to the 7.2 line, the last
+  # BSD-3-licensed Redis release line; see docs/OPERATIONS_GUIDE.md for its support
+  # status and the replacement options (Valkey / Redis >= 8).
   redis:
-    image: redis:7-alpine
+    image: redis:7.2-alpine
     container_name: eki-redis
     volumes:
       - redis_data:/data
@@ -33,29 +35,9 @@ services:
       - eki-network
     restart: unless-stopped
 
-  # Ollama Local LLM (optional - comment out if using Mistral Cloud)
-  ollama:
-    image: ollama/ollama:latest
-    container_name: eki-ollama
-    volumes:
-      - ollama_data:/root/.ollama
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    networks:
-      - eki-network
-    # Uncomment for GPU support (NVIDIA)
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
-    restart: unless-stopped
+  # LLM inference runs on an EXTERNAL Ollama instance (no Ollama service in this
+  # stack): set LOCAL_MISTRAL_BASE_URL / OLLAMA_BASE_URL in .env.local.
+  # Local development / offline: add docker-compose.ollama.yml (pinned image).
 
   # Temporal Server
   temporal:
@@ -176,7 +158,6 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  ollama_data:
 
 networks:
   eki-network:

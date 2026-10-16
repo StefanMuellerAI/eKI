@@ -11,11 +11,16 @@
 # * no source bind mounts (`!reset` -- a plain `[]` would be merged with the base file
 #   and keep them, see Compose "merge" rules; needs Docker Compose >= 2.24)
 # * Gunicorn supervises the Uvicorn worker (Pflichtenheft 4.1 "Uvicorn + Gunicorn")
-# * local inference only: LLM_PROVIDER=local_mistral, cloud providers are rejected at startup
+# * local inference only: LLM_PROVIDER=local_mistral, cloud providers are rejected at startup;
+#   the model runs on an EXTERNAL Ollama instance (LOCAL_MISTRAL_BASE_URL / OLLAMA_BASE_URL in
+#   .env.local) -- there is no Ollama container in production (docker-compose.ollama.yml is
+#   for local development / offline use only)
 # * all secrets via .env.local / *_FILE (secrets/), see secrets/README.md
 
 # Docker's json-file driver does not rotate by default; the API access log
-# contains client IPs (see docs/DATENSCHUTZ.md), so cap size and age.
+# contains client IPs (see docs/DATENSCHUTZ.md), so cap the size: 20 MB x 5 files
+# per container. Docker has no time-based rotation -- retention by age needs log
+# forwarding or host-side tooling (see docs/DATENSCHUTZ.md).
 x-logging: &default-logging
   driver: json-file
   options:
@@ -50,21 +55,6 @@ services:
     logging: *default-logging
     # Operator UI stays internal; reach it via SSH tunnel if needed.
     ports: !reset []
-
-  ollama:
-    logging: *default-logging
-    ports: !reset []
-    # NVIDIA GPU (Pflichtenheft 8: >= 24 GB VRAM recommended). Requires nvidia-container-toolkit.
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    environment:
-      - OLLAMA_KEEP_ALIVE=30m
-      - OLLAMA_NUM_PARALLEL=1
 
   api:
     logging: *default-logging

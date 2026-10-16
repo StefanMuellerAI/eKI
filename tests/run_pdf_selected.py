@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Test selected representative PDFs through the full pipeline, one at a time."""
+"""Test selected representative PDFs through the full pipeline, one at a time.
+
+Selection: the PDF paths given on the command line; otherwise every PDF in
+tests/fixtures/pdf/private/ (git-ignored, local real scripts; override with
+EKI_PRIVATE_FIXTURES_DIR); otherwise a representative set of the synthetic
+fixtures (``SELECTED``).
+
+Run:  python tests/run_pdf_selected.py [file.pdf ...]
+"""
 
 import os
 import sys
@@ -13,13 +21,29 @@ API_KEY = os.environ.get("EKI_API_KEY", "")
 if not API_KEY:
     sys.exit("ERROR: EKI_API_KEY Umgebungsvariable setzen (z.B. export EKI_API_KEY=eki_...)")
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "pdf"
+# Real screenplays are never committed (see .gitignore).
+PRIVATE_DIR = Path(os.environ.get("EKI_PRIVATE_FIXTURES_DIR") or FIXTURES_DIR / "private")
 
+# Synthetic stand-ins: standard layout, no markers (page fallback), real-world
+# heading variants incl. a French scene, suffix-style headings (page fallback).
 SELECTED = [
     "simple_screenplay.pdf",
     "no_structure_multi_page.pdf",
-    "Gaïa_Scipt_French.pdf",
-    "SINKENDE_SCHIFFE_190730.pdf",
+    "realworld_headings.pdf",
+    "suffix_headings.pdf",
 ]
+
+
+def selected_pdfs(argv: list[str]) -> list[Path]:
+    """CLI paths, else local real scripts, else the synthetic selection."""
+    if argv:
+        return [Path(a) for a in argv]
+    if PRIVATE_DIR.is_dir():
+        private = sorted(PRIVATE_DIR.glob("*.pdf"))
+        if private:
+            return private
+    return [FIXTURES_DIR / name for name in SELECTED]
+
 
 POLL_INTERVAL = 10
 POLL_TIMEOUT = 3600
@@ -103,7 +127,7 @@ def submit_and_wait(pdf_path: Path) -> dict:
 
 
 def main():
-    pdfs = [FIXTURES_DIR / name for name in SELECTED]
+    pdfs = selected_pdfs(sys.argv[1:])
     for p in pdfs:
         if not p.exists():
             print(f"{E}Missing: {p}{R}")
