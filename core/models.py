@@ -1,6 +1,7 @@
 """Pydantic models for API request/response schemas."""
 
 import base64
+import binascii
 import codecs
 import re
 import unicodedata
@@ -246,7 +247,7 @@ class SecurityCheckRequest(BaseModel):
 
         try:
             decoded = base64.b64decode(v, validate=True)
-        except base64.binascii.Error:
+        except binascii.Error:
             raise ValueError("Invalid base64 encoding")
 
         max_size = self.max_decoded_script_bytes

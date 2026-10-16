@@ -4,6 +4,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
@@ -13,6 +14,7 @@ from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.base import RequestResponseEndpoint
 
 from api.config import get_settings
 from api.dependencies import verify_api_key
@@ -96,7 +98,7 @@ app.add_middleware(
 # ihn in der Response-Header zurueck, damit Aufrufer Trace-Querverweise
 # ziehen koennen. Bewusst als Middleware vor allen Routern installiert.
 @app.middleware("http")
-async def request_id_middleware(request: Request, call_next):
+async def request_id_middleware(request: Request, call_next: RequestResponseEndpoint) -> Response:
     incoming = request.headers.get("X-Request-ID")
     request_id = set_request_id(incoming)
     # request.state lives in the ASGI scope, so every exception handler sees
@@ -136,7 +138,7 @@ def _route_template(request: Request) -> str:
 # Fehlerantworten aus Exception-Handlern gezaehlt werden. /metrics selbst
 # wird ausgenommen, damit der Scrape die Zahlen nicht verfaelscht.
 @app.middleware("http")
-async def http_metrics_middleware(request: Request, call_next):
+async def http_metrics_middleware(request: Request, call_next: RequestResponseEndpoint) -> Response:
     if request.url.path == "/metrics":
         return await call_next(request)
 
@@ -349,7 +351,7 @@ async def root() -> dict[str, str]:
 # use raw Request parsing (needed for dual JSON / multipart support).
 # ---------------------------------------------------------------------------
 
-_MULTIPART_ASYNC: dict = {
+_MULTIPART_ASYNC: dict[str, Any] = {
     "type": "object",
     "required": ["file"],
     "properties": {
@@ -411,7 +413,7 @@ _MULTIPART_ASYNC: dict = {
 }
 
 
-def _custom_openapi() -> dict:
+def _custom_openapi() -> dict[str, Any]:
     if app.openapi_schema:
         return app.openapi_schema
 
@@ -449,4 +451,5 @@ def _custom_openapi() -> dict:
     return openapi_schema
 
 
-app.openapi = _custom_openapi
+# Replacing the bound method is FastAPI's documented hook for a custom schema.
+app.openapi = _custom_openapi  # type: ignore[method-assign]

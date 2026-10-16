@@ -171,11 +171,23 @@ warn_unused_ignores = true
 warn_no_return = true
 check_untyped_defs = true
 strict_equality = true
+# Teaches mypy pydantic's model semantics, e.g. that ``Field(None, ...)`` is optional.
+plugins = ["pydantic.mypy"]
 
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+# Runtime dependencies that ship neither inline types (py.typed) nor a stub
+# package in requirements-dev.lock (types-PyYAML, types-jsonschema,
+# types-reportlab and types-defusedxml exist upstream but are not locked).
 [[tool.mypy.overrides]]
 module = [
-    "temporalio.*",
-    "prometheus_client.*",
-    "pgvector.*",
+    "defusedxml.*",
+    "jsonschema.*",
+    "pytesseract.*",
+    "reportlab.*",
+    "yaml.*",
 ]
 ignore_missing_imports = true

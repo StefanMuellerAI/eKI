@@ -105,7 +105,7 @@ class Settings(BaseSettings):
 
     # Database
     database_url: PostgresDsn = Field(
-        default="postgresql+asyncpg://eki_user:replace-me@localhost:5432/eki_db",
+        default=PostgresDsn("postgresql+asyncpg://eki_user:replace-me@localhost:5432/eki_db"),
         description="PostgreSQL connection URL",
     )
     database_url_file: str | None = Field(
@@ -117,7 +117,7 @@ class Settings(BaseSettings):
 
     # Redis
     redis_url: RedisDsn = Field(
-        default="redis://localhost:6379/0", description="Redis connection URL"
+        default=RedisDsn("redis://localhost:6379/0"), description="Redis connection URL"
     )
     redis_max_connections: int = Field(default=50, description="Max Redis connections")
 
@@ -489,7 +489,7 @@ class Settings(BaseSettings):
 
     @field_validator("cors_origins", mode="before")
     @classmethod
-    def parse_cors_origins(cls, v: Any) -> list[str]:
+    def parse_cors_origins(cls, v: Any) -> Any:
         """Parse CORS origins from string or list."""
         if isinstance(v, str):
             value = v.strip()
@@ -513,7 +513,7 @@ class Settings(BaseSettings):
 
     @field_validator("trusted_proxy_ips", mode="before")
     @classmethod
-    def parse_trusted_proxy_ips(cls, v: Any) -> list[str]:
+    def parse_trusted_proxy_ips(cls, v: Any) -> Any:
         """Parse trusted proxy IPs from comma-separated string or list."""
         if isinstance(v, str):
             value = v.strip()
@@ -531,7 +531,7 @@ class Settings(BaseSettings):
 
     @field_validator("callback_url_allowed_hosts", mode="before")
     @classmethod
-    def parse_callback_url_allowed_hosts(cls, v: Any) -> list[str]:
+    def parse_callback_url_allowed_hosts(cls, v: Any) -> Any:
         """Comma-separated string or JSON list; normalised (lower-case, no trailing dot)."""
         if isinstance(v, str):
             value = v.strip()

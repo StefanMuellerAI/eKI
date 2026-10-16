@@ -2,7 +2,9 @@
 
 import hashlib
 import logging
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING, TypeAlias
 
 import redis.asyncio as aioredis
 from fastapi import Depends, Header, HTTPException, status
@@ -20,19 +22,26 @@ from db.session import get_db_session
 
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    # The types-redis stubs make Redis generic over the response type; the
+    # runtime class is not subscriptable, and FastAPI evaluates annotations.
+    RedisClient: TypeAlias = aioredis.Redis[str]
+else:
+    RedisClient = aioredis.Redis
+
 
 async def get_settings_dependency() -> Settings:
     """Get application settings."""
     return get_settings()
 
 
-async def get_db() -> AsyncSession:
+async def get_db() -> AsyncIterator[AsyncSession]:
     """Get database session."""
     async for session in get_db_session():
         yield session
 
 
-async def get_redis() -> aioredis.Redis:
+async def get_redis() -> AsyncIterator[RedisClient]:
     """Get Redis connection."""
     settings = get_settings()
     redis_client = aioredis.from_url(
@@ -44,10 +53,11 @@ async def get_redis() -> aioredis.Redis:
     try:
         yield redis_client
     finally:
-        await redis_client.aclose()
+        # types-redis 4.6 stubs predate aclose() (redis>=5; close() is deprecated).
+        await redis_client.aclose()  # type: ignore[attr-defined]
 
 
-async def get_temporal_client() -> TemporalClient:
+async def get_temporal_client() -> AsyncIterator[TemporalClient]:
     """Get Temporal client.
 
     Raises ServiceUnavailableException with a user-facing message when

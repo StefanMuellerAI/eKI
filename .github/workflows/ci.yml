@@ -33,8 +33,7 @@ jobs:
         run: ruff format --check .
 
       - name: Run mypy type checker
-        run: mypy api core services workflows worker
-        continue-on-error: true
+        run: mypy api core services workflows worker llm parsers
 
   security-scan:
     name: Security Scan

@@ -10,7 +10,7 @@ import logging
 import re
 import time
 import urllib.parse
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import Any
 
 import redis.asyncio as aioredis
@@ -1047,9 +1047,7 @@ async def _job_created_at(job_id: str) -> Any:
         await engine.dispose()
 
 
-def _elapsed_since(created_at: Any) -> float:
-    from datetime import datetime
-
+def _elapsed_since(created_at: datetime) -> float:
     start = created_at if created_at.tzinfo else created_at.replace(tzinfo=UTC)
     return max(0.0, (datetime.now(UTC) - start).total_seconds())
 

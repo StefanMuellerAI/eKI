@@ -173,7 +173,7 @@ async def purge_expired_metadata(
     re-activated key or a job that made progress) survives. Only counts are
     logged and returned.
     """
-    from sqlalchemy import and_, exists, not_, or_
+    from sqlalchemy import ColumnElement, and_, exists, not_, or_
 
     from core import metrics
     from core.db_models import (
@@ -210,7 +210,7 @@ async def purge_expired_metadata(
         return or_(column.is_(None), column < cutoff)
 
     untouched_since_cutoff = and_(jobs.c.created_at < cutoff, jobs.c.updated_at < cutoff)
-    live_job = jobs.c.status.in_(active_job_statuses)
+    live_job: ColumnElement[bool] = jobs.c.status.in_(active_job_statuses)
     if abandoned_cleanup:
         live_job = and_(live_job, not_(untouched_since_cutoff))
 

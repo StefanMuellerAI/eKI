@@ -3,14 +3,13 @@
 import logging
 from datetime import datetime
 
-import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from temporalio.client import Client as TemporalClient
 
 from api.config import get_settings
-from api.dependencies import get_db, get_redis, verify_api_key
+from api.dependencies import RedisClient, get_db, get_redis, verify_api_key
 from core.db_models import ApiKeyModel
 from core.models import HealthResponse, ReadinessResponse
 from core.temporal_codec import temporal_client_options
@@ -52,7 +51,7 @@ async def health_check() -> HealthResponse:
 async def readiness_check(
     http_response: Response,
     db: AsyncSession = Depends(get_db),
-    redis: aioredis.Redis = Depends(get_redis),
+    redis: RedisClient = Depends(get_redis),
     _api_key: ApiKeyModel = Depends(verify_api_key),
 ) -> ReadinessResponse:
     """

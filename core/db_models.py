@@ -1,6 +1,7 @@
 """SQLAlchemy database models for audit metadata."""
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector
@@ -93,7 +94,7 @@ class AuditLog(Base):
     request_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status_code: Mapped[int] = mapped_column(Integer, nullable=False)
     processing_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    extra_metadata: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    extra_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
 
 class JobMetadata(Base):
@@ -129,7 +130,7 @@ class JobMetadata(Base):
     idempotency_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     delivery_mode: Mapped[str] = mapped_column(String(10), nullable=False, default="pull")
     script_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    extra_metadata: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    extra_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
     # M10: outbound delivery bookkeeping (metadata only, Pflichtenheft Anhang 2
     # ``AuditMetadata.delivery``). ``delivery_status`` values:
@@ -211,7 +212,7 @@ class ReportMetadata(Base):
     processing_time_seconds: Mapped[float] = mapped_column(nullable=False)
     report_ref_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     delivery_mode: Mapped[str] = mapped_column(String(10), nullable=False, default="pull")
-    extra_metadata: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    extra_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
 
 # ---------------------------------------------------------------------------

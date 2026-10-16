@@ -60,7 +60,7 @@ def _counter(name: str, doc: str, labels: Iterable[str] = ()) -> Counter:
     return _existing(name, REGISTRY) or Counter(name, doc, list(labels))
 
 
-def _histogram(name: str, doc: str, labels: Iterable[str], buckets: tuple) -> Histogram:
+def _histogram(name: str, doc: str, labels: Iterable[str], buckets: tuple[float, ...]) -> Histogram:
     return _existing(name, REGISTRY) or Histogram(name, doc, list(labels), buckets=buckets)
 
 

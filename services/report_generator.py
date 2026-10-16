@@ -170,7 +170,7 @@ def generate_pdf_report(report: dict[str, Any]) -> bytes:
     elements.append(Paragraph("Befunde nach Szenen", h2_style))
 
     findings = report.get("findings", [])
-    by_scene: dict[str, list[dict]] = defaultdict(list)
+    by_scene: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for f in findings:
         scene = f.get("scene_number") or "?"
         by_scene[scene].append(f)
@@ -225,7 +225,7 @@ def generate_pdf_report(report: dict[str, Any]) -> bytes:
     # --- To-Do List ---
     elements.append(Paragraph("Massnahmen-Checkliste", h2_style))
 
-    all_measures: dict[str, dict] = {}
+    all_measures: dict[str, dict[str, Any]] = {}
     for f in findings:
         for m in f.get("measures", []):
             code = m.get("code", "")

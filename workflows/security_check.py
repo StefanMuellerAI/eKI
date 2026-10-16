@@ -488,7 +488,7 @@ class SecurityCheckWorkflow:
         last_reported_pct = 8
 
         async def _structure_block(i: int) -> dict[str, Any]:
-            result = await workflow.execute_activity(
+            result: dict[str, Any] = await workflow.execute_activity(
                 structure_scene_llm_activity,
                 {
                     "blocks_ref_key": blocks_ref_key,
@@ -607,7 +607,7 @@ class SecurityCheckWorkflow:
         activity_timeout = _resolve_activity_timeout(job_data)
 
         async def _analyze(i: int) -> dict[str, Any]:
-            result = await workflow.execute_activity(
+            result: dict[str, Any] = await workflow.execute_activity(
                 analyze_scene_risk_activity,
                 {"parsed_ref_key": parsed_ref_key, "scene_index": i},
                 start_to_close_timeout=activity_timeout,
@@ -695,18 +695,19 @@ class SecurityCheckWorkflow:
         delivery_mode = str(delivery_config.get("delivery_mode") or "pull")
 
         try:
-            delivery_result = await workflow.execute_activity(
+            result: dict[str, Any] = await workflow.execute_activity(
                 deliver_report_activity,
                 args=[report_result, delivery_config],
                 start_to_close_timeout=_DELIVERY_START_TO_CLOSE_PER_ATTEMPT,
                 schedule_to_close_timeout=_DELIVERY_SCHEDULE_TO_CLOSE,
                 retry_policy=_RETRY_DELIVERY,
             )
+            delivery_result = result
             logger.info(
                 "Report delivered: %s (mode=%s, attempts=%s)",
-                delivery_result.get("delivered"),
-                delivery_result.get("delivery_mode"),
-                delivery_result.get("attempts_used"),
+                result.get("delivered"),
+                result.get("delivery_mode"),
+                result.get("attempts_used"),
             )
         except Exception as exc:
             if is_cancelled_exception(exc) and workflow.patched(_PATCH_CANCELLATION):

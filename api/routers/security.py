@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import redis.asyncio as aioredis
 from fastapi import (
     APIRouter,
     Depends,
@@ -34,6 +33,7 @@ from temporalio.common import Priority
 
 from api.config import get_settings
 from api.dependencies import (
+    RedisClient,
     get_actor_headers,
     get_db,
     get_redis,
@@ -79,7 +79,7 @@ def _max_upload_size() -> int:
 # ---------------------------------------------------------------------------
 
 
-def _get_buffer(redis_client: aioredis.Redis) -> SecureBuffer:
+def _get_buffer(redis_client: RedisClient) -> SecureBuffer:
     settings = get_settings()
     return SecureBuffer(
         redis_client,
@@ -309,7 +309,7 @@ def temporal_priority_key(priority: int, levels: int) -> int:
 async def security_check_async(
     request: Request,
     temporal_client: TemporalClient = Depends(get_temporal_client),
-    redis_client: aioredis.Redis = Depends(get_redis),
+    redis_client: RedisClient = Depends(get_redis),
     db: AsyncSession = Depends(get_db),
     actor_info: dict[str, str | None] = Depends(get_actor_headers),
 ) -> AsyncSecurityCheckResponse:
@@ -522,7 +522,7 @@ async def get_report(
     report_id: uuid.UUID = Path(..., description="Report ID to retrieve"),
     api_key: ApiKeyModel = Depends(verify_api_key),
     db: AsyncSession = Depends(get_db),
-    redis_client: aioredis.Redis = Depends(get_redis),
+    redis_client: RedisClient = Depends(get_redis),
 ) -> ReportResponse:
     """One-Shot report retrieval: fetch from Redis, return JSON + PDF, then delete.
 

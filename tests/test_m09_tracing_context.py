@@ -93,6 +93,15 @@ class TestActivityLogContext:
         with activity_log_context(request_id="", workflow_id="job-2", activity_type="x", attempt=1):
             assert get_request_id()  # generated uuid4 hex
 
+    def test_activity_without_workflow_binds_none(self):
+        """``activity.Info.workflow_id`` is ``None`` for an activity no workflow started."""
+        structlog.contextvars.clear_contextvars()
+        with activity_log_context(request_id="r", workflow_id=None, activity_type="x", attempt=1):
+            ctx = structlog.contextvars.get_contextvars()
+            assert ctx["job_id"] is None
+            assert ctx["workflow_id"] is None
+        assert "workflow_id" not in structlog.contextvars.get_contextvars()
+
     @pytest.mark.asyncio
     async def test_log_line_contains_correlation_fields(self, capsys):
         """End-to-end: stdlib logger inside the context renders job_id/request_id."""

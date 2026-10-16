@@ -27,6 +27,7 @@ from typing import Any
 from uuid import uuid4
 
 import structlog
+from structlog.typing import EventDict
 
 # ---------------------------------------------------------------------------
 # Request-ID propagation
@@ -51,7 +52,7 @@ def get_request_id() -> str:
     return _REQUEST_ID_CTX.get()
 
 
-def _request_id_processor(_logger: Any, _method_name: str, event_dict: dict) -> dict:
+def _request_id_processor(_logger: Any, _method_name: str, event_dict: EventDict) -> EventDict:
     """Add the current request_id to every log event (if set)."""
     rid = _REQUEST_ID_CTX.get()
     if rid:
@@ -107,7 +108,7 @@ def _redact_value(value: Any) -> Any:
     return _REDACTED
 
 
-def _redact_event_dict(event_dict: dict) -> dict:
+def _redact_event_dict(event_dict: EventDict) -> EventDict:
     """Replace any sensitive key in *event_dict* with a redaction marker."""
     for key in list(event_dict.keys()):
         if key in _SENSITIVE_KEYS:
@@ -115,7 +116,9 @@ def _redact_event_dict(event_dict: dict) -> dict:
     return event_dict
 
 
-def _sensitive_content_processor(_logger: Any, _method_name: str, event_dict: dict) -> dict:
+def _sensitive_content_processor(
+    _logger: Any, _method_name: str, event_dict: EventDict
+) -> EventDict:
     """structlog processor: maskiert sensible Schluessel."""
     return _redact_event_dict(event_dict)
 
