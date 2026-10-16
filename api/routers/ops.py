@@ -46,7 +46,7 @@ _DELIVERY_STATES = ("pending", "delivering", "delivered", "failed", "dead_letter
 _MAX_OFFSET = 2**63 - 1
 
 
-async def _unacknowledged_count(db: AsyncSession) -> int:
+async def unacknowledged_dead_letters(db: AsyncSession) -> int:
     return int(
         (
             await db.execute(
@@ -77,7 +77,7 @@ async def ops_summary(
             select(JobMetadata.delivery_status, func.count()).group_by(JobMetadata.delivery_status)
         )
     ).all()
-    unacked = await _unacknowledged_count(db)
+    unacked = await unacknowledged_dead_letters(db)
     metrics.DEAD_LETTERS_UNACKNOWLEDGED.set(unacked)
     return OpsSummaryResponse(
         jobs_by_status={str(getattr(s, "value", s)): int(c) for s, c in by_status_rows},
@@ -213,7 +213,7 @@ async def list_dead_letters(
             .offset(offset)
         )
     ).scalars()
-    unacked = await _unacknowledged_count(db)
+    unacked = await unacknowledged_dead_letters(db)
     metrics.DEAD_LETTERS_UNACKNOWLEDGED.set(unacked)
     return DeadLetterListResponse(
         items=[_to_summary(d) for d in rows],
@@ -282,7 +282,7 @@ async def acknowledge_dead_letter(
     await db.commit()
     await db.refresh(row)
 
-    unacked = await _unacknowledged_count(db)
+    unacked = await unacknowledged_dead_letters(db)
     metrics.DEAD_LETTERS_UNACKNOWLEDGED.set(unacked)
     logger.info(
         "Dead letter acknowledged: id=%s job=%s by=%s", dead_letter_id, row.job_id, admin.user_id

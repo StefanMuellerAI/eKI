@@ -13,12 +13,14 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import RequestResponseEndpoint
 
 from api.config import get_settings
-from api.dependencies import verify_api_key
+from api.dependencies import get_db, verify_api_key
 from api.routers import health, knowledge_base, ops, security
+from core import metrics
 from core.db_models import ApiKeyModel
 from core.exceptions import EKIException
 from core.logging_config import configure_logging, set_request_id
@@ -330,8 +332,19 @@ app.include_router(ops.router, prefix="/v1/ops", tags=["Operations"])
 if settings.metrics_enabled:
 
     @app.get("/metrics", include_in_schema=False)
-    async def metrics_endpoint(_api_key: ApiKeyModel = Depends(verify_api_key)) -> Response:
+    async def metrics_endpoint(
+        _api_key: ApiKeyModel = Depends(verify_api_key),
+        db: AsyncSession = Depends(get_db),
+    ) -> Response:
         """Prometheus metrics endpoint protected by API key authentication."""
+        # The dead-letter gauge is recomputed on every scrape: it used to be set
+        # only when a dead letter was written or /v1/ops/* was called, so after an
+        # acknowledgement or the 90-day cleanup a stale series kept
+        # EkiDeadLettersPending firing.
+        try:
+            metrics.DEAD_LETTERS_UNACKNOWLEDGED.set(await ops.unacknowledged_dead_letters(db))
+        except Exception as exc:  # keep serving the other metrics
+            logger.warning("Dead-letter gauge refresh failed: %s", type(exc).__name__)
         return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 

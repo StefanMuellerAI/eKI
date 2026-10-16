@@ -1694,7 +1694,7 @@ async def record_dead_letter_activity(payload: dict[str, Any]) -> dict[str, Any]
     """
     from uuid import UUID as UUIDType
 
-    from sqlalchemy import func, select, update
+    from sqlalchemy import select, update
 
     from core.db_models import DeliveryDeadLetter, JobMetadata
 
@@ -1737,15 +1737,9 @@ async def record_dead_letter_activity(payload: dict[str, Any]) -> dict[str, Any]
                 .values(delivery_status="dead_lettered")
             )
             await session.commit()
-
-            unacked = (
-                await session.execute(
-                    select(func.count())
-                    .select_from(DeliveryDeadLetter)
-                    .where(DeliveryDeadLetter.acknowledged_at.is_(None))
-                )
-            ).scalar_one()
-            metrics.DEAD_LETTERS_UNACKNOWLEDGED.set(int(unacked))
+            # eki_dead_letters_unacknowledged is owned by the API (recomputed on
+            # every /metrics scrape); a worker-side value went stale after
+            # acknowledgements and kept the alert firing.
             dead_letter_id = str(record.id)
     except Exception as exc:
         logger.error(
