@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "eKI API v1.0 - Security Analysis, Knowledge Base, Operations",
-    "description": "Vollstaendige Postman-Sammlung fuer die eKI API v1.0.0 (Pflichtenheft-Abnahme). Ordner 1-8 wie bisher; neu: 9. Operations (M10, Admin-Key) und 10. Abnahmetests (M12). Variablen ueber die mitgelieferte Environment-Datei eKI-API.postman_environment.json setzen.",
+    "description": "Vollstaendige Postman-Sammlung fuer die eKI API v1.0.x (Pflichtenheft-Abnahme). Variablen ueber die mitgelieferte Environment-Datei eKI-API.postman_environment.json setzen. Seit 1.0.1: der synchrone Stub POST /v1/security/check ist entfernt (404; frueherer Ordner 4 entfaellt), die Knowledge Base (Ordner 8) verlangt ADMIN_API_KEY, callback_url ist ein echtes Push-Ziel und priority (1 = hoechste ... 10 = niedrigste) steuert die Temporal-Task-Queue-Prioritaet. Alle Datei-Beispiele nutzen ausschliesslich synthetische Fixtures aus tests/fixtures/ (keine echten Drehbuecher).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
     "_exporter_id": "eki-api",
     "version": "1.0.0"
@@ -160,10 +160,10 @@
       "description": "System health and monitoring endpoints"
     },
     {
-      "name": "2. PDF Workflow (Async) - Fixture Scripts",
+      "name": "2. PDF Workflow (Async) - Synthetic Fixtures",
       "item": [
         {
-          "name": "Submit: Regiefassung (TRANCE)",
+          "name": "Submit: Einfaches Drehbuch (simple_screenplay.pdf)",
           "event": [
             {
               "listen": "test",
@@ -188,12 +188,12 @@
                 {
                   "key": "file",
                   "type": "file",
-                  "src": "tests/fixtures/pdf/TRANCE_REGIEFASSUNG_27042025.pdf",
-                  "description": "Regiefassung TRANCE - aus tests/fixtures/pdf/"
+                  "src": "tests/fixtures/pdf/simple_screenplay.pdf",
+                  "description": "Synthetische Fixture aus tests/fixtures/pdf/"
                 },
                 {
                   "key": "project_id",
-                  "value": "trance-regiefassung",
+                  "value": "postman-simple-screenplay",
                   "type": "text"
                 },
                 {
@@ -224,11 +224,11 @@
                 "check:async"
               ]
             },
-            "description": "Regiefassung TRANCE (Vollstaendiges Drehbuch).\n\n**Fixture:** `tests/fixtures/pdf/TRANCE_REGIEFASSUNG_27042025.pdf`\n**Tipp:** Falls Datei nicht gefunden wird, Postman Working Directory auf das Projekt-Root setzen:\nSettings -> General -> Working Directory -> `/pfad/zu/eKI_API`"
+            "description": "Kurzes synthetisches Drehbuch im Standardformat.\n\n**Fixture:** `tests/fixtures/pdf/simple_screenplay.pdf`\n**Tipp:** Falls die Datei nicht gefunden wird, Postman Working Directory auf das Projekt-Root setzen:\nSettings -> General -> Working Directory -> `/pfad/zu/eKI`"
           }
         },
         {
-          "name": "Submit: Drehbuch (Sinkende Schiffe)",
+          "name": "Submit: Deutsches Drehbuch (german_screenplay.pdf)",
           "event": [
             {
               "listen": "test",
@@ -253,12 +253,12 @@
                 {
                   "key": "file",
                   "type": "file",
-                  "src": "tests/fixtures/pdf/SINKENDE_SCHIFFE_190730.pdf",
-                  "description": "Drehbuch Sinkende Schiffe"
+                  "src": "tests/fixtures/pdf/german_screenplay.pdf",
+                  "description": "Synthetische Fixture aus tests/fixtures/pdf/"
                 },
                 {
                   "key": "project_id",
-                  "value": "sinkende-schiffe",
+                  "value": "postman-german-screenplay",
                   "type": "text"
                 },
                 {
@@ -289,11 +289,11 @@
                 "check:async"
               ]
             },
-            "description": "Drehbuch Sinkende Schiffe.\n\n**Fixture:** `tests/fixtures/pdf/SINKENDE_SCHIFFE_190730.pdf`"
+            "description": "Synthetisches deutsches Drehbuch (INNEN/AUSSEN, TAG/NACHT).\n\n**Fixture:** `tests/fixtures/pdf/german_screenplay.pdf`\n**Tipp:** Falls die Datei nicht gefunden wird, Postman Working Directory auf das Projekt-Root setzen:\nSettings -> General -> Working Directory -> `/pfad/zu/eKI`"
           }
         },
         {
-          "name": "Submit: Drehbuch (H2Gold)",
+          "name": "Submit: Mehrere Szenen (multi_scene.pdf)",
           "event": [
             {
               "listen": "test",
@@ -318,12 +318,12 @@
                 {
                   "key": "file",
                   "type": "file",
-                  "src": "tests/fixtures/pdf/H2Gold_250406_h2gold_V3.7.pdf",
-                  "description": "Drehbuch H2Gold v3.7"
+                  "src": "tests/fixtures/pdf/multi_scene.pdf",
+                  "description": "Synthetische Fixture aus tests/fixtures/pdf/"
                 },
                 {
                   "key": "project_id",
-                  "value": "h2gold",
+                  "value": "postman-multi-scene",
                   "type": "text"
                 },
                 {
@@ -354,137 +354,7 @@
                 "check:async"
               ]
             },
-            "description": "Drehbuch H2Gold v3.7.\n\n**Fixture:** `tests/fixtures/pdf/H2Gold_250406_h2gold_V3.7.pdf`"
-          }
-        },
-        {
-          "name": "Submit: Drehbuch (Babystar)",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "const resp = pm.response.json();",
-                  "if (resp.job_id) {",
-                  "    pm.collectionVariables.set('JOB_ID', resp.job_id);",
-                  "    console.log('JOB_ID saved:', resp.job_id);",
-                  "}"
-                ],
-                "type": "text/javascript"
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [],
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                {
-                  "key": "file",
-                  "type": "file",
-                  "src": "tests/fixtures/pdf/Babystar_Drehbuch_Babystar_Fünfte_Fassung_240414.pdf",
-                  "description": "Drehbuch Babystar (5. Fassung)"
-                },
-                {
-                  "key": "project_id",
-                  "value": "babystar",
-                  "type": "text"
-                },
-                {
-                  "key": "script_format",
-                  "value": "pdf",
-                  "type": "text"
-                },
-                {
-                  "key": "delivery",
-                  "value": "pull",
-                  "type": "text"
-                },
-                {
-                  "key": "priority",
-                  "value": "5",
-                  "type": "text"
-                }
-              ]
-            },
-            "url": {
-              "raw": "{{BASE_URL}}/v1/security/check:async",
-              "host": [
-                "{{BASE_URL}}"
-              ],
-              "path": [
-                "v1",
-                "security",
-                "check:async"
-              ]
-            },
-            "description": "Drehbuch Babystar (Fuenfte Fassung).\n\n**Fixture:** `tests/fixtures/pdf/Babystar_Drehbuch_Babystar_Fuenfte_Fassung_240414.pdf`"
-          }
-        },
-        {
-          "name": "Submit: Drehbuch (Matroshki)",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "const resp = pm.response.json();",
-                  "if (resp.job_id) {",
-                  "    pm.collectionVariables.set('JOB_ID', resp.job_id);",
-                  "    console.log('JOB_ID saved:', resp.job_id);",
-                  "}"
-                ],
-                "type": "text/javascript"
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [],
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                {
-                  "key": "file",
-                  "type": "file",
-                  "src": "tests/fixtures/pdf/Matroshki_250515_Matroshki_Screenplay-DE.pdf",
-                  "description": "Drehbuch Matroshki (deutsch)"
-                },
-                {
-                  "key": "project_id",
-                  "value": "matroshki",
-                  "type": "text"
-                },
-                {
-                  "key": "script_format",
-                  "value": "pdf",
-                  "type": "text"
-                },
-                {
-                  "key": "delivery",
-                  "value": "pull",
-                  "type": "text"
-                },
-                {
-                  "key": "priority",
-                  "value": "5",
-                  "type": "text"
-                }
-              ]
-            },
-            "url": {
-              "raw": "{{BASE_URL}}/v1/security/check:async",
-              "host": [
-                "{{BASE_URL}}"
-              ],
-              "path": [
-                "v1",
-                "security",
-                "check:async"
-              ]
-            },
-            "description": "Screenplay Matroshki (deutsch).\n\n**Fixture:** `tests/fixtures/pdf/Matroshki_250515_Matroshki_Screenplay-DE.pdf`"
+            "description": "Synthetisches Drehbuch mit mehreren Szenen.\n\n**Fixture:** `tests/fixtures/pdf/multi_scene.pdf`\n**Tipp:** Falls die Datei nicht gefunden wird, Postman Working Directory auf das Projekt-Root setzen:\nSettings -> General -> Working Directory -> `/pfad/zu/eKI`"
           }
         },
         {
@@ -556,7 +426,7 @@
                 "check:async"
               ]
             },
-            "description": "Eigene PDF-Datei per Dateiauswahl hochladen.\n\n**Weitere Fixtures in `tests/fixtures/pdf/`:**\n- Fische haben kein Gewissen 5.2 Fassung.pdf\n- Gaia_Scipt_French.pdf (franzoesisch)\n- ICONIC 220202_ICONIC_PPM-MAPPE_JUNGLE.pdf (Projektmappe)\n- Trance_Projektmappe_TRANCE(AT)_F8_25022025.pdf (Projektmappe)\n- Sinkende Schiffe_SE_Projektmappe_190717.pdf (Projektmappe)\n- h2gold_Treatment_2024.pdf (Treatment)\n- KOENIGSKINDER_Buch_F2_Test_211122 (1).pdf\n- The_fly_MAPPE_THEFLY_v4_lq.pdf\n- If I could Fly 221212 FLY v17_compressed.pdf"
+            "description": "Eigene PDF-Datei per Dateiauswahl hochladen.\n\n**Weitere synthetische Fixtures in `tests/fixtures/pdf/`:**\n- large_120_pages.pdf (Grossdokument, M07)\n- scanned_screenplay.pdf (ohne Textlayer, OCR-Fallback)\n- realworld_headings.pdf, suffix_headings.pdf (Szenenkopf-Varianten)\n- no_structure.pdf, no_structure_multi_page.pdf (ohne Drehbuchstruktur)\n\nEchte Drehbuecher nur mit geklaerten Rechten verwenden (`docs/DATENSCHUTZ.md`)."
           }
         },
         {
@@ -649,7 +519,7 @@
           }
         }
       ],
-      "description": "PDF-Workflow mit echten Drehbuechern aus tests/fixtures/pdf/.\n\nAblauf: Submit PDF -> Poll -> Fetch Report -> Verify One-Shot\n\n**Setup:** Postman Working Directory auf Projekt-Root setzen:\nSettings -> General -> Working Directory\n\n**Verfuegbare Fixtures:**\n- Regiefassungen: TRANCE\n- Drehbuecher: Sinkende Schiffe, H2Gold, Babystar, Matroshki, Fische, Koenigskinder\n- Projektmappen: TRANCE, ICONIC, Sinkende Schiffe SE, The Fly\n- Treatments: H2Gold Treatment\n- Fremdsprachig: Gaia (FR)"
+      "description": "PDF-Workflow mit den synthetischen Test-Drehbuechern aus tests/fixtures/pdf/ (keine echten Drehbuecher im Repository).\n\nAblauf: Submit PDF -> Poll -> Fetch Report -> Verify One-Shot\n\n**Setup:** Postman Working Directory auf Projekt-Root setzen:\nSettings -> General -> Working Directory\n\n**Verfuegbare Fixtures (synthetisch):**\n- simple_screenplay.pdf -- kurzes Drehbuch, Standardformat\n- german_screenplay.pdf -- deutsches Drehbuch (INNEN/AUSSEN, TAG/NACHT)\n- multi_scene.pdf -- mehrere Szenen\n- large_120_pages.pdf -- Grossdokument (M07)\n- scanned_screenplay.pdf -- ohne Textlayer (OCR-Fallback)"
     },
     {
       "name": "3. FDX Workflow (Async)",
@@ -761,7 +631,7 @@
             "header": [],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"script_content\": \"{{SCRIPT_B64}}\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"postman-push-test\",\n  \"delivery\": \"push\",\n  \"callback_url\": \"https://epro.filmakademie.de/api/v1/security-reports\",\n  \"idempotency_key\": \"postman-push-{{$timestamp}}\",\n  \"metadata\": {\n    \"source\": \"postman\",\n    \"delivery_test\": \"push\"\n  }\n}",
+              "raw": "{\n  \"script_content\": \"{{SCRIPT_B64}}\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"postman-push-test\",\n  \"delivery\": \"push\",\n  \"idempotency_key\": \"postman-push-{{$timestamp}}\",\n  \"metadata\": {\n    \"source\": \"postman\",\n    \"delivery_test\": \"push\"\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -779,7 +649,77 @@
                 "check:async"
               ]
             },
-            "description": "Submit a script with **push delivery** - the report is POSTed to callback_url when done.\n\n**callback_url** must be HTTPS and on a whitelisted domain:\n- epro.filmakademie.de\n- epro-stage.filmakademie.de\n\n**Expected:** 202 Accepted with job_id"
+            "description": "Submit a script with **push delivery** to the configured default target `{EPRO_BASE_URL}/eki/scl/set-risk-assessment/{project_id}` (server setting).\n\n**Nur gegen einen ePro-Mock ausfuehren** (README: EPRO_BASE_URL umstellen), sonst geht der Push an das echte Stage-ePro.\n\nA per-job `callback_url` (HTTPS, host on CALLBACK_URL_ALLOWED_HOSTS, public DNS) would replace that target for this job -- it cannot point at the local mock (HTTP/private address are rejected), see folder 5 for its validation rules.\n\n**Expected:** 202 Accepted with job_id"
+          }
+        },
+        {
+          "name": "Submit FDX Script (Priority 1 = highest)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const resp = pm.response.json();",
+                  "if (resp.job_id) {",
+                  "    pm.collectionVariables.set('JOB_ID', resp.job_id);",
+                  "    console.log('JOB_ID saved:', resp.job_id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const fdx = '<?xml version=\"1.0\" encoding=\"UTF-8\"?>'+",
+                  "'<FinalDraft DocumentType=\"Script\" Template=\"No\" Version=\"4\"><Content>'+",
+                  "'<Paragraph Type=\"Scene Heading\" Number=\"1\"><Text>EXT. CLIFF EDGE - NIGHT</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Action\"><Text>A stunt performer stands at the edge of a 15-meter cliff. Below, dark water churns. Safety divers are positioned in the water. The performer checks the harness one last time, then jumps.</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Character\"><Text>STUNT COORDINATOR</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Dialogue\"><Text>Clear the zone! Jump on my mark!</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Scene Heading\" Number=\"2\"><Text>EXT. HIGHWAY - DAY</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Action\"><Text>Three cars race at high speed along the highway. The lead car swerves, narrowly avoiding a truck. Sparks fly as metal scrapes the guardrail. A massive explosion erupts behind them as a fuel tanker ignites.</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Character\"><Text>DRIVER</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Dialogue\"><Text>Hold on tight!</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Scene Heading\" Number=\"3\"><Text>INT. BURNING BUILDING - NIGHT</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Action\"><Text>Flames engulf the hallway. Smoke makes visibility near zero. A firefighter carries an unconscious child through the inferno. The ceiling collapses behind them.</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Scene Heading\" Number=\"4\"><Text>EXT. ROOFTOP - DAY</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Action\"><Text>Two fighters engage in hand-to-hand combat on the roof of a 20-story building. One performer is thrown near the edge. Weapons are drawn - prop knives and a replica firearm.</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Character\"><Text>HERO</Text></Paragraph>'+",
+                  "'<Paragraph Type=\"Dialogue\"><Text>This ends now.</Text></Paragraph>'+",
+                  "'</Content></FinalDraft>';",
+                  "const b64 = CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(fdx));",
+                  "pm.collectionVariables.set('SCRIPT_B64', b64);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"{{SCRIPT_B64}}\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"postman-fdx-priority\",\n  \"delivery\": \"pull\",\n  \"priority\": 1,\n  \"idempotency_key\": \"postman-fdx-{{$timestamp}}\",\n  \"metadata\": {\n    \"source\": \"postman\",\n    \"test_run\": true\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check:async",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check:async"
+              ]
+            },
+            "description": "Same FDX script with `priority: 1` (1 = highest ... 10 = lowest, default 5).\n\nThe value becomes the Temporal task-queue priority of the job (activities inherit it): when jobs are waiting, higher-priority jobs are dispatched first. Running jobs are not preempted.\n\n**Expected:** 202 Accepted with job_id"
           }
         },
         {
@@ -855,103 +795,6 @@
       "description": "FDX-Workflow mit inline Base64-Script.\n\nFuer den primaeren PDF-Workflow siehe Sektion 2."
     },
     {
-      "name": "4. Sync Check (Stub)",
-      "item": [
-        {
-          "name": "Sync FDX Check (JSON)",
-          "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "exec": [
-                  "const fdx = '<?xml version=\"1.0\" encoding=\"UTF-8\"?>'+",
-                  "'<FinalDraft DocumentType=\"Script\"><Content>'+",
-                  "'<Paragraph Type=\"Scene Heading\" Number=\"1\"><Text>INT. OFFICE - DAY</Text></Paragraph>'+",
-                  "'<Paragraph Type=\"Action\"><Text>A woman reviews documents at her desk.</Text></Paragraph>'+",
-                  "'</Content></FinalDraft>';",
-                  "const b64 = CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(fdx));",
-                  "pm.collectionVariables.set('SCRIPT_B64', b64);"
-                ],
-                "type": "text/javascript"
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"script_content\": \"{{SCRIPT_B64}}\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"postman-sync-test\",\n  \"metadata\": {\n    \"source\": \"postman\"\n  }\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "url": {
-              "raw": "{{BASE_URL}}/v1/security/check",
-              "host": [
-                "{{BASE_URL}}"
-              ],
-              "path": [
-                "v1",
-                "security",
-                "check"
-              ]
-            },
-            "description": "Quick synchronous check.\n\n**Note:** Returns a stub report (M01). For real LLM-based analysis, use the async endpoint."
-          }
-        },
-        {
-          "name": "Sync PDF Check (Multipart)",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                {
-                  "key": "file",
-                  "type": "file",
-                  "src": "",
-                  "description": "Select a .pdf file"
-                },
-                {
-                  "key": "project_id",
-                  "value": "postman-sync-pdf",
-                  "type": "text"
-                },
-                {
-                  "key": "script_format",
-                  "value": "pdf",
-                  "type": "text"
-                },
-                {
-                  "key": "priority",
-                  "value": "5",
-                  "type": "text",
-                  "description": "Processing priority 1-10 (default: 5)"
-                }
-              ]
-            },
-            "url": {
-              "raw": "{{BASE_URL}}/v1/security/check",
-              "host": [
-                "{{BASE_URL}}"
-              ],
-              "path": [
-                "v1",
-                "security",
-                "check"
-              ]
-            },
-            "description": "Synchronous PDF check via file upload.\n\n**Note:** Returns a stub report (M01). For real analysis, use the async endpoint."
-          }
-        }
-      ],
-      "description": "Quick synchronous checks (stub responses).\n\nFor real LLM-based risk analysis, use the async workflows in sections 2 and 3."
-    },
-    {
       "name": "5. Security Tests",
       "item": [
         {
@@ -972,14 +815,14 @@
               }
             },
             "url": {
-              "raw": "{{BASE_URL}}/v1/security/check",
+              "raw": "{{BASE_URL}}/v1/security/check:async",
               "host": [
                 "{{BASE_URL}}"
               ],
               "path": [
                 "v1",
                 "security",
-                "check"
+                "check:async"
               ]
             },
             "description": "**Expected:** 401 Unauthorized\n\nRequest without Authorization header."
@@ -1010,14 +853,14 @@
               }
             },
             "url": {
-              "raw": "{{BASE_URL}}/v1/security/check",
+              "raw": "{{BASE_URL}}/v1/security/check:async",
               "host": [
                 "{{BASE_URL}}"
               ],
               "path": [
                 "v1",
                 "security",
-                "check"
+                "check:async"
               ]
             },
             "description": "**Expected:** 401 Unauthorized\n\nRequest with invalid/unknown API key."
@@ -1038,14 +881,14 @@
               }
             },
             "url": {
-              "raw": "{{BASE_URL}}/v1/security/check",
+              "raw": "{{BASE_URL}}/v1/security/check:async",
               "host": [
                 "{{BASE_URL}}"
               ],
               "path": [
                 "v1",
                 "security",
-                "check"
+                "check:async"
               ]
             },
             "description": "**Expected:** 422 Validation Error\n\nInvalid base64 in script_content."
@@ -1066,14 +909,14 @@
               }
             },
             "url": {
-              "raw": "{{BASE_URL}}/v1/security/check",
+              "raw": "{{BASE_URL}}/v1/security/check:async",
               "host": [
                 "{{BASE_URL}}"
               ],
               "path": [
                 "v1",
                 "security",
-                "check"
+                "check:async"
               ]
             },
             "description": "**Expected:** 422 Validation Error\n\nSQL injection attempt in project_id (only alphanumeric + hyphens allowed)."
@@ -1094,17 +937,17 @@
               }
             },
             "url": {
-              "raw": "{{BASE_URL}}/v1/security/check",
+              "raw": "{{BASE_URL}}/v1/security/check:async",
               "host": [
                 "{{BASE_URL}}"
               ],
               "path": [
                 "v1",
                 "security",
-                "check"
+                "check:async"
               ]
             },
-            "description": "**Expected:** 422 Validation Error\n\nCallback URL with private IP blocked (SSRF prevention)."
+            "description": "**Expected:** 422 Validation Error\n\ncallback_url must be HTTPS and must not point to a private/internal address (SSRF prevention)."
           }
         },
         {
@@ -1122,6 +965,87 @@
               }
             },
             "url": {
+              "raw": "{{BASE_URL}}/v1/security/check:async",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check:async"
+              ]
+            },
+            "description": "**Expected:** 422 Validation Error\n\ncallback_url host must be on CALLBACK_URL_ALLOWED_HOSTS (default: epro.filmakademie.de, staging.epro.filmakademie.de)."
+          }
+        },
+        {
+          "name": "Test: callback_url with delivery=pull (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422', () => pm.response.to.have.status(422));",
+                  "pm.test('explains the contradiction', () => pm.expect(pm.response.json().message).to.include(\"contradicts callback_url\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"dGVzdA==\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test123\",\n  \"delivery\": \"pull\",\n  \"callback_url\": \"https://staging.epro.filmakademie.de/api/eki/scl/set-risk-assessment/test123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/v1/security/check:async",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "security",
+                "check:async"
+              ]
+            },
+            "description": "**Expected:** 422 Validation Error\n\n`callback_url` is a push target: without `delivery` it implies `push`; an explicit `delivery: pull` together with `callback_url` is a contradiction. Nothing is pushed (the request is rejected before a job exists)."
+          },
+          "response": []
+        },
+        {
+          "name": "Test: Removed sync endpoint (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404', () => pm.response.to.have.status(404));",
+                  "pm.test('ErrorResponse NotFound', () => pm.expect(pm.response.json().error).to.eql('NotFound'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"script_content\": \"dGVzdA==\",\n  \"script_format\": \"fdx\",\n  \"project_id\": \"test123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
               "raw": "{{BASE_URL}}/v1/security/check",
               "host": [
                 "{{BASE_URL}}"
@@ -1132,8 +1056,9 @@
                 "check"
               ]
             },
-            "description": "**Expected:** 422 Validation Error\n\nOnly whitelisted domains allowed for callback_url (epro.filmakademie.de, epro-stage.filmakademie.de)."
-          }
+            "description": "**Expected:** 404 Not Found (ErrorResponse)\n\nThe synchronous M01 stub `POST /v1/security/check` was removed in 1.0.1; use `POST /v1/security/check:async`."
+          },
+          "response": []
         },
         {
           "name": "Test: IDOR - Other User's Job (404)",
@@ -1214,8 +1139,8 @@
       "description": "Security and validation tests.\n\nRun all requests - each should return the expected error code."
     },
     {
-      "name": "8. Knowledge Base (M06)",
-      "description": "Upload, list, and delete documents in the safety KB. Used by the RAG-augmented risk analysis when KB_RETRIEVAL_ENABLED=true.",
+      "name": "8. Knowledge Base (M06, Admin-Key)",
+      "description": "Upload, list, and delete documents in the safety KB. Used by the RAG-augmented risk analysis when KB_RETRIEVAL_ENABLED=true.\n\nSeit 1.0.1 erfordern alle /v1/kb/*-Endpunkte einen Admin-Key (ADMIN_API_KEY, `scripts/create_api_key.py --insert --admin`); normale Keys erhalten 403.",
       "item": [
         {
           "name": "Upload KB document (Markdown)",
@@ -1224,7 +1149,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{API_KEY}}"
+                "value": "Bearer {{ADMIN_API_KEY}}"
               }
             ],
             "body": {
@@ -1279,7 +1204,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{API_KEY}}"
+                "value": "Bearer {{ADMIN_API_KEY}}"
               }
             ],
             "url": {
@@ -1318,7 +1243,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{API_KEY}}"
+                "value": "Bearer {{ADMIN_API_KEY}}"
               }
             ],
             "url": {
@@ -1347,7 +1272,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{API_KEY}}"
+                "value": "Bearer {{ADMIN_API_KEY}}"
               }
             ],
             "url": {
@@ -1371,7 +1296,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{API_KEY}}"
+                "value": "Bearer {{ADMIN_API_KEY}}"
               }
             ],
             "url": {
@@ -1395,7 +1320,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{API_KEY}}"
+                "value": "Bearer {{ADMIN_API_KEY}}"
               }
             ],
             "url": {
@@ -1417,6 +1342,43 @@
             },
             "description": "Removes only documents tagged 'placeholder'. Real docs stay."
           }
+        },
+        {
+          "name": "Test: Non-admin key is 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 for non-admin key', () => pm.response.to.have.status(403));",
+                  "pm.test('ErrorResponse Forbidden', () => { const b = pm.response.json(); pm.expect(b.error).to.eql('Forbidden'); pm.expect(b.message).to.include('Admin API key required'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{API_KEY}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/v1/kb/documents",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "v1",
+                "kb",
+                "documents"
+              ]
+            },
+            "description": "**Expected:** 403 Forbidden\n\nA normal (non-admin) API key cannot use the knowledge base (1.0.1)."
+          },
+          "response": []
         }
       ]
     },
@@ -1471,8 +1433,8 @@
                 {
                   "key": "file",
                   "type": "file",
-                  "src": "tests/fixtures/pdf/TRANCE_REGIEFASSUNG_27042025.pdf",
-                  "description": "PDF aus tests/fixtures/pdf/ -- vor dem Run einmalig Datei auswaehlen oder Working Directory setzen"
+                  "src": "tests/fixtures/pdf/simple_screenplay.pdf",
+                  "description": "Synthetische PDF aus tests/fixtures/pdf/ -- vor dem Run einmalig Datei auswaehlen oder Working Directory setzen"
                 },
                 {
                   "key": "project_id",
@@ -1507,7 +1469,7 @@
                 "check:async"
               ]
             },
-            "description": "**Automated Flow Step 1:** Schickt eine PDF aus den Fixtures ab.\n\n**Vor dem ersten Run:**\n1. Klicke auf 'Select Files' beim file-Feld\n2. Waehle eine PDF aus `tests/fixtures/pdf/`, z.B.:\n   - TRANCE_REGIEFASSUNG_27042025.pdf (Regiefassung)\n   - SINKENDE_SCHIFFE_190730.pdf (Drehbuch)\n   - H2Gold_250406_h2gold_V3.7.pdf (Drehbuch)\n   - Babystar_Drehbuch_Babystar_Fuenfte_Fassung_240414.pdf\n   - Matroshki_250515_Matroshki_Screenplay-DE.pdf\n3. Danach den Ordner per 'Run folder' starten\n\n**Oder:** Postman Working Directory auf Projekt-Root setzen, dann wird der `src`-Pfad automatisch aufgeloest."
+            "description": "**Automated Flow Step 1:** Schickt eine synthetische PDF aus den Fixtures ab.\n\n**Vor dem ersten Run:**\n1. Klicke auf 'Select Files' beim file-Feld\n2. Waehle eine PDF aus `tests/fixtures/pdf/`, z.B.:\n   - simple_screenplay.pdf\n   - german_screenplay.pdf\n   - multi_scene.pdf\n3. Danach den Ordner per 'Run folder' starten\n\n**Oder:** Postman Working Directory auf Projekt-Root setzen, dann wird der `src`-Pfad automatisch aufgeloest."
           }
         },
         {
@@ -2244,14 +2206,14 @@
               }
             ],
             "url": {
-              "raw": "{{BASE_URL}}/v1/security/check",
+              "raw": "{{BASE_URL}}/v1/security/check:async",
               "host": [
                 "{{BASE_URL}}"
               ],
               "path": [
                 "v1",
                 "security",
-                "check"
+                "check:async"
               ]
             },
             "description": "",

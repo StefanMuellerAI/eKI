@@ -30,7 +30,6 @@ from core.models import (
     AsyncSecurityCheckRequest,
     ErrorDetail,
     ErrorResponse,
-    SecurityCheckRequest,
 )
 from core.tracing import configure_tracing
 from core.version import __version__
@@ -350,7 +349,7 @@ async def root() -> dict[str, str]:
 # use raw Request parsing (needed for dual JSON / multipart support).
 # ---------------------------------------------------------------------------
 
-_MULTIPART_BASE: dict = {
+_MULTIPART_ASYNC: dict = {
     "type": "object",
     "required": ["file"],
     "properties": {
@@ -380,10 +379,17 @@ _MULTIPART_BASE: dict = {
         "delivery": {
             "type": "string",
             "enum": ["pull", "push"],
-            "default": "pull",
             "description": (
                 "Delivery mode: pull (One-Shot GET) or push (POST to ePro); "
-                "case-insensitive, blank means pull"
+                "case-insensitive; blank or omitted means push with callback_url, else pull"
+            ),
+        },
+        "callback_url": {
+            "type": "string",
+            "format": "uri",
+            "description": (
+                "Optional HTTPS push target on an allow-listed host "
+                "(CALLBACK_URL_ALLOWED_HOSTS); implies delivery=push"
             ),
         },
         "idempotency_key": {
@@ -394,19 +400,12 @@ _MULTIPART_BASE: dict = {
                 "control characters are rejected"
             ),
         },
-    },
-}
-
-_MULTIPART_ASYNC: dict = {
-    **_MULTIPART_BASE,
-    "properties": {
-        **_MULTIPART_BASE["properties"],
         "priority": {
             "type": "integer",
             "minimum": 1,
             "maximum": 10,
             "default": 5,
-            "description": "Job priority (1=highest, 10=lowest)",
+            "description": "Job priority (1=highest, 10=lowest), Temporal task-queue priority",
         },
     },
 }
@@ -425,30 +424,23 @@ def _custom_openapi() -> dict:
 
     schemas = openapi_schema.setdefault("components", {}).setdefault("schemas", {})
 
-    for model_cls in (SecurityCheckRequest, AsyncSecurityCheckRequest):
-        model_schema = model_cls.model_json_schema(ref_template="#/components/schemas/{model}")
-        for def_name, def_body in model_schema.pop("$defs", {}).items():
-            schemas.setdefault(def_name, def_body)
-        schemas[model_cls.__name__] = model_schema
+    model_schema = AsyncSecurityCheckRequest.model_json_schema(
+        ref_template="#/components/schemas/{model}"
+    )
+    for def_name, def_body in model_schema.pop("$defs", {}).items():
+        schemas.setdefault(def_name, def_body)
+    schemas[AsyncSecurityCheckRequest.__name__] = model_schema
 
-    paths = openapi_schema.get("paths", {})
-
-    endpoint_map = [
-        ("/v1/security/check", "SecurityCheckRequest", _MULTIPART_BASE),
-        ("/v1/security/check:async", "AsyncSecurityCheckRequest", _MULTIPART_ASYNC),
-    ]
-    for path, json_schema_name, multipart_schema in endpoint_map:
-        operation = paths.get(path, {}).get("post")
-        if not operation:
-            continue
+    operation = openapi_schema.get("paths", {}).get("/v1/security/check:async", {}).get("post")
+    if operation:
         operation["requestBody"] = {
             "required": True,
             "content": {
                 "application/json": {
-                    "schema": {"$ref": f"#/components/schemas/{json_schema_name}"},
+                    "schema": {"$ref": "#/components/schemas/AsyncSecurityCheckRequest"},
                 },
                 "multipart/form-data": {
-                    "schema": multipart_schema,
+                    "schema": _MULTIPART_ASYNC,
                 },
             },
         }

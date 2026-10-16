@@ -21,9 +21,12 @@ with workflow.unsafe.imports_passed_through():
     import structlog
 
     from core.logging_config import get_request_id, set_request_id
+    from core.temporal_codec import temporal_client_options
     from core.temporal_context import ContextPropagationInterceptor
 
 pytestmark = pytest.mark.temporal
+
+_CODEC_SECRET = "m09-codec-test-secret-0123456789abcdef"  # nosec B105 - test key
 
 
 @activity.defn(name="m09_probe")
@@ -52,9 +55,14 @@ class ProbeWorkflow:
 async def test_request_id_reaches_activity_logs():
     async with await WorkflowEnvironment.start_time_skipping() as env:
         client = env.client
-        # The interceptor is attached like in api/dependencies.py and worker/main.py.
+        # The interceptor and the payload codec (1.0.1: headers are encrypted
+        # too) are attached like in api/dependencies.py and worker/main.py.
         client = client.__class__(
-            **{**client.config(), "interceptors": [ContextPropagationInterceptor()]}
+            **{
+                **client.config(),
+                "interceptors": [ContextPropagationInterceptor()],
+                **temporal_client_options(_CODEC_SECRET),
+            }
         )
 
         task_queue = f"m09-{uuid.uuid4().hex}"
@@ -73,7 +81,10 @@ async def test_request_id_reaches_activity_logs():
                 id=workflow_id,
                 task_queue=task_queue,
             )
+            history = await client.get_workflow_handle(workflow_id).fetch_history()
 
+    # The header reached the activity, but is stored encrypted.
+    assert b"req-propagated-42" not in b"".join(e.SerializeToString() for e in history.events)
     assert result["request_id"] == "req-propagated-42"
     assert result["job_id"] == workflow_id
     assert result["activity"] == "m09_probe"

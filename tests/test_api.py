@@ -37,8 +37,8 @@ class TestSecurityEndpoints:
     """Tests for security check endpoints."""
 
     @pytest.mark.asyncio
-    async def test_sync_check_success(self, client, auth_headers):
-        """Test synchronous security check with valid data."""
+    async def test_fdx_check_success(self, client, auth_headers, mock_temporal):
+        """FDX submission (JSON) is accepted and handed to Temporal by reference only."""
         script_content = base64.b64encode(b"Test script content").decode()
 
         payload = {
@@ -47,15 +47,17 @@ class TestSecurityEndpoints:
             "project_id": "test-project-123",
         }
 
-        response = client.post("/v1/security/check", json=payload, headers=auth_headers)
-        assert response.status_code == status.HTTP_200_OK
+        response = client.post("/v1/security/check:async", json=payload, headers=auth_headers)
+        assert response.status_code == status.HTTP_202_ACCEPTED
         data = response.json()
-        assert "report" in data
-        assert "message" in data
-        assert data["report"]["project_id"] == "test-project-123"
+        assert data["message"] == "Security check job started (delivery=pull)"
+        job_data = mock_temporal.started[0]["args"][1]
+        assert job_data["project_id"] == "test-project-123"
+        assert job_data["script_format"] == "fdx"
+        assert job_data["callback_url"] is None
 
-    def test_sync_check_missing_auth(self, client):
-        """Test synchronous security check without authentication."""
+    def test_check_missing_auth(self, client):
+        """Test security check without authentication."""
         script_content = base64.b64encode(b"Test script content").decode()
 
         payload = {
@@ -64,12 +66,12 @@ class TestSecurityEndpoints:
             "project_id": "test-project-123",
         }
 
-        response = client.post("/v1/security/check", json=payload)
+        response = client.post("/v1/security/check:async", json=payload)
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     @pytest.mark.asyncio
-    async def test_sync_check_invalid_format(self, client, auth_headers):
-        """Test synchronous security check with invalid format."""
+    async def test_check_invalid_format(self, client, auth_headers):
+        """Test security check with invalid format."""
         script_content = base64.b64encode(b"Test script content").decode()
 
         payload = {
@@ -78,7 +80,7 @@ class TestSecurityEndpoints:
             "project_id": "test-project-123",
         }
 
-        response = client.post("/v1/security/check", json=payload, headers=auth_headers)
+        response = client.post("/v1/security/check:async", json=payload, headers=auth_headers)
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
     @pytest.mark.asyncio
@@ -159,7 +161,7 @@ class TestValidation:
             "project_id": "test-project-123",
         }
 
-        response = client.post("/v1/security/check", json=payload, headers=auth_headers)
+        response = client.post("/v1/security/check:async", json=payload, headers=auth_headers)
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
     @pytest.mark.asyncio
@@ -170,7 +172,7 @@ class TestValidation:
             "project_id": "test-project-123",
         }
 
-        response = client.post("/v1/security/check", json=payload, headers=auth_headers)
+        response = client.post("/v1/security/check:async", json=payload, headers=auth_headers)
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
     @pytest.mark.asyncio

@@ -6,9 +6,13 @@ cannot affect the existing ``/v1/security`` security-check flow.
 
 The tenant scope is fixed to ``settings.kb_default_tenant_id`` until
 multi-tenant routing is required (Pflichtenheft §4.3: Single-Tenant
-Filmakademie).  API-key ownership is checked the same way as in the
-security endpoints, so a leaked Filmakademie key cannot reach another
-tenant's documents.
+Filmakademie).
+
+Access (1.0.1, owner decision 4): every ``/v1/kb/*`` endpoint requires an
+admin API key (``is_admin=true``, ``scripts/create_api_key.py --admin``) --
+the same gate as ``/v1/ops/*``.  The KB content flows into every risk
+analysis prompt once ``KB_RETRIEVAL_ENABLED=true``, so ordinary client keys
+(ePro) must neither read nor change it; they get 403 (ErrorResponse).
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import get_settings
-from api.dependencies import get_db, verify_api_key
+from api.dependencies import get_db, require_admin_key
 from api.rate_limiting import rate_limit_combined
 from core.db_models import ApiKeyModel
 from core.exceptions import (
@@ -138,7 +142,7 @@ def _parse_tags(raw: str | None) -> list[str]:
         "Upload a safety document (.pdf, .md, .txt) into the project knowledge "
         "base. The document is chunked, embedded, and stored Fernet-encrypted. "
         "Idempotent via SHA-256 content hash: re-uploading the same content "
-        "returns 409 Conflict."
+        "returns 409 Conflict. Requires an admin API key."
     ),
     dependencies=[Depends(rate_limit_combined)],
 )
@@ -148,7 +152,7 @@ async def upload_document(
     source: str = Form("UPLOAD", description="UPLOAD | SHARE | URL | PLACEHOLDER"),
     tags: str | None = Form(None, description="Comma-separated tags"),
     ttl_hours: int = Form(720, ge=_MIN_TTL_HOURS, le=_MAX_TTL_HOURS),
-    api_key: ApiKeyModel = Depends(verify_api_key),
+    api_key: ApiKeyModel = Depends(require_admin_key),
     db: AsyncSession = Depends(get_db),
 ) -> KBDocumentResponse:
     raw = await file.read()
@@ -185,14 +189,14 @@ async def upload_document(
     "/documents",
     response_model=KBListResponse,
     summary="List KB documents",
-    description="List documents in the project knowledge base (no content).",
+    description="List documents in the project knowledge base (no content). Admin API key.",
     dependencies=[Depends(rate_limit_combined)],
 )
 async def list_documents(
     tag: str | None = None,
     limit: int = 100,
     offset: int = 0,
-    _api_key: ApiKeyModel = Depends(verify_api_key),
+    _admin: ApiKeyModel = Depends(require_admin_key),
     db: AsyncSession = Depends(get_db),
 ) -> KBListResponse:
     if limit < 1 or limit > 500:
@@ -223,12 +227,14 @@ async def list_documents(
     "/documents/{doc_id}",
     response_model=KBDocumentResponse,
     summary="Get KB document metadata",
-    description="Return metadata for a single KB document. Original text is never returned.",
+    description=(
+        "Return metadata for a single KB document. Original text is never returned. Admin API key."
+    ),
     dependencies=[Depends(rate_limit_combined)],
 )
 async def get_document(
     doc_id: UUID = Path(..., description="Document ID"),
-    _api_key: ApiKeyModel = Depends(verify_api_key),
+    _admin: ApiKeyModel = Depends(require_admin_key),
     db: AsyncSession = Depends(get_db),
 ) -> KBDocumentResponse:
     svc = _service(db)
@@ -246,12 +252,12 @@ async def get_document(
     "/documents/{doc_id}",
     response_model=KBDeleteResponse,
     summary="Delete a KB document",
-    description="Delete a single KB document. Chunks cascade.",
+    description="Delete a single KB document. Chunks cascade. Admin API key.",
     dependencies=[Depends(rate_limit_combined)],
 )
 async def delete_document(
     doc_id: UUID = Path(..., description="Document ID"),
-    _api_key: ApiKeyModel = Depends(verify_api_key),
+    _admin: ApiKeyModel = Depends(require_admin_key),
     db: AsyncSession = Depends(get_db),
 ) -> KBDeleteResponse:
     svc = _service(db)
@@ -272,13 +278,13 @@ async def delete_document(
     description=(
         "Bulk delete all documents carrying the given tag. Typical use: "
         "`?tag=placeholder` to wipe seed data once real content from the "
-        "safety officer is loaded."
+        "safety officer is loaded. Admin API key."
     ),
     dependencies=[Depends(rate_limit_combined)],
 )
 async def delete_documents_by_tag(
     tag: str,
-    _api_key: ApiKeyModel = Depends(verify_api_key),
+    _admin: ApiKeyModel = Depends(require_admin_key),
     db: AsyncSession = Depends(get_db),
 ) -> KBDeleteByTagResponse:
     if not tag.strip():

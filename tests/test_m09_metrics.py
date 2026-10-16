@@ -125,11 +125,11 @@ class TestHttpMiddleware:
 
     def test_error_responses_are_counted(self, client):
         before = _sample(
-            "eki_http_requests_total", method="POST", route="/v1/security/check", status="401"
+            "eki_http_requests_total", method="POST", route="/v1/security/check:async", status="401"
         )
-        client.post("/v1/security/check", json={})
+        client.post("/v1/security/check:async", json={})
         after = _sample(
-            "eki_http_requests_total", method="POST", route="/v1/security/check", status="401"
+            "eki_http_requests_total", method="POST", route="/v1/security/check:async", status="401"
         )
         assert after == before + 1
 

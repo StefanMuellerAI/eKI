@@ -20,3 +20,22 @@ history.eventsHostLevelCacheMaxSizeBytes:
 frontend.keepAliveMaxConnectionAge:
   - value: "5m"
     constraints: {}
+
+# ---------------------------------------------------------------------------
+# Task-queue priority (eKI 1.0.1, request field `priority`, 1 = highest)
+# ---------------------------------------------------------------------------
+# Temporal 1.29.x dispatches by priority only with the priority-aware matcher,
+# which is OFF by default in 1.29 (`matching.useNewMatcher`, default false).
+# Tasks without a priority (e.g. the maintenance schedules) get the default
+# key (levels + 1) / 2. Existing backlog is kept when the matcher switches
+# (the task queue is reloaded).
+matching.useNewMatcher:
+  - value: true
+    constraints: {}
+
+# Number of priority levels (Temporal default 5). 10 makes the API mapping of
+# priority 1..10 the identity; the default key (10 + 1) / 2 = 5 equals the
+# API default priority 5. Must match TEMPORAL_PRIORITY_LEVELS of the API.
+matching.priorityLevels:
+  - value: 10
+    constraints: {}

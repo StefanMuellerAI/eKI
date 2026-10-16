@@ -14,6 +14,7 @@ from temporalio.client import Client as TemporalClient
 from api.config import Settings, get_settings
 from core.db_models import ApiKeyModel
 from core.exceptions import ServiceUnavailableException
+from core.temporal_codec import temporal_client_options
 from core.tracing import temporal_interceptors
 from db.session import get_db_session
 
@@ -60,6 +61,9 @@ async def get_temporal_client() -> TemporalClient:
             # used "default", so a custom TEMPORAL_NAMESPACE stranded every job.
             namespace=settings.temporal_namespace,
             interceptors=temporal_interceptors(settings),
+            # Payload encryption (1.0.1): identical converter to the worker,
+            # keyed by API_SECRET_KEY -- see core/temporal_codec.py.
+            **temporal_client_options(settings.api_secret_key),
         )
     except Exception as exc:
         logger.error(f"Failed to connect to Temporal at {settings.temporal_host}: {exc}")
@@ -128,11 +132,11 @@ async def verify_api_key(
 
 
 async def require_admin_key(api_key: ApiKeyModel = Depends(verify_api_key)) -> ApiKeyModel:
-    """Gate for ``/v1/ops/*``: the key must carry ``is_admin`` (M10)."""
+    """Gate for ``/v1/ops/*`` (M10) and ``/v1/kb/*`` (1.0.1): the key must carry ``is_admin``."""
     if not getattr(api_key, "is_admin", False):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin API key required for operations endpoints",
+            detail="Admin API key required for this endpoint",
         )
     return api_key
 

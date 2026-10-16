@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import yaml
 from temporalio.client import ScheduleAlreadyRunningError
+from temporalio.service import RPCError, RPCStatusCode
 
 from core import metrics
 from workflows.maintenance import (
@@ -22,23 +23,48 @@ ROOT = Path(__file__).resolve().parents[1]
 OBS = ROOT / "docker" / "observability"
 
 
+_NOT_FOUND = RPCError("workflow not found", RPCStatusCode.NOT_FOUND, b"")
+
+
+def _schedule_client(update_side_effect: Exception | None = None) -> tuple[MagicMock, MagicMock]:
+    """Client whose schedule handle raises *update_side_effect* (NOT_FOUND = missing)."""
+    handle = MagicMock()
+    handle.update = AsyncMock(side_effect=update_side_effect)
+    client = MagicMock()
+    client.create_schedule = AsyncMock()
+    client.get_schedule_handle = MagicMock(return_value=handle)
+    return client, handle
+
+
 class TestKbCleanupSchedule:
+    """Smoke tests; the full create/update matrix is in tests/test_retention.py."""
+
     @pytest.mark.asyncio
     async def test_creates_schedule_when_missing(self):
-        client = MagicMock()
-        client.create_schedule = AsyncMock()
+        client, _handle = _schedule_client(_NOT_FOUND)
         settings = SimpleNamespace(
             kb_cleanup_enabled=True, kb_cleanup_cron="0 3 * * *", temporal_task_queue="q"
         )
         assert await ensure_kb_cleanup_schedule(client, settings) is True
+        client.get_schedule_handle.assert_called_once_with(KB_CLEANUP_SCHEDULE_ID)
         client.create_schedule.assert_awaited_once()
         args, _ = client.create_schedule.call_args
         assert args[0] == KB_CLEANUP_SCHEDULE_ID
-        assert args[1].spec.cron_expressions == ["0 3 * * *"]
+        assert args[1].spec.cron_expressions == ["0 3 * * * # eki-cron=0 3 * * *"]
 
     @pytest.mark.asyncio
-    async def test_existing_schedule_is_idempotent(self):
-        client = MagicMock()
+    async def test_existing_schedule_is_reconciled_not_recreated(self):
+        client, handle = _schedule_client()
+        settings = SimpleNamespace(
+            kb_cleanup_enabled=True, kb_cleanup_cron="0 3 * * *", temporal_task_queue="q"
+        )
+        assert await ensure_kb_cleanup_schedule(client, settings) is True
+        handle.update.assert_awaited_once()
+        client.create_schedule.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_existing_schedule_created_concurrently_is_idempotent(self):
+        client, _handle = _schedule_client(_NOT_FOUND)
         client.create_schedule = AsyncMock(side_effect=ScheduleAlreadyRunningError())
         settings = SimpleNamespace(
             kb_cleanup_enabled=True, kb_cleanup_cron="0 3 * * *", temporal_task_queue="q"
@@ -46,9 +72,8 @@ class TestKbCleanupSchedule:
         assert await ensure_kb_cleanup_schedule(client, settings) is True
 
     @pytest.mark.asyncio
-    async def test_disabled_flag_skips(self):
-        client = MagicMock()
-        client.create_schedule = AsyncMock()
+    async def test_disabled_flag_does_not_create(self):
+        client, _handle = _schedule_client(_NOT_FOUND)
         settings = SimpleNamespace(kb_cleanup_enabled=False, temporal_task_queue="q")
         assert await ensure_kb_cleanup_schedule(client, settings) is False
         client.create_schedule.assert_not_awaited()

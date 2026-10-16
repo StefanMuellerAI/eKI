@@ -53,6 +53,7 @@ with workflow.unsafe.imports_passed_through():
     from workflows.activities import (
         CONTENT_FREE_ERROR_TYPES,
         ERROR_TYPE_BUFFER_EXPIRED,
+        ERROR_TYPE_INVALID_CALLBACK_URL,
         ERROR_TYPE_INVALID_PROJECT_ID,
         ERROR_TYPE_PARSING_FAILED,
         ERROR_TYPE_PROMPT_BLOCKED,
@@ -123,6 +124,10 @@ _PATCH_FAILURE_WEBHOOK = "eki-m13-processing-failure-webhook"
 _DELIVERY_FAILURE_REASONS = {
     ERROR_TYPE_BUFFER_EXPIRED: "report_expired",
     ERROR_TYPE_INVALID_PROJECT_ID: "invalid_project_id",
+    # 1.0.1: callback_url failed the delivery-time policy check (host no longer
+    # allow-listed, resolves to a private address, ...). Same command sequence
+    # as every other non-retryable delivery failure -> replay-safe.
+    ERROR_TYPE_INVALID_CALLBACK_URL: "invalid_callback_url",
 }
 _TERMINAL_STATUSES = frozenset({"failed", "cancelled"})
 
@@ -674,6 +679,11 @@ class SecurityCheckWorkflow:
             "user_id": job_data.get("user_id"),
             "script_format": job_data.get("script_format"),
             "script_id": job_data.get("script_id"),
+            # 1.0.1 (Decision 10b): optional per-job push target. Only the
+            # activity *input* grows (absent in pre-1.0.1 histories -> None ->
+            # EPRO_BASE_URL default); no command changes, so replay-safe
+            # without workflow.patched.
+            "callback_url": job_data.get("callback_url"),
         }
         job_id = job_data.get("job_id", "")
         report_id = report_result.get("report_id", "")

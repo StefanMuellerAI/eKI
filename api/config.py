@@ -5,8 +5,17 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, ClassVar
 
-from pydantic import Field, PostgresDsn, RedisDsn, field_validator, model_validator
+from pydantic import (
+    Field,
+    PostgresDsn,
+    RedisDsn,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+from core.callback_url import DEFAULT_CALLBACK_ALLOWED_HOSTS, normalize_allowed_hosts
 
 
 def _read_secret_file(path: str, env_name: str) -> str:
@@ -20,6 +29,57 @@ def _read_secret_file(path: str, env_name: str) -> str:
         raise ValueError(f"{env_name} points to empty file: {path}")
 
     return value
+
+
+# Cron fields accepted for the maintenance schedules (Temporal interprets them
+# as ``ScheduleSpec.cron_expressions`` in UTC): name, lowest, highest, aliases.
+_CRON_MONTHS = "JAN FEB MAR APR MAY JUN JUL AUG SEP OCT NOV DEC".split()
+_CRON_WEEKDAYS = "SUN MON TUE WED THU FRI SAT".split()
+_CRON_FIELDS: tuple[tuple[str, int, int, dict[str, int]], ...] = (
+    ("minute", 0, 59, {}),
+    ("hour", 0, 23, {}),
+    ("day of month", 1, 31, {}),
+    ("month", 1, 12, {name: n for n, name in enumerate(_CRON_MONTHS, start=1)}),
+    ("day of week", 0, 6, {name: n for n, name in enumerate(_CRON_WEEKDAYS)}),
+)
+
+
+def _validate_cron(value: Any, env_name: str) -> str:
+    """Validate a 5-field cron expression and return it whitespace-normalised.
+
+    Accepted per field: ``*``, a number or name, ranges ``a-b``, steps
+    ``*/n`` / ``a-b/n`` / ``a/n`` and comma lists of those. Anything else
+    (6/7 fields, ``@daily``, ``#`` comments, out-of-range values) is rejected
+    at startup instead of failing later when the worker creates the schedule.
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"{env_name} must be a string")
+    fields = value.split()
+    if len(fields) != len(_CRON_FIELDS):
+        raise ValueError(
+            f"{env_name}={value!r} must have 5 fields "
+            "(minute hour day-of-month month day-of-week), e.g. '30 3 * * *'"
+        )
+
+    for field, (name, low, high, aliases) in zip(fields, _CRON_FIELDS, strict=True):
+        for item in field.split(","):
+            base, has_step, step = item.partition("/")
+            if has_step and not (step.isdigit() and int(step) >= 1):
+                raise ValueError(f"{env_name}: invalid step {item!r} in the {name} field")
+            if base == "*":
+                continue
+            bounds = base.split("-")
+            numbers: list[int] = []
+            for bound in bounds:
+                number = int(bound) if bound.isdigit() else aliases.get(bound.upper())
+                if number is None or not low <= number <= high:
+                    raise ValueError(
+                        f"{env_name}: {item!r} is not valid in the {name} field ({low}-{high})"
+                    )
+                numbers.append(number)
+            if len(numbers) > 2 or numbers != sorted(numbers):
+                raise ValueError(f"{env_name}: invalid range {item!r} in the {name} field")
+    return " ".join(fields)
 
 
 class Settings(BaseSettings):
@@ -115,6 +175,29 @@ class Settings(BaseSettings):
         description="Optional file path containing eProjekt auth token",
     )
     epro_timeout: int = Field(default=30, description="eProjekt API timeout in seconds")
+    # Decision 10b: ``callback_url`` (optional per-job push target). The ePro
+    # bearer token is sent along, hence the host allow-list; checked at request
+    # time (422) and again at delivery time (plus DNS: public addresses only).
+    callback_url_allowed_hosts: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: list(DEFAULT_CALLBACK_ALLOWED_HOSTS),
+        description=(
+            "Comma-separated host names a request's callback_url may point to "
+            "(exact match, case-insensitive, no wildcards). Empty = callback_url "
+            "is rejected. API and worker must use the same value."
+        ),
+    )
+
+    # Decision 10b: Temporal task-queue priority. Must equal the server's
+    # dynamic config ``matching.priorityLevels`` (docker/temporal/dynamicconfig).
+    temporal_priority_levels: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description=(
+            "Number of Temporal priority levels (= matching.priorityLevels on the "
+            "Temporal server). The API maps the request priority 1..10 onto 1..N."
+        ),
+    )
 
     # M08 - security.delivery.failed Webhook (opt-in)
     # Default leer = Webhook deaktiviert; bestehende Funktion bleibt
@@ -254,6 +337,22 @@ class Settings(BaseSettings):
     )
     kb_cleanup_cron: str = Field(
         default="0 3 * * *", description="Cron expression for KB TTL cleanup"
+    )
+
+    # 1.0.1 (Entscheidung 5): Metadaten-Aufbewahrung. Temporal-Schedule
+    # ``eki-metadata-cleanup`` loescht job_metadata (nur Endzustaende),
+    # report_metadata, delivery_dead_letters, nicht mehr nutzbare api_keys und
+    # audit_logs, sobald ihr juengster Zeitstempel aelter als N Tage ist.
+    metadata_retention_days: int = Field(
+        default=90,
+        ge=1,
+        description="Delete metadata rows whose latest timestamp is older than N days",
+    )
+    metadata_cleanup_enabled: bool = Field(
+        default=True, description="Run the nightly metadata retention cleanup schedule"
+    )
+    metadata_cleanup_cron: str = Field(
+        default="30 3 * * *", description="Cron expression (UTC) for the metadata cleanup"
     )
 
     # Observability
@@ -406,6 +505,12 @@ class Settings(BaseSettings):
             return [str(origin).strip() for origin in v if str(origin).strip()]
         return v
 
+    @field_validator("kb_cleanup_cron", "metadata_cleanup_cron", mode="before")
+    @classmethod
+    def validate_cron(cls, v: Any, info: ValidationInfo) -> str:
+        """5-field cron in UTC, checked at startup (a bad value used to fail only in Temporal)."""
+        return _validate_cron(v, str(info.field_name).upper())
+
     @field_validator("trusted_proxy_ips", mode="before")
     @classmethod
     def parse_trusted_proxy_ips(cls, v: Any) -> list[str]:
@@ -422,6 +527,18 @@ class Settings(BaseSettings):
             return [ip.strip() for ip in value.split(",") if ip.strip()]
         if isinstance(v, list):
             return [str(ip).strip() for ip in v if str(ip).strip()]
+        return v
+
+    @field_validator("callback_url_allowed_hosts", mode="before")
+    @classmethod
+    def parse_callback_url_allowed_hosts(cls, v: Any) -> list[str]:
+        """Comma-separated string or JSON list; normalised (lower-case, no trailing dot)."""
+        if isinstance(v, str):
+            value = v.strip()
+            # "[...]" is a JSON list (json.loads then yields a list or raises).
+            v = json.loads(value) if value.startswith("[") else value.split(",")
+        if isinstance(v, list | tuple | set | frozenset):
+            return sorted(normalize_allowed_hosts(v))
         return v
 
     # Hier wird LLM_PROVIDER schon beim App-Start gegen das erlaubte Set

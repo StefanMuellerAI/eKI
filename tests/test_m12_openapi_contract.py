@@ -115,7 +115,16 @@ class TestEnumParity:
             "delivery_failed",
             "report_expired",
             "invalid_project_id",
+            "invalid_callback_url",
         }
+
+    def test_dead_letter_reasons_cover_the_workflow_mapping(self, spec):
+        from workflows.security_check import _DELIVERY_FAILURE_REASONS
+
+        reasons = set(
+            spec["components"]["schemas"]["DeadLetterSummary"]["properties"]["reason"]["enum"]
+        )
+        assert set(_DELIVERY_FAILURE_REASONS.values()) <= reasons
 
 
 class TestBehaviouralContract:
@@ -129,8 +138,50 @@ class TestBehaviouralContract:
         for forbidden in ("findings", "report", "assessment", "script"):
             assert forbidden not in payload["properties"]
 
+    def test_removed_sync_endpoint_is_not_documented(self, spec):
+        # Decision 6 (1.0.1): POST /v1/security/check is gone, with its schemas.
+        assert "/v1/security/check" not in spec["paths"]
+        schemas = spec["components"]["schemas"]
+        for gone in ("SecurityCheckRequest", "SyncSecurityCheckResponse"):
+            assert gone not in schemas
+
+    def test_kb_endpoints_document_the_admin_requirement(self, spec):
+        kb_ops = [
+            (path, method, op)
+            for path, ops in spec["paths"].items()
+            if path.startswith("/v1/kb/")
+            for method, op in ops.items()
+        ]
+        assert len(kb_ops) == 5
+        for path, method, op in kb_ops:
+            assert op["responses"]["403"] == {"$ref": "#/components/responses/Forbidden"}, (
+                f"{method.upper()} {path}"
+            )
+            assert "admin API key" in op["description"], f"{method.upper()} {path}"
+
+    def test_callback_url_and_priority_are_documented_for_both_body_types(self, spec):
+        schemas = spec["components"]["schemas"]
+        for name in ("AsyncSecurityCheckRequest", "MultipartAsyncSecurityCheckRequest"):
+            assert {"callback_url", "priority", "delivery"} <= set(schemas[name]["properties"])
+        json_props = schemas["AsyncSecurityCheckRequest"]["properties"]
+        assert "CALLBACK_URL_ALLOWED_HOSTS" in json_props["callback_url"]["description"]
+        assert "Temporal task-queue priority" in json_props["priority"]["description"]
+
+    def test_request_schemas_match_the_models(self, spec):
+        """Field drift guard for both body types of POST /v1/security/check:async."""
+        from api.main import _MULTIPART_ASYNC
+        from core.models import AsyncSecurityCheckRequest
+
+        schemas = spec["components"]["schemas"]
+        assert set(schemas["AsyncSecurityCheckRequest"]["properties"]) == set(
+            AsyncSecurityCheckRequest.model_fields
+        )
+        assert set(schemas["MultipartAsyncSecurityCheckRequest"]["properties"]) == set(
+            _MULTIPART_ASYNC["properties"]
+        )
+
     def test_error_response_shape_matches_runtime(self, client):
-        response = client.post("/v1/security/check", json={})
+        response = client.post("/v1/security/check:async", json={})
         body = response.json()
         assert set(body) >= {"error", "message", "timestamp"}
         assert "detail" not in body

@@ -19,11 +19,19 @@ info:
       einmalig per One-Shot-GET abgeholt; danach wird der Inhalt gelöscht.
     - **Minimalinvasiv:** Integration nur über REST, keine direkten DB-Zugriffe
 
-    ## Bekannte Einschränkungen (Release 1.0.0)
-    - `POST /v1/security/check` (synchron) ist ein M01-Stub ohne echte Analyse; produktiv nur `check:async`.
-    - `callback_url` wird validiert, aber nicht verwendet; Push-Ziel ist immer
-      `{EPRO_BASE_URL}/eki/scl/set-risk-assessment/{project_id}` (Server-Konfiguration).
-    - `priority` wird gespeichert, beeinflusst die Abarbeitung aber nicht.
+    ## Änderungen in Release 1.0.1 (für Clients sichtbar)
+    - `POST /v1/security/check` (synchroner M01-Stub ohne Analyse) wurde entfernt und antwortet mit
+      404 (`ErrorResponse`, `error=NotFound`). Einziger Prüf-Endpunkt ist `POST /v1/security/check:async`.
+    - Alle `/v1/kb/*`-Endpunkte verlangen einen Admin-API-Key (`is_admin=true`); andere Keys erhalten 403.
+    - `callback_url` ist wirksam: Push-Ziel dieses Jobs statt
+      `{EPRO_BASE_URL}/eki/scl/set-risk-assessment/{project_id}` (gleiche Nutzlast, Header, Token,
+      Retry-Fenster). Ohne `delivery` gilt dann `push`; `delivery=pull` zusammen mit `callback_url` → 422.
+    - `priority` (1 = höchste … 10 = niedrigste, Standard 5) wird als Temporal-Task-Queue-Priorität
+      gesetzt: unter Last werden Jobs höherer Priorität zuerst abgearbeitet.
+
+    ## Bekannte Einschränkungen
+    - `priority` ordnet nur wartende Aufgaben (Backlog) einer Task Queue; laufende Jobs werden nicht
+      verdrängt, und bei mehreren Task-Queue-Partitionen gilt die Reihenfolge je Partition.
     - Verarbeitungsfehler (Parsing, Risikoanalyse nach Retries, Blockade durch den
       Prompt-Injection-Filter) beenden den Job mit `failed` und inhaltsfreier `error_message`
       (fail-closed) – `failed` bedeutet „keine automatische Bewertung", nie „kein Risiko".
@@ -69,7 +77,10 @@ tags:
   - name: Security
     description: Security check operations
   - name: KnowledgeBase
-    description: Knowledge Base management (M06) for RAG-augmented risk analysis
+    description: >-
+      Knowledge Base management (M06) for RAG-augmented risk analysis. Since 1.0.1 every
+      `/v1/kb/*` endpoint requires an API key with `is_admin=true`
+      (`scripts/create_api_key.py --admin`); other keys get 403.
   - name: Operations
     description: >-
       Operations endpoints (M10). Require an API key with `is_admin=true`
@@ -121,62 +132,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/ReadinessResponse'
 
-  /v1/security/check:
-    post:
-      tags:
-        - Security
-      summary: Synchronous security check (M01 stub)
-      description: >-
-        **M01 stub -- no real analysis.** The request is authenticated and validated, but the
-        script is neither parsed nor sent to the LLM: the response always contains one `info`
-        finding with `category=stub` and `metadata.stub=true`. Productive checks use
-        `POST /v1/security/check:async`. Accepts JSON (base64-encoded script_content) or
-        multipart/form-data file upload (.fdx, .pdf).
-      operationId: securityCheckSync
-      security:
-        - BearerAuth: []
-      parameters:
-        - $ref: '#/components/parameters/ActorUserId'
-        - $ref: '#/components/parameters/ActorProjectId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SecurityCheckRequest'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/MultipartSecurityCheckRequest'
-      responses:
-        '200':
-          description: Security check completed successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SyncSecurityCheckResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '413':
-          description: >-
-            Multipart file exceeds `MAX_UPLOAD_SIZE_BYTES` (default 10 MB). An oversized JSON
-            `script_content` is rejected with 422 instead.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '422':
-          $ref: '#/components/responses/ValidationError'
-        '429':
-          $ref: '#/components/responses/RateLimitExceeded'
-        '500':
-          $ref: '#/components/responses/InternalError'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
-
   /v1/security/check:async:
     post:
       tags:
@@ -188,9 +143,11 @@ paths:
         The script content, intermediate results and per-scene findings are Fernet-encrypted (AES)
         in Redis; the workflow only receives reference keys plus metadata (see
         `docs/DATENSCHUTZ.md`). Supports idempotency keys (scoped to the API key's user) and the
-        delivery modes `pull` (one-shot GET) and `push` (POST to
-        `{EPRO_BASE_URL}/eki/scl/set-risk-assessment/{project_id}`). `callback_url` is validated
-        but not used; `priority` is stored but does not influence scheduling.
+        delivery modes `pull` (one-shot GET) and `push` (multipart POST to the job's `callback_url`
+        if given, otherwise to `{EPRO_BASE_URL}/eki/scl/set-risk-assessment/{project_id}`).
+        `callback_url` implies `push`; `delivery=pull` together with `callback_url` is rejected
+        with 422. `priority` (1 = highest … 10 = lowest) becomes the Temporal task-queue priority
+        of the job: when work is queued, higher-priority jobs are dispatched first.
       operationId: securityCheckAsync
       security:
         - BearerAuth: []
@@ -348,7 +305,8 @@ paths:
         search ciphertext). Idempotent via SHA-256 content hash per tenant: re-uploading
         the same content (also concurrently) returns 409 Conflict. Embeddings require an Ollama-based provider
         (`ollama` / `local_mistral`); with `mistral_cloud` the upload fails.
-        All `/v1/kb/*` endpoints accept any valid API key (no admin key required).
+        Requires an admin API key (`is_admin=true`), like every `/v1/kb/*` endpoint; other keys
+        get 403.
       operationId: uploadKbDocument
       security:
         - BearerAuth: []
@@ -389,6 +347,8 @@ paths:
                 $ref: '#/components/schemas/KBDocumentResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '409':
           description: Duplicate content (identical SHA-256 already in the tenant's KB)
           content:
@@ -406,7 +366,8 @@ paths:
       tags:
         - KnowledgeBase
       summary: List KB documents
-      description: Return metadata summaries for all KB documents of the calling tenant.
+      description: >-
+        Return metadata summaries for all KB documents of the tenant. Requires an admin API key.
       operationId: listKbDocuments
       security:
         - BearerAuth: []
@@ -435,6 +396,8 @@ paths:
                 $ref: '#/components/schemas/KBListResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/RateLimitExceeded'
         '503':
@@ -446,7 +409,7 @@ paths:
       summary: Bulk delete KB documents by tag
       description: >-
         Delete all KB documents tagged with the given tag (e.g. `placeholder`
-        to wipe seed data once real content is loaded).
+        to wipe seed data once real content is loaded). Requires an admin API key.
       operationId: deleteKbDocumentsByTag
       security:
         - BearerAuth: []
@@ -465,6 +428,8 @@ paths:
                 $ref: '#/components/schemas/KBDeleteByTagResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/ValidationError'
         '429':
@@ -477,7 +442,9 @@ paths:
       tags:
         - KnowledgeBase
       summary: Get KB document metadata
-      description: Return metadata for a single KB document. Original text is never returned.
+      description: >-
+        Return metadata for a single KB document. Original text is never returned. Requires an
+        admin API key.
       operationId: getKbDocument
       security:
         - BearerAuth: []
@@ -498,6 +465,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
@@ -505,7 +476,7 @@ paths:
       tags:
         - KnowledgeBase
       summary: Delete a single KB document
-      description: Delete one KB document. Its embedding chunks cascade.
+      description: Delete one KB document. Its embedding chunks cascade. Requires an admin API key.
       operationId: deleteKbDocument
       security:
         - BearerAuth: []
@@ -526,6 +497,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
@@ -622,7 +597,9 @@ paths:
       description: >-
         Definitively failed deliveries: 6h retry window exhausted, 4xx hard fail,
         pull report not retrieved within TTL, report no longer in the buffer at push time
-        (`report_expired`) or a project_id unusable in the push URL (`invalid_project_id`).
+        (`report_expired`), a project_id unusable in the push URL (`invalid_project_id`) or a
+        `callback_url` rejected at delivery time (`invalid_callback_url`: host no longer on
+        `CALLBACK_URL_ALLOWED_HOSTS`, or it resolves to a private/internal address).
         Processing failures (job failed before a report existed) create no dead letter.
         Content-free by design; replay is not offered because the report was deleted on
         failure (Delete-on-Delivery).
@@ -851,7 +828,7 @@ components:
 
     # --- Request Schemas ---
 
-    SecurityCheckRequest:
+    AsyncSecurityCheckRequest:
       type: object
       required:
         - script_content
@@ -884,23 +861,34 @@ components:
         callback_url:
           type: [string, 'null']
           format: uri
+          maxLength: 2083
           description: >-
-            Validated but currently **unused** (reserved). If present it must be an HTTPS URL on
-            an allowlisted eProjekt domain (epro.filmakademie.de, staging.epro.filmakademie.de);
-            private/internal IPs are rejected with 422. The push target is not taken from this
-            field: it is always `{EPRO_BASE_URL}/eki/scl/set-risk-assessment/{project_id}`
-            (server configuration).
+            Optional HTTPS callback URL for push delivery results. If set, the result of this job
+            is pushed to exactly this URL instead of
+            `{EPRO_BASE_URL}/eki/scl/set-risk-assessment/{project_id}` -- same multipart payload
+            (`script_id`, `status`, `assessment`, `file`), same headers (`Authorization: Bearer`
+            with the ePro service token, `Idempotency-Key`, `X-Request-ID`, `X-EKI-Job-Id`,
+            `X-EKI-Attempt`), same 6 h retry window and failure branch (dead letter + webhook).
+            Rules (422 otherwise): HTTPS only; the host must be on the server's allow-list
+            `CALLBACK_URL_ALLOWED_HOSTS` (default `epro.filmakademie.de`,
+            `staging.epro.filmakademie.de`; exact host match, any port); no user/password in the
+            URL; no private/internal IP literal. If `delivery` is omitted it defaults to `push`;
+            `delivery=pull` together with `callback_url` is a contradiction and rejected with 422.
+            Right before each push the worker checks the URL again against the then-current
+            allow-list and requires every DNS answer for the host to be a public address
+            (DNS-rebinding protection); a violation ends the delivery without retry (dead letter
+            `invalid_callback_url`). Redirects (3xx) are not followed.
         delivery:
           type: string
           enum: [pull, push]
-          default: pull
           description: >-
             Delivery mode: "pull" (one-shot GET via /v1/security/reports/{id}, report kept
             encrypted for at most `BUFFER_TTL_SECONDS`, default 6 h) or "push" (multipart POST
-            to `{EPRO_BASE_URL}/eki/scl/set-risk-assessment/{project_id}` with `script_id`,
+            to `callback_url` if given, otherwise to
+            `{EPRO_BASE_URL}/eki/scl/set-risk-assessment/{project_id}`, with `script_id`,
             `status`, `assessment`, `file`; retried up to 6 h). Case-insensitive, surrounding
-            whitespace is ignored, an empty value means "pull"; any other value is rejected
-            with 422.
+            whitespace is ignored; an empty or omitted value means "push" if `callback_url` is
+            set, otherwise "pull"; any other value is rejected with 422.
         idempotency_key:
           type: [string, 'null']
           maxLength: 255
@@ -916,22 +904,20 @@ components:
             Additional metadata (max 50 keys, values ≤1000 chars, string/number/boolean/null).
             Not persisted in PostgreSQL, but carried in the workflow input (Temporal history);
             do not put script content or personal data here.
+        priority:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 5
+          description: >-
+            Job priority, 1 = highest … 10 = lowest. Set as the Temporal task-queue priority of
+            the workflow (its activities inherit it): when work is waiting in the queue, jobs
+            with a higher priority are dispatched first; equal priorities keep FIFO order.
+            Running jobs are not preempted. Needs the Temporal server setting
+            `matching.useNewMatcher: true` (shipped in `docker/temporal/dynamicconfig/eki.yaml`);
+            without it the value is stored but has no effect.
 
-    AsyncSecurityCheckRequest:
-      allOf:
-        - $ref: '#/components/schemas/SecurityCheckRequest'
-        - type: object
-          properties:
-            priority:
-              type: integer
-              minimum: 1
-              maximum: 10
-              default: 5
-              description: >-
-                Job priority (1=highest, 10=lowest). Validated and stored, but currently not
-                used for scheduling.
-
-    MultipartSecurityCheckRequest:
+    MultipartAsyncSecurityCheckRequest:
       type: object
       required:
         - file
@@ -951,26 +937,25 @@ components:
         script_id:
           type: [integer, 'null']
           description: eProjekt document ID (32-bit signed integer)
+        callback_url:
+          type: string
+          format: uri
+          description: Optional push target, see `AsyncSecurityCheckRequest.callback_url`
         delivery:
           type: string
           enum: [pull, push]
-          default: pull
-          description: Delivery mode, see `SecurityCheckRequest.delivery`
+          description: >-
+            Delivery mode, see `AsyncSecurityCheckRequest.delivery` (omitted/empty: `push` with
+            `callback_url`, otherwise `pull`)
         idempotency_key:
           type: [string, 'null']
           maxLength: 255
-
-    MultipartAsyncSecurityCheckRequest:
-      allOf:
-        - $ref: '#/components/schemas/MultipartSecurityCheckRequest'
-        - type: object
-          properties:
-            priority:
-              type: integer
-              minimum: 1
-              maximum: 10
-              default: 5
-              description: Job priority; stored, currently not used for scheduling
+        priority:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 5
+          description: Job priority, see `AsyncSecurityCheckRequest.priority`
 
     # --- Response Schemas ---
 
@@ -1169,26 +1154,11 @@ components:
         processing_time_seconds:
           type: number
           format: float
-          description: >-
-            Seconds from job creation until the report was generated (sync stub: fixed value).
+          description: Seconds from job creation until the report was generated.
         metadata:
           type: object
           additionalProperties: true
-          description: >-
-            `engine_version` (= API version) and `taxonomy_version`; for the sync stub
-            `stub=true`.
-
-    SyncSecurityCheckResponse:
-      type: object
-      required:
-        - report
-        - message
-      properties:
-        report:
-          $ref: '#/components/schemas/SecurityReport'
-        message:
-          type: string
-          example: Security check completed successfully
+          description: '`engine_version` (= API version) and `taxonomy_version`.'
 
     AsyncSecurityCheckResponse:
       type: object
@@ -1337,7 +1307,7 @@ components:
         delivery_mode: { type: string, enum: [pull, push] }
         reason:
           type: string
-          enum: [retry_window_exhausted, hard_4xx, pull_ttl_expired, delivery_failed, report_expired, invalid_project_id]
+          enum: [retry_window_exhausted, hard_4xx, pull_ttl_expired, delivery_failed, report_expired, invalid_project_id, invalid_callback_url]
         attempts: { type: integer, minimum: 0 }
         last_status_code: { type: [integer, 'null'] }
         last_error_type: { type: [string, 'null'] }
@@ -1512,7 +1482,8 @@ components:
             Push-Retry erschoepft), "hard_4xx" (nicht-retrybarer ePro-Fehler),
             "pull_ttl_expired" (Report im Pull-Modus nicht innerhalb der TTL abgeholt),
             "report_expired" (Report beim Push nicht mehr im Buffer, z. B. nach einem
-            One-Shot-GET), "invalid_project_id", "delivery_failed". Verarbeitung (kein
+            One-Shot-GET), "invalid_project_id", "invalid_callback_url" (`callback_url` bei der
+            Zustellung abgelehnt), "delivery_failed". Verarbeitung (kein
             Report entstanden, `attempts`=0): "prompt_blocked", "parsing_failed",
             "processing_failed".
         attempts:
@@ -1532,8 +1503,8 @@ components:
     Forbidden:
       description: >-
         Forbidden: `X-Actor-User-Id` does not match the user of the API key
-        (`/v1/security/check`, `/v1/security/check:async`), or an admin API key is required
-        (`/v1/ops/*`)
+        (`/v1/security/check:async`), or an admin API key is required (`/v1/ops/*`, `/v1/kb/*`:
+        "Admin API key required for this endpoint")
       content:
         application/json:
           schema:
@@ -1565,7 +1536,8 @@ components:
     ValidationError:
       description: >-
         Validation error (JSON body not an object, invalid base64, bad project_id format,
-        invalid delivery/script_format/script_id/idempotency_key, callback_url not allowed, etc.)
+        invalid delivery/script_format/script_id/idempotency_key/priority, callback_url not
+        allowed, `delivery=pull` together with `callback_url`, etc.)
       content:
         application/json:
           schema:
@@ -1591,10 +1563,9 @@ components:
       description: >-
         A backend dependency (PostgreSQL, Redis or Temporal) is temporarily unavailable.
         `error` is `ServiceUnavailable` or `ServiceUnavailableException`; `request_id` is set.
-        Retry with backoff. Note for submissions: the job may already have been created before
-        the failure; a retry with the same `idempotency_key` then returns that job (status
-        `failed` if Temporal was unreachable, permanently `pending` if Redis was unreachable)
-        -- resubmit with a new key in that case.
+        Retry with backoff. Note for submissions: if Redis (secure buffer) or Temporal was
+        unreachable, the job row was already created; it is marked `failed` and its
+        `idempotency_key` is released, so a retry with the same key starts a new job.
       headers:
         X-Request-ID:
           $ref: '#/components/headers/XRequestId'

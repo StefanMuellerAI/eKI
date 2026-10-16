@@ -332,11 +332,11 @@ class TestUnhandledExceptionHandler:
     )
     @pytest.mark.asyncio
     async def test_unexpected_errors_are_classified_without_leaking_details(
-        self, client, auth_headers, exc, expected_status, error, message
+        self, client, admin_headers, exc, expected_status, error, message
     ):
         with patch.object(kb_router, "_service", side_effect=exc):
             response = client.get(
-                _KB_LIST, headers={**auth_headers, "X-Request-ID": "rid-unhandled"}
+                _KB_LIST, headers={**admin_headers, "X-Request-ID": "rid-unhandled"}
             )
 
         assert response.status_code == expected_status
@@ -351,7 +351,7 @@ class TestUnhandledExceptionHandler:
 
 class TestPydanticValidationErrorHandler:
     @pytest.mark.asyncio
-    async def test_raw_validation_error_inside_handler_becomes_422(self, client, auth_headers):
+    async def test_raw_validation_error_inside_handler_becomes_422(self, client, admin_headers):
         """A ``ValidationError`` raised by our own code (not request parsing) is normalised."""
         broken = KBDocumentSummary(
             doc_id="not-a-uuid",  # type: ignore[arg-type]
@@ -365,7 +365,7 @@ class TestPydanticValidationErrorHandler:
         )
         service = SimpleNamespace(list_documents=AsyncMock(return_value=[broken]))
         with patch.object(kb_router, "_service", return_value=service):
-            response = client.get(_KB_LIST, headers=auth_headers)
+            response = client.get(_KB_LIST, headers=admin_headers)
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
         body = response.json()
@@ -393,23 +393,21 @@ class TestCustomOpenApi:
         assert async_body["content"]["application/json"]["schema"] == {
             "$ref": "#/components/schemas/AsyncSecurityCheckRequest"
         }
-        assert "priority" in async_body["content"]["multipart/form-data"]["schema"]["properties"]
+        multipart = async_body["content"]["multipart/form-data"]["schema"]["properties"]
+        assert {"priority", "callback_url", "delivery", "file"} <= set(multipart)
 
-        sync_body = schema["paths"]["/v1/security/check"]["post"]["requestBody"]
-        assert sync_body["content"]["application/json"]["schema"] == {
-            "$ref": "#/components/schemas/SecurityCheckRequest"
-        }
-        assert "priority" not in sync_body["content"]["multipart/form-data"]["schema"]["properties"]
+        # Decision 6 (1.0.1): the synchronous stub is gone, and so is its schema.
+        assert "/v1/security/check" not in schema["paths"]
         components = schema["components"]["schemas"]
-        assert {"SecurityCheckRequest", "AsyncSecurityCheckRequest", "ScriptFormat"} <= set(
-            components
-        )
+        assert {"AsyncSecurityCheckRequest", "ScriptFormat"} <= set(components)
+        assert "SecurityCheckRequest" not in components
+        assert "SyncSecurityCheckResponse" not in components
 
     def test_missing_security_paths_are_skipped(self):
         with patch("api.main.get_openapi", return_value={"paths": {"/health": {"get": {}}}}):
             schema = app.openapi()
         assert schema["paths"] == {"/health": {"get": {}}}
-        assert "SecurityCheckRequest" in schema["components"]["schemas"]
+        assert "AsyncSecurityCheckRequest" in schema["components"]["schemas"]
 
 
 # ===========================================================================
@@ -473,20 +471,21 @@ class TestReadiness:
 
 class TestMultipartUploads:
     @pytest.mark.asyncio
-    async def test_sync_check_accepts_fdx_upload(self, client, auth_headers):
+    async def test_check_accepts_fdx_upload(self, client, auth_headers, mock_temporal):
         response = client.post(
-            "/v1/security/check",
+            "/v1/security/check:async",
             files={"file": ("Drehbuch.FDX", FDX_BYTES, "application/xml")},
             data={"project_id": "proj-multipart"},
             headers=auth_headers,
         )
 
-        assert response.status_code == status.HTTP_200_OK, response.text
-        report = response.json()["report"]
-        assert report["project_id"] == "proj-multipart"
-        assert report["script_format"] == "fdx"
-        assert report["metadata"]["user_id"] == "test-user-123"
-        assert report["metadata"]["project_id"] == "test-project-456"
+        assert response.status_code == status.HTTP_202_ACCEPTED, response.text
+        job_data = mock_temporal.started[0]["args"][1]
+        assert job_data["project_id"] == "proj-multipart"
+        assert job_data["script_format"] == "fdx"
+        assert job_data["user_id"] == "test-user-123"
+        assert (job_data["delivery_mode"], job_data["priority"]) == ("pull", 5)
+        assert job_data["callback_url"] is None
 
     @pytest.mark.asyncio
     async def test_async_check_passes_all_form_fields_through(
@@ -534,7 +533,7 @@ class TestMultipartUploads:
         ("path", "files", "data", "expected_status", "error", "message"),
         [
             (
-                "/v1/security/check",
+                "/v1/security/check:async",
                 {"attachment": ("a.fdx", FDX_BYTES, "application/xml")},
                 {"project_id": "p"},
                 400,
@@ -542,7 +541,7 @@ class TestMultipartUploads:
                 "Multipart request must include a 'file' field",
             ),
             (
-                "/v1/security/check",
+                "/v1/security/check:async",
                 {"file": ("empty.fdx", b"", "application/xml")},
                 {"project_id": "p"},
                 400,
@@ -550,7 +549,7 @@ class TestMultipartUploads:
                 "Uploaded file is empty",
             ),
             (
-                "/v1/security/check",
+                "/v1/security/check:async",
                 {"file": ("script.docx", b"PK\x03\x04", "application/octet-stream")},
                 {"project_id": "p"},
                 400,
@@ -558,7 +557,7 @@ class TestMultipartUploads:
                 "Unsupported file type. Allowed: .fdx, .pdf",
             ),
             (
-                "/v1/security/check",
+                "/v1/security/check:async",
                 {"file": ("fake.pdf", b"GIF89a not a pdf", "application/pdf")},
                 {"project_id": "p"},
                 400,
@@ -600,10 +599,10 @@ class TestMultipartUploads:
     async def test_oversized_upload_is_413(self, client, auth_headers):
         with patch(
             "api.routers.security.get_settings",
-            return_value=SimpleNamespace(max_upload_size_bytes=16),
+            return_value=get_settings().model_copy(update={"max_upload_size_bytes": 16}),
         ):
             response = client.post(
-                "/v1/security/check",
+                "/v1/security/check:async",
                 files={"file": ("big.fdx", b"x" * 17, "application/xml")},
                 data={"project_id": "p"},
                 headers=auth_headers,
@@ -786,9 +785,9 @@ class TestKnowledgeBaseRouter:
         ],
     )
     @pytest.mark.asyncio
-    async def test_list_rejects_out_of_range_paging(self, client, auth_headers, params, message):
+    async def test_list_rejects_out_of_range_paging(self, client, admin_headers, params, message):
         with patch.object(kb_router, "_service") as service_factory:
-            response = client.get(_KB_LIST, headers=auth_headers, params=params)
+            response = client.get(_KB_LIST, headers=admin_headers, params=params)
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
         assert response.json()["error"] == "ValidationError"
@@ -796,11 +795,11 @@ class TestKnowledgeBaseRouter:
         service_factory.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_get_returns_document_metadata(self, client, auth_headers):
+    async def test_get_returns_document_metadata(self, client, admin_headers):
         summary = _summary()
         service = SimpleNamespace(get_document=AsyncMock(return_value=summary))
         with patch.object(kb_router, "_service", return_value=service):
-            response = client.get(f"{_KB_LIST}/{summary.doc_id}", headers=auth_headers)
+            response = client.get(f"{_KB_LIST}/{summary.doc_id}", headers=admin_headers)
 
         assert response.status_code == status.HTTP_200_OK
         assert response.json() == {
@@ -818,13 +817,13 @@ class TestKnowledgeBaseRouter:
         )
 
     @pytest.mark.asyncio
-    async def test_delete_unknown_document_is_404(self, client, auth_headers):
+    async def test_delete_unknown_document_is_404(self, client, admin_headers):
         doc_id = uuid4()
         service = SimpleNamespace(
             delete_document=AsyncMock(side_effect=NotFoundException("Document not found"))
         )
         with patch.object(kb_router, "_service", return_value=service):
-            response = client.delete(f"{_KB_LIST}/{doc_id}", headers=auth_headers)
+            response = client.delete(f"{_KB_LIST}/{doc_id}", headers=admin_headers)
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert response.json()["error"] == "NotFound"
@@ -941,7 +940,7 @@ class TestSecurityCheckRequestValidation:
     @pytest.mark.asyncio
     async def test_metadata_rejection_over_http_is_422(self, client, auth_headers):
         response = client.post(
-            "/v1/security/check",
+            "/v1/security/check:async",
             json={
                 "script_content": _b64(FDX_BYTES),
                 "script_format": "fdx",

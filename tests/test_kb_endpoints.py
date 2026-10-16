@@ -5,6 +5,10 @@ in-memory fixture used by the test suite, so we patch
 ``KnowledgeBaseService`` to verify the router contract: routes exist,
 authentication is enforced, input validation triggers 422, conflicts
 surface as 409, and the response shape matches ``KBDocumentResponse``.
+
+1.0.1 (owner decision 4): every ``/v1/kb/*`` endpoint requires an admin API
+key; ordinary keys get 403 with the ErrorResponse envelope and never reach
+the service.
 """
 
 from __future__ import annotations
@@ -33,19 +37,73 @@ def _summary(title: str = "Stunt-SOP", source: str = "PLACEHOLDER") -> KBDocumen
     )
 
 
+_ENVELOPE_KEYS = {"error", "message", "details", "request_id", "timestamp"}
+_UPLOAD = {
+    "files": {"file": ("x.md", b"# hi", "text/markdown")},
+    "data": {"title": "X", "source": "UPLOAD"},
+}
+# Every KB operation with valid arguments: (method, path, request kwargs).
+_KB_CALLS = {
+    "upload": ("post", "/v1/kb/documents", _UPLOAD),
+    "list": ("get", "/v1/kb/documents", {}),
+    "get": ("get", "/v1/kb/documents/00000000-0000-0000-0000-0000000000aa", {}),
+    "delete": ("delete", "/v1/kb/documents/00000000-0000-0000-0000-0000000000aa", {}),
+    "delete-by-tag": ("delete", "/v1/kb/documents", {"params": {"tag": "placeholder"}}),
+}
+
+
 @pytest.mark.asyncio
 async def test_upload_requires_authentication(client) -> None:
-    resp = client.post(
-        "/v1/kb/documents",
-        files={"file": ("x.md", b"# hi", "text/markdown")},
-        data={"title": "X", "source": "UPLOAD"},
-    )
-    # FastAPI returns 403 for missing bearer credentials via HTTPBearer
-    assert resp.status_code in (401, 403)
+    resp = client.post("/v1/kb/documents", **_UPLOAD)
+    assert resp.status_code == 401
+    assert resp.json()["error"] == "Unauthorized"
+
+
+@pytest.mark.parametrize("call", list(_KB_CALLS))
+@pytest.mark.asyncio
+async def test_every_kb_endpoint_requires_an_admin_key(client, auth_headers, call) -> None:
+    """A valid but non-admin key (e.g. ePro's) is 403 on every KB endpoint."""
+    method, path, kwargs = _KB_CALLS[call]
+    with patch("api.routers.knowledge_base._service") as service_factory:
+        resp = getattr(client, method)(path, headers=auth_headers, **kwargs)
+
+    assert resp.status_code == 403, resp.text
+    body = resp.json()
+    assert set(body) == _ENVELOPE_KEYS
+    assert body["error"] == "Forbidden"
+    assert body["message"] == "Admin API key required for this endpoint"
+    assert body["request_id"] == resp.headers["X-Request-ID"]
+    service_factory.assert_not_called()
+
+
+@pytest.mark.parametrize("call", list(_KB_CALLS))
+@pytest.mark.asyncio
+async def test_every_kb_endpoint_rejects_anonymous_callers(client, call) -> None:
+    method, path, kwargs = _KB_CALLS[call]
+    with patch("api.routers.knowledge_base._service") as service_factory:
+        resp = getattr(client, method)(path, **kwargs)
+
+    assert resp.status_code == 401, resp.text
+    assert resp.json()["error"] == "Unauthorized"
+    service_factory.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_upload_happy_path(client, auth_headers) -> None:
+async def test_upload_records_the_admin_as_uploader(client, admin_headers, test_admin_key) -> None:
+    summary = _summary()
+    service_mock = SimpleNamespace(
+        ingest=AsyncMock(return_value=summary.doc_id),
+        get_document=AsyncMock(return_value=summary),
+    )
+    with patch("api.routers.knowledge_base._service", return_value=service_mock):
+        resp = client.post("/v1/kb/documents", headers=admin_headers, **_UPLOAD)
+
+    assert resp.status_code == 201, resp.text
+    assert service_mock.ingest.await_args.kwargs["uploaded_by"] == test_admin_key[1].user_id
+
+
+@pytest.mark.asyncio
+async def test_upload_happy_path(client, admin_headers) -> None:
     summary = _summary()
 
     service_mock = SimpleNamespace(
@@ -55,7 +113,7 @@ async def test_upload_happy_path(client, auth_headers) -> None:
     with patch("api.routers.knowledge_base._service", return_value=service_mock):
         resp = client.post(
             "/v1/kb/documents",
-            headers=auth_headers,
+            headers=admin_headers,
             files={"file": ("01_stunt_sop.md", b"---\ntitle: Stunt\n---\nBody", "text/markdown")},
             data={
                 "title": "Stunt-SOP",
@@ -74,7 +132,7 @@ async def test_upload_happy_path(client, auth_headers) -> None:
 
 
 @pytest.mark.asyncio
-async def test_upload_duplicate_returns_409(client, auth_headers) -> None:
+async def test_upload_duplicate_returns_409(client, admin_headers) -> None:
     service_mock = SimpleNamespace(
         ingest=AsyncMock(side_effect=ConflictException("dup", details={"content_hash": "abc"})),
         get_document=AsyncMock(),
@@ -82,7 +140,7 @@ async def test_upload_duplicate_returns_409(client, auth_headers) -> None:
     with patch("api.routers.knowledge_base._service", return_value=service_mock):
         resp = client.post(
             "/v1/kb/documents",
-            headers=auth_headers,
+            headers=admin_headers,
             files={"file": ("x.md", b"same", "text/markdown")},
             data={"title": "X", "source": "UPLOAD", "tags": "", "ttl_hours": "720"},
         )
@@ -91,7 +149,7 @@ async def test_upload_duplicate_returns_409(client, auth_headers) -> None:
 
 
 @pytest.mark.asyncio
-async def test_upload_validation_error_returns_422(client, auth_headers) -> None:
+async def test_upload_validation_error_returns_422(client, admin_headers) -> None:
     service_mock = SimpleNamespace(
         ingest=AsyncMock(side_effect=ValidationException("File is empty")),
         get_document=AsyncMock(),
@@ -99,7 +157,7 @@ async def test_upload_validation_error_returns_422(client, auth_headers) -> None
     with patch("api.routers.knowledge_base._service", return_value=service_mock):
         resp = client.post(
             "/v1/kb/documents",
-            headers=auth_headers,
+            headers=admin_headers,
             files={"file": ("x.md", b"", "text/markdown")},
             data={"title": "X", "source": "UPLOAD", "tags": "", "ttl_hours": "720"},
         )
@@ -108,11 +166,11 @@ async def test_upload_validation_error_returns_422(client, auth_headers) -> None
 
 
 @pytest.mark.asyncio
-async def test_upload_rejects_too_many_tags(client, auth_headers) -> None:
+async def test_upload_rejects_too_many_tags(client, admin_headers) -> None:
     tags = ",".join(f"t{i}" for i in range(20))
     resp = client.post(
         "/v1/kb/documents",
-        headers=auth_headers,
+        headers=admin_headers,
         files={"file": ("x.md", b"hi", "text/markdown")},
         data={"title": "X", "source": "UPLOAD", "tags": tags, "ttl_hours": "720"},
     )
@@ -120,13 +178,13 @@ async def test_upload_rejects_too_many_tags(client, auth_headers) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_returns_summaries(client, auth_headers) -> None:
+async def test_list_returns_summaries(client, admin_headers) -> None:
     summaries = [_summary("Stunt-SOP"), _summary("Fire SFX")]
     service_mock = SimpleNamespace(
         list_documents=AsyncMock(return_value=summaries),
     )
     with patch("api.routers.knowledge_base._service", return_value=service_mock):
-        resp = client.get("/v1/kb/documents", headers=auth_headers)
+        resp = client.get("/v1/kb/documents", headers=admin_headers)
 
     assert resp.status_code == 200
     body = resp.json()
@@ -135,22 +193,22 @@ async def test_list_returns_summaries(client, auth_headers) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_missing_returns_404(client, auth_headers) -> None:
+async def test_get_missing_returns_404(client, admin_headers) -> None:
     service_mock = SimpleNamespace(
         get_document=AsyncMock(side_effect=NotFoundException("not found")),
     )
     with patch("api.routers.knowledge_base._service", return_value=service_mock):
-        resp = client.get(f"/v1/kb/documents/{uuid4()}", headers=auth_headers)
+        resp = client.get(f"/v1/kb/documents/{uuid4()}", headers=admin_headers)
 
     assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_delete_single_document(client, auth_headers) -> None:
+async def test_delete_single_document(client, admin_headers) -> None:
     doc_id = uuid4()
     service_mock = SimpleNamespace(delete_document=AsyncMock())
     with patch("api.routers.knowledge_base._service", return_value=service_mock):
-        resp = client.delete(f"/v1/kb/documents/{doc_id}", headers=auth_headers)
+        resp = client.delete(f"/v1/kb/documents/{doc_id}", headers=admin_headers)
 
     assert resp.status_code == 200
     body = resp.json()
@@ -159,12 +217,12 @@ async def test_delete_single_document(client, auth_headers) -> None:
 
 
 @pytest.mark.asyncio
-async def test_delete_by_tag_for_placeholder_wipe(client, auth_headers) -> None:
+async def test_delete_by_tag_for_placeholder_wipe(client, admin_headers) -> None:
     service_mock = SimpleNamespace(delete_by_tag=AsyncMock(return_value=6))
     with patch("api.routers.knowledge_base._service", return_value=service_mock):
         resp = client.delete(
             "/v1/kb/documents",
-            headers=auth_headers,
+            headers=admin_headers,
             params={"tag": "placeholder"},
         )
 
@@ -176,10 +234,10 @@ async def test_delete_by_tag_for_placeholder_wipe(client, auth_headers) -> None:
 
 
 @pytest.mark.asyncio
-async def test_delete_by_tag_rejects_empty_tag(client, auth_headers) -> None:
+async def test_delete_by_tag_rejects_empty_tag(client, admin_headers) -> None:
     resp = client.delete(
         "/v1/kb/documents",
-        headers=auth_headers,
+        headers=admin_headers,
         params={"tag": "   "},
     )
     assert resp.status_code == 422

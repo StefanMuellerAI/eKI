@@ -14,6 +14,7 @@ from temporalio.worker import Worker
 from api.config import get_settings
 from core.logging_config import configure_logging
 from core.metrics import set_build_info, start_metrics_server
+from core.temporal_codec import EncryptionCodec, temporal_client_options
 from core.tracing import configure_tracing, temporal_interceptors
 from core.version import __version__
 from workflows.activities import (
@@ -33,8 +34,11 @@ from workflows.activities import (
 )
 from workflows.maintenance import (
     KBCleanupWorkflow,
+    MetadataCleanupWorkflow,
     ensure_kb_cleanup_schedule,
+    ensure_metadata_cleanup_schedule,
     kb_cleanup_expired_activity,
+    metadata_cleanup_expired_activity,
 )
 from workflows.security_check import SecurityCheckWorkflow
 
@@ -67,9 +71,18 @@ async def main() -> None:
             settings.temporal_host,
             namespace=settings.temporal_namespace,
             interceptors=temporal_interceptors(settings),
+            # Payload encryption (1.0.1): the Worker inherits this converter;
+            # it must be identical to the API's (same API_SECRET_KEY).
+            **temporal_client_options(settings.api_secret_key),
         )
 
         logger.info(f"Connected to Temporal namespace: {settings.temporal_namespace}")
+        # Non-secret fingerprint: lets operators compare the API's and the
+        # worker's API_SECRET_KEY without revealing it (OPERATIONS_GUIDE).
+        logger.info(
+            "Temporal payload encryption active: key id %s",
+            EncryptionCodec(settings.api_secret_key).key_id,
+        )
 
         # Create and start worker. Concurrency-Caps werden aus den Settings
         # gelesen (M07), damit Betrieb die Werte ohne Code-Änderung tunen
@@ -77,7 +90,7 @@ async def main() -> None:
         worker = Worker(
             client,
             task_queue=settings.temporal_task_queue,
-            workflows=[SecurityCheckWorkflow, KBCleanupWorkflow],
+            workflows=[SecurityCheckWorkflow, KBCleanupWorkflow, MetadataCleanupWorkflow],
             activities=[
                 # FDX activities
                 parse_fdx_activity,
@@ -99,6 +112,8 @@ async def main() -> None:
                 check_report_retrieved_activity,
                 # M09 -- maintenance
                 kb_cleanup_expired_activity,
+                # 1.0.1 -- metadata retention
+                metadata_cleanup_expired_activity,
             ],
             max_concurrent_workflow_tasks=settings.worker_max_concurrent_workflow_tasks,
             max_concurrent_activities=settings.worker_max_concurrent_activities,
@@ -110,11 +125,17 @@ async def main() -> None:
             settings.worker_max_concurrent_activities,
         )
 
-        # M09: KB-TTL-Cleanup-Schedule idempotent anlegen (Pflichtenheft 4.3 TTL-Jobs).
-        try:
-            await ensure_kb_cleanup_schedule(client, settings)
-        except Exception as exc:
-            logger.warning("KB cleanup schedule bootstrap failed (non-fatal): %s", exc)
+        # M09/1.0.1: Wartungs-Schedules anlegen bzw. an die Settings angleichen
+        # (Cron, *_ENABLED -> pausiert). Fehler sind nicht fatal: der Worker
+        # laeuft weiter, der naechste Start versucht es erneut.
+        for name, ensure_schedule in (
+            ("KB cleanup", ensure_kb_cleanup_schedule),
+            ("Metadata cleanup", ensure_metadata_cleanup_schedule),
+        ):
+            try:
+                await ensure_schedule(client, settings)
+            except Exception as exc:
+                logger.warning("%s schedule bootstrap failed (non-fatal): %s", name, exc)
 
         logger.info(f"Starting worker on task queue: {settings.temporal_task_queue}")
 
