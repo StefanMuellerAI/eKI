@@ -41,6 +41,7 @@ Stand: M09. Ableitung aus Pflichtenheft v1 §3.4 (Erfolgskriterien), §5
 | Delete-on-Delivery | `eki_buffer_deletes_total{source=~"push\|pull"}` ≥ erfolgreiche Zustellungen | Activity + Router |
 | LLM-Fehlerrate | `eki_llm_requests_total{outcome="error"}` / alle | Provider-Adapter |
 | LLM-Wartezeit | `histogram_quantile(0.95, eki_llm_queue_wait_seconds_bucket)` | `_ollama_slot()` |
+| Warteschlange (Dokument-Limit) | `eki_document_queue_length`, `eki_document_slots_in_use` (Job-Laufzeit enthält die Wartezeit) | `acquire_document_slot` / `release_document_slot` |
 | Dead Letters | `eki_dead_letters_unacknowledged` | M10 Ops-Endpoints |
 
 ---

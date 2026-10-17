@@ -20,7 +20,9 @@ Ausführliche Anleitung: `docs/OPERATIONS_GUIDE.md`; alle Einstellungen: `docs/C
       `v1.0.0`-Images verwenden (ohne die Korrekturen, noch mit echten Drehbüchern) (eKI)
 - [ ] eKI-Host: Docker ≥ 24 mit **Docker Compose ≥ 2.24** (das Prod-Overlay nutzt `!reset`) (IT)
 - [ ] Externe Ollama-Instanz bereit (`OPERATIONS_GUIDE.md` §4.11): GPU ≥ 24 GB VRAM, NVIDIA-Treiber
-      bzw. Container Toolkit auf dem Ollama-Host, `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_KEEP_ALIVE=30m`,
+      bzw. Container Toolkit auf dem Ollama-Host, `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_KEEP_ALIVE=30m`
+      **auf dem Ollama-Host gesetzt** (nicht in `.env.local`; Kontrolle `journalctl -u ollama | grep
+      "server config"`), keine weitere eKI-Instanz (Stage/Entwicklung) auf derselben Instanz,
       Port 11434 nur für die eKI-Hosts erreichbar; Ollama-Version dokumentiert
       (`curl -s http://<ollama-host>:11434/api/version`) und der Pin in `docker-compose.ollama.yml`
       (derzeit `0.33.3`) darauf abgeglichen (IT)
@@ -59,6 +61,8 @@ Ausführliche Anleitung: `docs/OPERATIONS_GUIDE.md`; alle Einstellungen: `docs/C
 - [ ] `CORS_ORIGINS`, `TRUST_PROXY_HEADERS=true` + `TRUSTED_PROXY_IPS` (nur hinter Reverse-Proxy;
       sonst teilen sich alle Clients das Rate Limit der Proxy-IP)
 - [ ] `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT=36000`, `BUFFER_TTL_SECONDS=21600`
+- [ ] Dokument-Limit passend zur Ollama-Instanz: `MAX_CONCURRENT_DOCUMENTS=1` bei einer GPU mit
+      `OLLAMA_NUM_PARALLEL=1`, `DOCUMENT_QUEUE_TIMEOUT_SECONDS=7200` (`OPERATIONS_GUIDE.md` §4.2, §5.12)
 - [ ] `CALLBACK_URL_ALLOWED_HOSTS` mit ePro abgestimmt (Standard: `epro.filmakademie.de`,
       `staging.epro.filmakademie.de`), `TEMPORAL_PRIORITY_LEVELS=10` passend zu
       `matching.priorityLevels` der Dynamic Config
@@ -145,7 +149,8 @@ Dev-Abhängigkeiten, `docs/TESTING_GUIDE.md`).
 - [ ] `Idempotency-Key`-Header wird ePro-seitig dedupliziert (Guide §4b)
 - [ ] Jobs mit Status `failed`/`cancelled` und ein 410 beim Report-Abruf werden als
       „keine automatische Bewertung – manuelle Prüfung" angezeigt, nie als „kein Risiko" (Guide §3, §4)
-- [ ] Polling-Timeout ≥ 2,5 h und Polling-Intervall passend zum Rate Limit (Guide §3, §8)
+- [ ] Polling-Timeout ≥ 4,5 h (Warteschlange bis 2 h + Verarbeitung bis 2 h) und Polling-Intervall
+      passend zum Rate Limit (Guide §3, §8); `pending` kann „wartet auf Verarbeitungsplatz“ bedeuten
 - [ ] Webhook-Endpunkt für `security.delivery.failed` bereit (optional); Grund
       `invalid_callback_url` bekannt
 - [ ] Falls ePro `callback_url` nutzt: Callback-Host steht in `CALLBACK_URL_ALLOWED_HOSTS`, löst

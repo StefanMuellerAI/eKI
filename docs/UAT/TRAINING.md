@@ -17,7 +17,7 @@ lokalen Stack (`docker compose … up -d`) oder die Stage.
    `delivery=pull|push`; `idempotency_key` **immer** setzen (z. B. Dokument-ID + Version).
    Übung: Postman „3. FDX Workflow" und „2. PDF Workflow".
 4. **Polling** – Status-Werte `pending → running → delivering → completed | failed`;
-   `metadata.delivery_status`; empfohlene Intervalle, Timeout ≥ 2,5 h und Rate Limit je Quell-IP
+   `metadata.delivery_status`; empfohlene Intervalle, Timeout ≥ 4,5 h (Warteschlange) und Rate Limit je Quell-IP
    (Guide §3, §8). **`failed` heißt „keine automatische Bewertung – manuelle Prüfung", nie
    „kein Risiko"** (fail-closed, z. B. bei Parsing-Fehler, LLM-Ausfall oder
    Prompt-Injection-Filter; inhaltsfreie `error_message`, optional Webhook).
@@ -64,7 +64,9 @@ Material: `docs/EPRO_INTEGRATION_GUIDE.md`, `openapi/eki-api-v1.0.yaml`, Postman
    nur verschlüsselt, lesbar sind IDs, Activity-Namen, Zeiten und Fehlertypen); Dead Letters innerhalb
    von 90 Tagen bearbeiten.
 7. **LLM-Betrieb** – externe Ollama-Instanz (URL, Modelle, Version, Erreichbarkeit – `/ready` prüft
-   Ollama nicht), VRAM, `OLLAMA_MAX_CONCURRENT_REQUESTS`, Queue-Wait-Metrik, OCR-Cap.
+   Ollama nicht; `OLLAMA_NUM_PARALLEL` & Co. werden auf dem Ollama-Host gesetzt), VRAM,
+   Dokument-Limit und Warteschlange (`MAX_CONCURRENT_DOCUMENTS`, `OPERATIONS_GUIDE.md` §5.12),
+   `OLLAMA_MAX_CONCURRENT_REQUESTS`, Queue-Wait-Metrik, OCR-Cap.
    Paritätslauf als Regressionsprüfung nach Modell-, Prompt- oder Ollama-Update.
 8. **Update/Rollback** – `EKI_IMAGE_TAG=<Release-Tag>` setzen, `pull` + `up -d --no-build` (API und
    Worker immer gemeinsam), `alembic upgrade head` (Head `c4e6a8b0d2f1` prüfen); vor Releases mit

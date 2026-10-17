@@ -200,9 +200,15 @@ Vollständige Referenz: [`CONFIGURATION.md`](CONFIGURATION.md). `.env.local` gil
 
 ### 4.2 Skalierung
 
-- Mehr Durchsatz bei LLM-Wartezeit: erst `OLLAMA_MAX_CONCURRENT_REQUESTS` (GPU-abhängig),
+- **Dokument-Limit** (`MAX_CONCURRENT_DOCUMENTS`, Standard 1): so viele Jobs nutzen gleichzeitig die
+  KI, alle weiteren warten als `pending` (§5.12). Erhöhen nur, wenn die Ollama-Instanz parallele
+  Anfragen verkraftet (`OLLAMA_NUM_PARALLEL` > 1 und genug VRAM, §4.11), und dann zusammen mit
+  `OLLAMA_MAX_CONCURRENT_REQUESTS`. Bei einer GPU bringt 1 den besten Durchsatz: Dokumente werden
+  nacheinander fertig statt alle gemeinsam spät.
+- Mehr Durchsatz je Job bei LLM-Wartezeit: erst `OLLAMA_MAX_CONCURRENT_REQUESTS` (GPU-abhängig),
   dann `LLM_PARALLEL_ENABLED=true` mit `*_CONCURRENCY=2`, zuletzt zweiter Worker
-  (`--scale worker=2`; beide teilen die Ollama-Instanz, der Cap wirkt pro Prozess).
+  (`--scale worker=2`, dafür `container_name` des Dienstes entfernen; beide teilen die Ollama-Instanz,
+  der Cap wirkt pro Prozess, das Dokument-Limit gilt über alle Worker).
 - API-Replikas: `--scale api=2` hinter Reverse-Proxy; jedes Replikat exportiert eigene Metriken.
 
 ### 4.3 API-Key-Verwaltung
@@ -598,8 +604,14 @@ KB-Embeddings laufen auf einer externen Instanz:
   (fail-closed, §5.4). Erreichbarkeit nach jeder Änderung prüfen (Kommando in §4.10, Schritt 18).
 - **Einstellungen der Instanz** (wie der frühere Ollama-Dienst im Prod-Overlay):
   `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_KEEP_ALIVE=30m`, GPU ≥ 24 GB VRAM, `OLLAMA_DEBUG` nicht setzen.
-  `OLLAMA_MAX_CONCURRENT_REQUESTS` der eKI begrenzt pro API-/Worker-Prozess; teilen sich mehrere
-  Worker oder andere Anwendungen die Instanz, die Summe beachten.
+  Diese Variablen werden **auf dem Ollama-Host** gesetzt (systemd: `systemctl edit ollama.service`,
+  Abschnitt `[Service]`, `Environment="OLLAMA_NUM_PARALLEL=1"`; Docker: `-e`/`environment:`), nicht in
+  der `.env.local` der eKI; prüfen mit `journalctl -u ollama | grep "server config"` und `ollama ps`
+  (Spalte PROCESSOR: `100% GPU`). Jeder Parallel-Platz belegt ein eigenes Kontextfenster
+  (`OLLAMA_NUM_CTX`, 32768) im VRAM; reicht der Speicher nicht, rechnet Ollama teilweise auf der CPU.
+  `OLLAMA_MAX_CONCURRENT_REQUESTS` der eKI begrenzt pro API-/Worker-Prozess, das Dokument-Limit
+  (§5.12) die Zahl gleichzeitig verarbeiteter Jobs; teilen sich weitere eKI-Instanzen (Stage,
+  Entwicklung) oder andere Anwendungen die Instanz, die Summe beachten.
 - **Netz:** Die Ollama-API hat keine Anmeldung. Port 11434 nur für die eKI-Hosts freigeben, nie
   öffentlich. Die Instanz verarbeitet Drehbuchszenen und gehört damit zur Verarbeitungsumgebung
   (`DATENSCHUTZ.md` §5). Nur der Ollama-Host braucht Zugang zur Ollama-Registry (Modell-Pull).
@@ -632,6 +644,7 @@ Kurzübersicht (Alert → erste Maßnahme):
 | `EkiApiDown` | `docker compose ps`, `docker compose logs api --tail 200` | Startfehler meist Konfig-Validator oder `*_FILE` (§8) |
 | `EkiWorkerDown` | `docker compose logs worker --tail 200` | Temporal erreichbar? Namespace? (§5.3, §8) |
 | `EkiLlmErrorRateHigh`, Jobs `failed` mit LLM-Fehler | §5.4 | Ollama-Instanz erreichbar? Modell gepullt? VRAM? |
+| Jobs bleiben lange `pending`, Worker-Log `Document limit reached, job waits` | Warteschlange ansehen | §5.12 |
 | Jobs hängen in `running` | Temporal UI (§8.2): Pending Activities; Worker-Logs nach `job_id` filtern | Korrelation via `request_id`/`job_id` in jeder Logzeile |
 | Jobs bleiben `pending`, Temporal UI zeigt wiederholt *Workflow Task Failed* | Worker-Log nach `PayloadDecryptionError` durchsuchen | API und Worker mit unterschiedlichem `API_SECRET_KEY` (§8.1) |
 | Dead Letter `invalid_callback_url` | `CALLBACK_URL_ALLOWED_HOSTS` und DNS des Callback-Hosts prüfen | [`M10_FAILOVER_RUNBOOK.md`](M10_FAILOVER_RUNBOOK.md) §2.9 |
@@ -939,6 +952,47 @@ docker compose exec temporal temporal workflow describe -w <job_id> --address te
 
 Temporal liest die Dynamic-Config-Datei auch im laufenden Betrieb periodisch neu ein; nach einer
 Änderung `docker compose restart temporal` übernimmt sie sofort (wartende Aufgaben bleiben erhalten).
+
+### 5.12 Warteschlange (Dokument-Limit)
+
+**Was läuft:** Vor der Verarbeitung holt sich jeder Job einen von `MAX_CONCURRENT_DOCUMENTS`
+Verarbeitungsplätzen (Activity `acquire_document_slot`). Ist keiner frei, bleibt der Job `pending` und
+fragt mit dauerhaften Timern nach (5 s, verdoppelt bis 60 s); er belegt dabei keinen Worker-Platz, und
+kein Activity-Timeout läuft. Reihenfolge: Priorität (1 zuerst), dann Eingang. Nach der Risikoanalyse
+gibt der Job den Platz frei (`release_document_slot`), ebenso bei Fehler und bei einem Workflow-Cancel.
+Nach `DOCUMENT_QUEUE_TIMEOUT_SECONDS` (Standard 2 h) ohne Platz endet der Job mit `failed`
+(„Kein freier Verarbeitungsplatz innerhalb von … min …“), ePro reicht ihn später neu ein.
+
+Der Zustand liegt in Redis (nur Job-IDs, keine Inhalte): `eki:docslot:holders` (Job → Ende der Lease in
+Epoch-Millisekunden), `eki:docslot:queue` (Wartende), `eki:docslot:seen` (letzte Nachfrage). Eine Lease
+gilt 30 min; die KI-Schritte verlängern sie jede Minute. Wartende, die 5 min nicht mehr nachgefragt
+haben, fallen aus der Schlange; fragen sie wieder nach, stehen sie wieder an ihrer alten Stelle.
+
+**Ansehen:**
+
+```bash
+docker compose exec redis redis-cli ZRANGE eki:docslot:holders 0 -1 WITHSCORES   # Jobs mit Platz
+docker compose exec redis redis-cli ZRANGE eki:docslot:queue 0 -1                # Wartende in Reihenfolge
+docker compose logs worker | grep -E "Document slot|Document limit"              # Vergabe, Position, Freigabe
+```
+
+Metriken (Worker): `eki_document_slots_in_use`, `eki_document_queue_length`; wartende Jobs zeigt auch
+`GET /v1/ops/jobs?status=pending`.
+
+**Maßnahmen:**
+
+- *Schlange abbauen:* `MAX_CONCURRENT_DOCUMENTS` erhöhen (nur wenn Ollama es verkraftet, §4.2) oder
+  auf `0` setzen, dann `docker compose up -d --force-recreate api worker`. Wartende Jobs bekommen beim
+  nächsten Nachfragen (≤ 60 s) einen Platz.
+- *Platz bleibt belegt, obwohl der Job beendet ist* (z. B. nach `terminate` statt `cancel`, der Workflow
+  gibt dann nichts frei): Die Lease läuft spätestens nach 30 min ab. Sofort freigeben:
+  `docker compose exec redis redis-cli ZREM eki:docslot:holders <job_id>`. Jobs zum Entlasten der KI
+  daher per Cancel beenden, nicht per Terminate.
+- *Redis-Inhalt verloren* (Volume geleert): Die Belegung ist vergessen; kurzzeitig laufen mehr Jobs als
+  erlaubt, die Schlange baut sich beim nächsten Nachfragen in der alten Reihenfolge neu auf.
+- *Jobs scheitern mit „Kein freier Verarbeitungsplatz“:* Die Schlange war länger als die Wartezeit. Last
+  verteilen (ePro staffeln), das Limit erhöhen (§4.2) oder `DOCUMENT_QUEUE_TIMEOUT_SECONDS` anheben – dann
+  aber `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` mit erhöhen (Start-Validator, `CONFIGURATION.md` §3.4).
 
 ---
 

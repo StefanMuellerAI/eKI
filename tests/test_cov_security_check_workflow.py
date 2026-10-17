@@ -108,6 +108,30 @@ def _activity_error(activity_type: str, cause: BaseException | None) -> Activity
     return err
 
 
+class TestDocumentLimitHelpers:
+    @pytest.mark.parametrize(
+        ("job_data", "enabled"),
+        [
+            ({}, False),
+            ({"max_concurrent_documents": 0}, False),
+            ({"max_concurrent_documents": None}, False),
+            ({"max_concurrent_documents": "two"}, False),
+            ({"max_concurrent_documents": 1}, True),
+            ({"max_concurrent_documents": "3"}, True),
+        ],
+    )
+    def test_enabled_only_with_a_positive_frozen_limit(self, job_data, enabled):
+        assert security_check_module._document_limit_enabled(job_data) is enabled
+
+    @pytest.mark.parametrize(
+        ("raw", "seconds"),
+        [(None, 7200), ("soon", 7200), (5, 60), (1800, 1800), ("900", 900)],
+    )
+    def test_queue_timeout_defaults_and_floor(self, raw, seconds):
+        job_data = {} if raw is None else {"document_queue_timeout_seconds": raw}
+        assert security_check_module._resolve_queue_timeout(job_data) == timedelta(seconds=seconds)
+
+
 class TestFailureMessage:
     """``error_message`` of a failed job never echoes arbitrary exception text."""
 
@@ -339,6 +363,10 @@ class Harness:
             return {"recorded": True, "dead_letter_id": str(uuid.uuid4())}
         if name == "check_report_retrieved":
             return {"found": True, "retrieved": True}
+        if name == "acquire_document_slot":
+            return {"granted": True, "position": 0, "limit": 1, "in_use": 1, "waiting": 0}
+        if name == "release_document_slot":
+            return {"released": True, "in_use": 0, "waiting": 0}
         raise AssertionError(f"unexpected activity {name}")
 
 
@@ -397,6 +425,14 @@ def build_stub_activities(h: Harness) -> list[Any]:
     async def check_report_retrieved(payload: dict) -> dict:
         return await h.handle("check_report_retrieved", payload)
 
+    @activity.defn(name="acquire_document_slot")
+    async def acquire_document_slot(payload: dict) -> dict:
+        return await h.handle("acquire_document_slot", payload)
+
+    @activity.defn(name="release_document_slot")
+    async def release_document_slot(payload: dict) -> dict:
+        return await h.handle("release_document_slot", payload)
+
     return [
         parse_fdx,
         extract_pdf_text,
@@ -411,6 +447,8 @@ def build_stub_activities(h: Harness) -> list[Any]:
         send_webhook,
         record_dead_letter,
         check_report_retrieved,
+        acquire_document_slot,
+        release_document_slot,
     ]
 
 
@@ -1469,6 +1507,185 @@ async def _job_row(p: Pipeline, job_id: str) -> JobMetadata:
         ).scalar_one()
 
 
+_QUEUE_TIMEOUT_MESSAGE = (
+    "Kein freier Verarbeitungsplatz innerhalb von 5 min (Dokument-Limit 1, Warteposition 3) "
+    "– Job bitte später neu einreichen"
+)
+
+
+def _limited(fmt: str = "fdx", mode: str = "push", **overrides: Any) -> dict[str, Any]:
+    """Job data as the API freezes it with an active document limit."""
+    data = {"max_concurrent_documents": 1, "document_queue_timeout_seconds": 7200, **overrides}
+    return _job_data(fmt, mode, **data)
+
+
+def _busy(position: int = 3) -> Callable[[Any], Any]:
+    return lambda _p: {"granted": False, "position": position, "limit": 1, "in_use": 1}
+
+
+def _event_count(history: WorkflowHistory, event_type: Any) -> int:
+    return sum(1 for e in history.events if e.event_type == event_type)
+
+
+@pytest.mark.temporal
+@pytest.mark.asyncio
+class TestDocumentLimit:
+    """MAX_CONCURRENT_DOCUMENTS: queue before processing, release after the LLM work."""
+
+    async def test_job_without_limit_key_never_queues(self):
+        h = Harness()
+
+        result = await _run(h, _job_data("fdx", "push"))
+
+        assert result["status"] == "completed"
+        assert h.count("acquire_document_slot") == 0
+        assert h.count("release_document_slot") == 0
+
+    async def test_limit_zero_skips_the_queue(self):
+        h = Harness()
+
+        result = await _run(h, _job_data("fdx", "push", max_concurrent_documents=0))
+
+        assert result["status"] == "completed"
+        assert h.count("acquire_document_slot") == 0
+
+    async def test_fdx_takes_slot_first_and_releases_it_after_the_risk_analysis(self):
+        h = Harness(fdx_scenes=3)
+
+        outcome = await _execute(h, _limited("fdx", "push", priority=2))
+
+        assert outcome.result is not None and outcome.result["status"] == "completed"
+        names = h.names()
+        assert names[0] == "acquire_document_slot"
+        last_analysis = max(i for i, n in enumerate(names) if n == "analyze_scene_risk")
+        release = names.index("release_document_slot")
+        assert last_analysis < release < names.index("aggregate_report")
+        assert h.count("release_document_slot") == 1
+        acquire = h.payloads("acquire_document_slot")[0]
+        assert acquire["job_id"].startswith("wf-")  # workflow id (= job_id in production)
+        assert acquire["priority"] == 2
+        assert isinstance(acquire["enqueued_at_ms"], int)
+        assert h.payloads("release_document_slot") == [{"job_id": acquire["job_id"]}]
+        await _assert_replays(outcome.history)
+
+    async def test_pdf_releases_after_the_risk_analysis_not_after_structuring(self):
+        h = Harness(pdf_blocks=4)
+
+        outcome = await _execute(h, _limited("pdf", "push"))
+
+        assert outcome.result is not None and outcome.result["status"] == "completed"
+        names = h.names()
+        assert names[0] == "acquire_document_slot"
+        release = names.index("release_document_slot")
+        assert names.index("aggregate_script") < release
+        assert max(i for i, n in enumerate(names) if n == "analyze_scene_risk") < release
+        assert release < names.index("aggregate_report")
+        await _assert_replays(outcome.history)
+
+    async def test_waiting_job_stays_pending_and_polls_with_backoff(self):
+        h = Harness()
+        answers = iter([False, False, False, True])
+        h.behaviours["acquire_document_slot"] = lambda _p: {
+            "granted": next(answers),
+            "position": 1,
+            "limit": 1,
+        }
+
+        outcome = await _execute(h, _limited())
+
+        assert outcome.result is not None and outcome.result["status"] == "completed"
+        names = h.names()
+        assert names[:4] == ["acquire_document_slot"] * 4
+        # Nothing is marked "running" before the slot is granted.
+        assert names[4] == "update_job_status"
+        assert h.statuses()[0] == ("running", 0)
+        polls = h.scheduled("acquire_document_slot")
+        gaps = [round((b - a).total_seconds()) for a, b in zip(polls, polls[1:], strict=False)]
+        assert gaps == [5, 10, 20]
+        # Same place in the queue on every poll.
+        payloads = h.payloads("acquire_document_slot")
+        assert all(p == payloads[0] for p in payloads)
+        assert _event_count(outcome.history, EventType.EVENT_TYPE_TIMER_STARTED) == 3
+        await _assert_replays(outcome.history)
+
+    async def test_queue_timeout_fails_the_job_content_free(self):
+        h = Harness()
+        h.behaviours["acquire_document_slot"] = _busy(position=3)
+
+        outcome = await _execute(h, _limited(document_queue_timeout_seconds=300))
+
+        assert outcome.result is not None
+        assert outcome.result["status"] == "failed"
+        assert outcome.result["error"] == _QUEUE_TIMEOUT_MESSAGE
+        assert h.count("parse_fdx") == 0
+        # Polls stop at the deadline (5 s doubling to 60 s within 300 s).
+        assert 8 <= h.count("acquire_document_slot") <= 10
+        polls = h.scheduled("acquire_document_slot")
+        assert round((polls[-1] - polls[0]).total_seconds()) == 300
+        assert h.count("release_document_slot") == 1  # leaves the queue
+        assert h.statuses() == [("failed", None)]
+        assert h.payloads("cleanup_buffer") == [{"ref_keys": ["script-ref"]}]
+        webhook = h.payloads("send_delivery_failed_webhook")
+        assert [w["reason"] for w in webhook] == ["processing_failed"]
+        await _assert_replays(outcome.history)
+
+    async def test_failure_after_grant_releases_the_slot_once(self):
+        h = Harness(fdx_scenes=2)
+        h.behaviours["analyze_scene_risk"] = _non_retryable()
+
+        result = await _run(h, _limited())
+
+        assert result["status"] == "failed"
+        assert h.count("release_document_slot") == 1
+        names = h.names()
+        assert names.index("release_document_slot") < names.index("cleanup_buffer")
+
+    async def test_cancel_while_waiting_leaves_the_queue(self):
+        h = Harness()
+        h.behaviours["acquire_document_slot"] = _busy(position=1)
+
+        outcome = await _execute(h, _limited(), cancel_on_timer=True)
+
+        assert isinstance(outcome.error, WorkflowFailureError)
+        assert isinstance(outcome.error.cause, CancelledError)
+        assert h.count("parse_fdx") == 0
+        assert h.count("release_document_slot") == 1
+        assert ("cancelled", None) in h.statuses()
+        await _assert_replays(outcome.history)
+
+    async def test_cancel_landing_on_the_release_retries_it(self):
+        h = Harness()
+        first_release = asyncio.Event()
+        releases = 0
+
+        async def _release(_payload: Any) -> dict[str, Any]:
+            nonlocal releases
+            releases += 1
+            if releases == 1:
+                first_release.set()
+                await asyncio.sleep(2)
+            return {"released": True}
+
+        h.behaviours["release_document_slot"] = _release
+
+        outcome = await _execute(h, _limited(), cancel_when=first_release)
+
+        assert isinstance(outcome.error, WorkflowFailureError)
+        assert isinstance(outcome.error.cause, CancelledError)
+        assert h.count("release_document_slot") == 2  # cancellation branch releases again
+        assert ("cancelled", None) in h.statuses()
+        await _assert_replays(outcome.history)
+
+    async def test_release_failure_is_not_fatal(self):
+        h = Harness()
+        h.behaviours["release_document_slot"] = _non_retryable("redis down")
+
+        result = await _run(h, _limited())
+
+        assert result["status"] == "completed"
+        assert h.count("release_document_slot") == 1
+
+
 @pytest.mark.temporal
 @pytest.mark.asyncio
 class TestRealActivitiesEndToEnd:
@@ -1646,6 +1863,8 @@ def _worker_settings(**overrides: Any) -> SimpleNamespace:
         "temporal_task_queue": "eki-cov-queue",
         "worker_max_concurrent_workflow_tasks": 7,
         "worker_max_concurrent_activities": 3,
+        "max_concurrent_documents": 1,
+        "ollama_max_concurrent_requests": 1,
         "otel_enabled": False,
         "api_secret_key": _CODEC_SECRET,
     }
@@ -1714,7 +1933,7 @@ class TestWorkerMain:
             if callable(obj) and activity._Definition.from_callable(obj) is not None
         }
         assert defined <= set(registered)
-        assert len(called) == 15
+        assert len(called) == 17
 
     async def test_bootstrap_wires_metrics_tracing_and_schedule(self, worker_main, caplog):
         caplog.set_level("INFO", logger="worker.main")

@@ -145,6 +145,14 @@ LLM_INFLIGHT = _gauge(
     "LLM calls currently executing (after acquiring a slot).",
     ["provider"],
 )
+DOCUMENT_SLOTS_IN_USE = _gauge(
+    "eki_document_slots_in_use",
+    "Jobs currently holding a processing slot (document limit, MAX_CONCURRENT_DOCUMENTS).",
+)
+DOCUMENT_QUEUE_LENGTH = _gauge(
+    "eki_document_queue_length",
+    "Jobs waiting for a processing slot (status pending). Updated on every poll and release.",
+)
 PROMPT_SANITIZER_HITS_TOTAL = _counter(
     "eki_prompt_sanitizer_hits_total",
     "Prompts matching a dangerous pattern, by action taken (blocked, allowed).",
@@ -290,6 +298,8 @@ __all__ = [
     "DELIVERY_ATTEMPTS_TOTAL",
     "DELIVERY_DURATION",
     "DELIVERY_FAILURES_TOTAL",
+    "DOCUMENT_QUEUE_LENGTH",
+    "DOCUMENT_SLOTS_IN_USE",
     "FINDINGS_TOTAL",
     "HTTP_REQUESTS_IN_FLIGHT",
     "HTTP_REQUESTS_TOTAL",

@@ -5,11 +5,15 @@ processes it, stores the result back, and returns only the new reference key
 plus metadata.  No screenplay content flows through Temporal history.
 """
 
+import asyncio
 import base64
+import contextlib
 import logging
 import re
 import time
 import urllib.parse
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
@@ -27,6 +31,7 @@ from core.callback_url import (
     system_resolver,
 )
 from core.exceptions import LLMException, NotFoundException, ParsingException
+from services.document_slots import DocumentSlots
 from services.secure_buffer import SecureBuffer
 
 logger = logging.getLogger(__name__)
@@ -49,6 +54,8 @@ ERROR_TYPE_INVALID_PROJECT_ID = "InvalidProjectId"
 ERROR_TYPE_INVALID_CALLBACK_URL = "InvalidCallbackUrl"
 ERROR_TYPE_JOB_STATUS_UPDATE_FAILED = "JobStatusUpdateFailed"
 ERROR_TYPE_INVALID_JOB_STATUS = "InvalidJobStatus"
+# Raised by the workflow itself when a job found no processing slot in time.
+ERROR_TYPE_QUEUE_TIMEOUT = "DocumentQueueTimeout"
 
 CONTENT_FREE_ERROR_TYPES = frozenset(
     {
@@ -58,6 +65,7 @@ CONTENT_FREE_ERROR_TYPES = frozenset(
         ERROR_TYPE_BUFFER_EXPIRED,
         ERROR_TYPE_INVALID_PROJECT_ID,
         ERROR_TYPE_INVALID_CALLBACK_URL,
+        ERROR_TYPE_QUEUE_TIMEOUT,
     }
 )
 
@@ -125,6 +133,190 @@ def _get_buffer() -> SecureBuffer:
         secret_key=settings.api_secret_key,
         default_ttl=settings.buffer_ttl_seconds,
     )
+
+
+# ===================================================================
+# Document limit (MAX_CONCURRENT_DOCUMENTS) and LLM keep-alive
+# ===================================================================
+#
+# The workflow asks ``acquire_document_slot`` for a processing slot before it
+# starts and polls with durable timers while the limit is reached; it gives
+# the slot back with ``release_document_slot`` once the LLM work is done (or
+# the job failed / was cancelled). See services/document_slots.py.
+#
+# LLM activities run inside ``_llm_activity_guard``: it heartbeats every 10 s
+# and renews the job's slot lease every 60 s. Without heartbeats a running
+# attempt never learned that its workflow had ended (job failed, cancelled or
+# terminated): it kept waiting for the Ollama semaphore and then sent its
+# request anyway, until its own start_to_close timeout (600 s) -- GPU time for
+# a result nobody collects. With heartbeats the server answers "attempt gone"
+# within one heartbeat and the SDK cancels the coroutine, which leaves the
+# semaphore queue or aborts the HTTP request to Ollama. (An attempt whose own
+# start_to_close timeout expires is cancelled by the SDK itself a few seconds
+# later, heartbeats or not.) No heartbeat_timeout is set on the activities:
+# the SDK still sends heartbeats (throttled to one per 30 s), and a timeout
+# would additionally fail attempts whenever the worker's event loop stalls.
+
+_HEARTBEAT_INTERVAL_SECONDS = 10.0
+_SLOT_RENEW_INTERVAL_SECONDS = 60.0
+_KEEPER_STOP_TIMEOUT_SECONDS = 15.0
+
+
+def _slot_limit(settings: Any) -> int:
+    try:
+        return max(0, int(getattr(settings, "max_concurrent_documents", 0) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _slot_redis(settings: Any) -> Any:
+    return aioredis.from_url(str(settings.redis_url), socket_connect_timeout=5, socket_timeout=5)
+
+
+async def _renew_document_slot(job_id: str) -> None:
+    """Extend this job's slot lease; never fails the calling activity."""
+    settings = get_settings()
+    if _slot_limit(settings) <= 0:
+        return
+    try:
+        client = _slot_redis(settings)
+        try:
+            await DocumentSlots(client).renew(job_id)
+        finally:
+            await client.aclose()
+    except Exception as exc:
+        logger.warning(
+            "Document slot lease renewal failed (non-fatal): job=%s exc_type=%s",
+            job_id,
+            type(exc).__name__,
+        )
+
+
+async def _keep_alive(job_id: str, stop: asyncio.Event) -> None:
+    """Heartbeat every 10 s and renew the slot lease every 60 s until *stop* is set.
+
+    Ended by the event, not by cancelling the task: a cancellation that lands
+    inside a Redis command can be swallowed by the client, and the loop would
+    then run on and keep the activity from ever completing.
+    """
+    last_renew: float | None = None
+    while not stop.is_set():
+        activity.heartbeat()
+        now = time.monotonic()
+        if job_id and (last_renew is None or now - last_renew >= _SLOT_RENEW_INTERVAL_SECONDS):
+            last_renew = now
+            await _renew_document_slot(job_id)
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop.wait(), _HEARTBEAT_INTERVAL_SECONDS)
+
+
+@asynccontextmanager
+async def _llm_activity_guard() -> AsyncIterator[None]:
+    """Heartbeat and renew the slot lease while an LLM activity runs.
+
+    Outside an activity context (direct calls in tests) it does nothing.
+    """
+    if not activity.in_activity():
+        yield
+        return
+    job_id = activity.info().workflow_id or ""
+    stop = asyncio.Event()
+    keeper = asyncio.create_task(_keep_alive(job_id, stop))
+    try:
+        yield
+    finally:
+        stop.set()
+        # Normally done within milliseconds; only a lease renewal in flight
+        # (Redis socket timeouts of 5 s) can delay it.
+        done, _ = await asyncio.wait({keeper}, timeout=_KEEPER_STOP_TIMEOUT_SECONDS)
+        if not done:
+            keeper.cancel()
+            logger.warning("LLM keep-alive did not stop in time (cancelled): job=%s", job_id)
+        elif not keeper.cancelled() and keeper.exception() is not None:
+            logger.warning(
+                "LLM keep-alive ended with an error (non-fatal): job=%s exc_type=%s",
+                job_id,
+                type(keeper.exception()).__name__,
+            )
+
+
+def _int_or(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+@activity.defn(name="acquire_document_slot")
+async def acquire_document_slot_activity(payload: dict[str, Any]) -> dict[str, Any]:
+    """Take a processing slot for the job, or report its place in the queue.
+
+    The limit is read live from the worker settings: raising
+    ``MAX_CONCURRENT_DOCUMENTS`` (or setting it to 0) also admits jobs that
+    are already waiting. Content-free: ids, counts and positions only.
+    """
+    settings = get_settings()
+    limit = _slot_limit(settings)
+    if limit <= 0:
+        return {"granted": True, "position": 0, "limit": 0, "in_use": 0, "waiting": 0}
+    job_id = str(payload.get("job_id") or "")
+    if not job_id:
+        raise _non_retryable("InvalidSlotRequest", "acquire_document_slot needs a job_id")
+
+    client = _slot_redis(settings)
+    try:
+        decision = await DocumentSlots(client).acquire(
+            job_id,
+            priority=_int_or(payload.get("priority"), 5),
+            enqueued_at_ms=_int_or(payload.get("enqueued_at_ms"), 0),
+            limit=limit,
+        )
+    finally:
+        await client.aclose()
+
+    metrics.DOCUMENT_SLOTS_IN_USE.set(decision.in_use)
+    metrics.DOCUMENT_QUEUE_LENGTH.set(decision.waiting)
+    if decision.granted:
+        logger.info(
+            "Document slot granted: job=%s in_use=%d/%d waiting=%d",
+            job_id,
+            decision.in_use,
+            limit,
+            decision.waiting,
+        )
+    else:
+        logger.info(
+            "Document limit reached, job waits: job=%s position=%d in_use=%d/%d",
+            job_id,
+            decision.position,
+            decision.in_use,
+            limit,
+        )
+    return {
+        "granted": decision.granted,
+        "position": decision.position,
+        "limit": limit,
+        "in_use": decision.in_use,
+        "waiting": decision.waiting,
+    }
+
+
+@activity.defn(name="release_document_slot")
+async def release_document_slot_activity(payload: dict[str, Any]) -> dict[str, Any]:
+    """Give the job's processing slot back, or take it out of the queue."""
+    job_id = str(payload.get("job_id") or "")
+    if not job_id:
+        return {"released": False}
+    settings = get_settings()
+    client = _slot_redis(settings)
+    try:
+        in_use, waiting = await DocumentSlots(client).release(job_id)
+    finally:
+        await client.aclose()
+    metrics.DOCUMENT_SLOTS_IN_USE.set(in_use)
+    metrics.DOCUMENT_QUEUE_LENGTH.set(waiting)
+    logger.info("Document slot released: job=%s in_use=%d waiting=%d", job_id, in_use, waiting)
+    return {"released": True, "in_use": in_use, "waiting": waiting}
 
 
 # ===================================================================
@@ -272,8 +464,14 @@ async def structure_scene_llm_activity(job_data: dict[str, Any]) -> dict[str, An
     """Structure a single scene block via LLM (Ollama Structured Output).
 
     Processes one block at a time.  The workflow calls this activity
-    once per scene block.
+    once per scene block. Heartbeats and renews the document slot lease
+    while it runs (``_llm_activity_guard``).
     """
+    async with _llm_activity_guard():
+        return await _structure_scene_llm(job_data)
+
+
+async def _structure_scene_llm(job_data: dict[str, Any]) -> dict[str, Any]:
     blocks_ref_key = job_data.get("blocks_ref_key", "")
     block_index = job_data.get("block_index", 0)
     logger.info("LLM structuring block %d", block_index)
@@ -826,6 +1024,16 @@ def _chunk_text(text: str, size: int, overlap: int) -> list[str]:
 
 @activity.defn(name="analyze_scene_risk")
 async def analyze_scene_risk_activity(job_data: dict[str, Any]) -> dict[str, Any]:
+    """Analyze one scene for safety risks (see ``_analyze_scene_risk``).
+
+    Heartbeats and renews the document slot lease while it runs
+    (``_llm_activity_guard``).
+    """
+    async with _llm_activity_guard():
+        return await _analyze_scene_risk(job_data)
+
+
+async def _analyze_scene_risk(job_data: dict[str, Any]) -> dict[str, Any]:
     """Analyze a single scene for safety risks using LLM with taxonomy context.
 
     The LLM receives the full risk taxonomy and measures catalog in the prompt.

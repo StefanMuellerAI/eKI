@@ -4,6 +4,35 @@ Alle wesentlichen Änderungen der eKI API. Format nach [Keep a Changelog](https:
 Versionierung nach [SemVer](https://semver.org/lang/de/). Ein Minor-Release pro Pflichtenheft-Meilenstein
 (M0x → 0.x.0), `1.0.0` mit dem UAT-Paket (M12). Die Versionsquelle ist `core/version.py`.
 
+## [Unreleased]
+
+Anlass: Auf der externen Ollama-Instanz liefen mehrere Drehbücher gleichzeitig; die Instanz wurde so
+langsam, dass keines fertig wurde. Die eKI begrenzte nur gleichzeitige KI-Aufrufe je Prozess, nicht die
+Zahl gleichzeitig verarbeiteter Dokumente: Alle Jobs liefen verzahnt, ihre KI-Schritte warteten auf den
+Semaphore, und diese Wartezeit lief gegen das Activity-Timeout. Keine Migration.
+
+### Neu
+- **Dokument-Limit** (`MAX_CONCURRENT_DOCUMENTS`, Standard `1`; `0` = kein Limit wie bis 1.0.1): Höchstens
+  so viele Jobs werden gleichzeitig verarbeitet. Alle weiteren warten als `pending` in einer
+  Warteschlange (Priorität, dann Eingang). Der Workflow fragt mit dauerhaften Timern nach
+  (`acquire_document_slot`, 5 s bis 60 s); ein wartender Job belegt keinen Worker-Platz, und es läuft kein
+  Activity-Timeout. Freigabe nach der Risikoanalyse bzw. bei Fehler/Abbruch (`release_document_slot`).
+  Zustand in Redis (`eki:docslot:*`, nur Job-IDs), Plätze mit 30-Minuten-Lease, die die KI-Schritte
+  verlängern. Die Grenze liest der Worker live; ob ein Job sich anstellt, friert die API beim Start ein.
+- **Höchstwartezeit** (`DOCUMENT_QUEUE_TIMEOUT_SECONDS`, Standard 7200): danach endet der Job mit `failed`
+  und der inhaltsfreien Meldung „Kein freier Verarbeitungsplatz innerhalb von … min …“ (Webhook-Grund
+  `processing_failed`). Der Start-Validator prüft, dass Wartezeit + `BUFFER_TTL_SECONDS` unter
+  `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` bleiben und die Wartezeit kürzer als `BUFFER_TTL_SECONDS` ist.
+- **Heartbeats in den KI-Schritten** (`structure_scene_llm`, `analyze_scene_risk`, alle 10 s): Endet der
+  Workflow (Fehler, Abbruch, Terminate), bricht ein laufender KI-Schritt jetzt binnen eines Heartbeats ab,
+  statt bis zu seinem eigenen Timeout (600 s) weiter auf Ollama zu warten bzw. Ollama rechnen zu lassen.
+- Metriken `eki_document_slots_in_use` und `eki_document_queue_length` (Worker); das Startlog des Workers
+  nennt zusätzlich das Dokument-Limit und `OLLAMA_MAX_CONCURRENT_REQUESTS`.
+
+### Für ePro relevant
+- Jobs können länger `pending` bleiben (Warteschlange). Polling-Timeout auf mindestens 4,5 h erhöhen
+  (bis 2 h Wartezeit + bis 2 h Verarbeitung), `docs/EPRO_INTEGRATION_GUIDE.md` §3.
+
 ## [1.0.1] – 2026-10-16 – Stabilisierung zur Übergabe
 
 Ergebnis eines Test- und Doku-Reviews vor der Übergabe und der daraus folgenden Projektentscheidungen.

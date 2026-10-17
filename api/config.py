@@ -487,6 +487,32 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Dokument-Limit: wie viele Prüfungen gleichzeitig verarbeitet werden.
+    # Alle weiteren warten als ``pending`` in einer Warteschlange (Priorität,
+    # dann Eingang), ohne Worker-Slot und ohne laufendes Activity-Timeout
+    # (services/document_slots.py). Die API friert beim Jobstart nur ein, OB
+    # ein Job sich anstellt; die Grenze selbst liest der Worker live.
+    max_concurrent_documents: int = Field(
+        default=1,
+        ge=0,
+        le=50,
+        description=(
+            "Dokument-Limit: so viele Jobs werden gleichzeitig verarbeitet, "
+            "weitere warten als pending. 1 passt zu einer GPU mit "
+            "OLLAMA_NUM_PARALLEL=1. 0 = kein Limit (Verhalten bis 1.0.1)."
+        ),
+    )
+    document_queue_timeout_seconds: int = Field(
+        default=7200,
+        ge=60,
+        description=(
+            "Höchstwartezeit eines Jobs auf einen Verarbeitungsplatz; danach "
+            "endet er mit failed. Gilt für neue Jobs. Muss kürzer sein als "
+            "BUFFER_TTL_SECONDS und zusammen mit ihm unter "
+            "TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT bleiben."
+        ),
+    )
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, v: Any) -> Any:
@@ -602,6 +628,33 @@ class Settings(BaseSettings):
     def is_development(self) -> bool:
         """Check if running in development."""
         return self.env == "development"
+
+    @model_validator(mode="after")
+    def validate_document_queue_timeout(self) -> "Settings":
+        """A queued job must still find its script and finish before its workflow ends.
+
+        The uploaded script lives ``BUFFER_TTL_SECONDS`` in Redis, counted from
+        the upload; the workflow lives ``TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT``
+        and needs ``BUFFER_TTL_SECONDS`` after the report for push retries or
+        the pull window. Queue wait + processing must fit into both.
+        """
+        if self.max_concurrent_documents <= 0:
+            return self
+        wait = self.document_queue_timeout_seconds
+        if wait >= self.buffer_ttl_seconds:
+            raise ValueError(
+                f"DOCUMENT_QUEUE_TIMEOUT_SECONDS ({wait}) must be shorter than "
+                f"BUFFER_TTL_SECONDS ({self.buffer_ttl_seconds}): the script would "
+                "expire in the buffer while the job waits"
+            )
+        if wait + self.buffer_ttl_seconds >= self.temporal_workflow_execution_timeout:
+            raise ValueError(
+                f"DOCUMENT_QUEUE_TIMEOUT_SECONDS ({wait}) + BUFFER_TTL_SECONDS "
+                f"({self.buffer_ttl_seconds}) must stay below "
+                f"TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT "
+                f"({self.temporal_workflow_execution_timeout}), leaving time for processing"
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":

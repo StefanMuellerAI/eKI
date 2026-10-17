@@ -193,7 +193,7 @@ und `delivered_at` auf dem Abrufzeitpunkt.
 
 | Status | Bedeutung | Naechster Schritt |
 |--------|-----------|-------------------|
-| pending | Job angenommen, Verarbeitung steht aus | Weiter pollen |
+| pending | Job angenommen, Verarbeitung steht aus -- auch, solange der Job auf einen freien Verarbeitungsplatz wartet (Dokument-Limit, siehe unten) | Weiter pollen |
 | running | Verarbeitung laeuft | Weiter pollen |
 | delivering | Report erzeugt, Zustellung an ePro laeuft (Push; im Pull-Modus nur kurz, bis der Report bereitliegt) | Weiter pollen |
 | completed | Fertig, report_id vorhanden | Report abholen (Pull) bzw. bereits zugestellt (Push) |
@@ -215,6 +215,7 @@ Inhalte werden dabei sofort geloescht. `error_message` ist inhaltsfrei, zum Beis
 ```
 Parsing fehlgeschlagen: PDF ist passwortgeschützt
 Szene 7: Risikoanalyse fehlgeschlagen (LLMException)
+Kein freier Verarbeitungsplatz innerhalb von 120 min (Dokument-Limit 1, Warteposition 3) – Job bitte später neu einreichen
 Szene <nr>: vom Prompt-Injection-Filter blockiert – manuelle Prüfung erforderlich
 ```
 
@@ -246,11 +247,19 @@ fertig, die Zustellung ist endgueltig gescheitert (siehe 4b).
 ```
 Erste 2 Minuten:  alle 10 Sekunden
 Danach:           alle 30 Sekunden
-Timeout:          fruehestens nach 2,5 Stunden abbrechen
+Timeout:          fruehestens nach 4,5 Stunden abbrechen
 ```
 
 Grossdokumente (300-350 Seiten) duerfen laut Pflichtenheft §5 bis zu 120 Minuten
 Verarbeitung brauchen; ein frueherer Abbruch des Pollings verliert fertige Reports.
+
+**Warteschlange (Dokument-Limit, neu nach 1.0.1):** Die eKI verarbeitet nur so viele Drehbuecher
+gleichzeitig, wie `MAX_CONCURRENT_DOCUMENTS` erlaubt (Standard 1). Weitere Jobs bleiben `pending`,
+bis ein Platz frei wird -- hoeher priorisierte (`priority`) zuerst, sonst in Eingangsreihenfolge.
+Ein Job wartet hoechstens `DOCUMENT_QUEUE_TIMEOUT_SECONDS` (Standard 2 h) und endet danach mit
+`failed` und der Meldung `Kein freier Verarbeitungsplatz innerhalb von 120 min (Dokument-Limit 1,
+Warteposition 3) – Job bitte später neu einreichen` (Webhook-Grund `processing_failed`). Daraus
+ergibt sich der Polling-Timeout von 4,5 h: bis 2 h Wartezeit, bis 2 h Verarbeitung, Puffer.
 Ein Pull-Report bleibt nach Fertigstellung 6 Stunden abrufbar. Alle Polls zaehlen
 gegen die Rate Limits (Abschnitt 8) -- bei vielen parallelen Jobs das Intervall
 entsprechend verlaengern.
@@ -676,8 +685,8 @@ class EkiClient {
     }
 
     // Warten und Report abholen (Pull-Modus)
-    // Timeout >= 2,5 h: Grossdokumente duerfen bis zu 120 min laufen.
-    public function waitAndGetReport($jobId, $timeoutSec = 9000) {
+    // Timeout >= 4,5 h: bis 2 h Warteschlange + bis 120 min Verarbeitung.
+    public function waitAndGetReport($jobId, $timeoutSec = 16200) {
         $start = time();
         $interval = 10;
 

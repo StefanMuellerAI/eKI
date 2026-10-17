@@ -82,6 +82,10 @@ Bei der datenschutzrechtlichen Bewertung sind folgende Punkte zu berücksichtige
   gesichert (`OPERATIONS_GUIDE.md`).
 - **Rate Limiting:** Ebenfalls in Redis: `rate_limit:ip:<Client-IP>` (TTL 60 s) und
   `rate_limit:api_key:<16 Hex-Zeichen des Key-Hashes>` (TTL 1 h).
+- **Dokument-Limit:** `eki:docslot:holders`, `eki:docslot:queue`, `eki:docslot:seen` enthalten nur
+  Job-IDs mit Zeitstempeln bzw. Priorität, keine Inhalte. Ein Eintrag verschwindet mit der Freigabe nach
+  der Risikoanalyse bzw. bei Fehler/Abbruch, spätestens nach Ablauf der Lease (30 min) bzw. 5 min ohne
+  Nachfrage eines wartenden Jobs (`OPERATIONS_GUIDE.md` §5.12).
 
 ### 3.2 PostgreSQL – Anwendungsdatenbank (`eki_db`)
 
