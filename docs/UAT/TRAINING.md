@@ -1,4 +1,4 @@
-# Schulungsunterlagen – eKI API v1.0.1
+# Schulungsunterlagen – eKI API v1.0.2
 
 Drei Zielgruppen, je ca. 45–60 Minuten. Alle Übungen laufen gegen einen
 lokalen Stack (`docker compose … up -d`) oder die Stage.

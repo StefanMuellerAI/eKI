@@ -259,7 +259,7 @@ Timeout:          fruehestens nach 4,5 Stunden abbrechen
 Grossdokumente (300-350 Seiten) duerfen laut Pflichtenheft §5 bis zu 120 Minuten
 Verarbeitung brauchen; ein frueherer Abbruch des Pollings verliert fertige Reports.
 
-**Warteschlange (Dokument-Limit, neu nach 1.0.1):** Die eKI verarbeitet nur so viele Drehbuecher
+**Warteschlange (Dokument-Limit, seit 1.0.2):** Die eKI verarbeitet nur so viele Drehbuecher
 gleichzeitig, wie `MAX_CONCURRENT_DOCUMENTS` erlaubt (Standard 1). Weitere Jobs bleiben `pending`,
 bis ein Platz frei wird -- hoeher priorisierte (`priority`) zuerst, sonst in Eingangsreihenfolge
 (genauer: Reihenfolge der ersten Nachfrage des Jobs nach einem Platz).
@@ -345,7 +345,7 @@ Authorization: Bearer eki_<api_key>
     ],
     "processing_time_seconds": 3445.2,
     "metadata": {
-      "engine_version": "1.0.1",
+      "engine_version": "1.0.2",
       "taxonomy_version": "1.0",
       "analysis_complete": true,
       "coverage_notes": []

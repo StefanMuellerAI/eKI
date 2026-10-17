@@ -1,11 +1,11 @@
-# UAT-Testplan – eKI API v1.0.1
+# UAT-Testplan – eKI API v1.0.2
 
 Pflichtenheft v1 §7 „Abnahme des Projektes": neun verbindliche Abnahmetests,
 Abnahmekriterien (gültige OpenAPI, Auth und Monitoring laufen, alle 9 Tests
 bestanden, Betriebsdoku und Postman-Collection liegen vor). Dieser Plan ordnet
 jedem Test Automatisierung, manuelle Schritte, Nachweis und Verantwortliche zu.
 
-> **Wichtig:** Die Abnahmetests 2–7 sind auf dem aktuellen Stand (Release 1.0.1, Migrations-Head
+> **Wichtig:** Die Abnahmetests 2–7 sind auf dem aktuellen Stand (Release 1.0.2, Migrations-Head
 > `c4e6a8b0d2f1`) auszuführen bzw. zu wiederholen. Auf einem per
 > `alembic` aufgebauten PostgreSQL-Stack scheiterte vorher die Zustellphase
 > (`job_metadata.status` zu kurz für `delivering`, `HANDOVER.md` §1.1). Ergebnisse älterer

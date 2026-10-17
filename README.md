@@ -839,7 +839,7 @@ scheitern dann beim ersten LLM-Aufruf (fail-closed).
 
 ---
 
-## Bekannte Grenzen (Release 1.0.1)
+## Bekannte Grenzen (Release 1.0.2)
 
 - **Echte Drehbuecher in Git-Historie und alten Images:** Seit 1.0.1 enthalten Repository
   (Arbeitsstand) und Images nur synthetische Fixtures. Die frueher committeten echten Drehbuecher und
@@ -862,6 +862,10 @@ scheitern dann beim ersten LLM-Aufruf (fail-closed).
 - **Ollama-Version:** Die eKI ist nicht gegen eine bestimmte Ollama-Version getestet (die Tests ersetzen
   Ollama an der HTTP-Grenze). Den Pin im Overlay (`0.33.3`) an die Version der externen
   Produktionsinstanz angleichen und nach Ollama-Updates den Paritaetslauf wiederholen.
+- **Dokument-Limit, Grenzfaelle:** Laeuft das Einlesen einer FDX-Datei dreimal in sein Zeitlimit
+  (3 x 10 min), kann die 30-min-Lease ablaufen und kurz ein zweiter Job einen Platz bekommen. Die
+  Redis-Eintraege `eki:docslot:*` haben keine TTL: Nach einem Terminate bleiben Job-IDs stehen, bis der
+  naechste Job nach einem Platz fragt (`docs/LASTSTEUERUNG.md` §4, `docs/DATENSCHUTZ.md`).
 - **Offen (zurueckgestellt):** Abstimmung des fail-closed-Verhaltens mit ePro --
   ePro muss `failed`, `cancelled` und 410 beim Abruf als „keine automatische Bewertung" behandeln,
   nie als „kein Risiko" (`docs/EPRO_INTEGRATION_GUIDE.md` §3).

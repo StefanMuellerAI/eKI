@@ -1,4 +1,4 @@
-# eKI API – Betriebsleitfaden (Stand Release 1.0.1)
+# eKI API – Betriebsleitfaden (Stand Release 1.0.2)
 
 Zielgruppe: IT-Betrieb der Filmakademie. Maßgebliches Betriebsdokument; das frühere
 `DEPLOYMENT_GUIDE.md` ist veraltet. Ergänzend:
@@ -16,9 +16,11 @@ Zielgruppe: IT-Betrieb der Filmakademie. Maßgebliches Betriebsdokument; das fr�
 > mitgeben – ein `docker compose up` nur mit der Basisdatei startet den
 > Entwicklungs-Stack (Quellcode-Mounts, lokale Builds, Temporal UI auf Port 8080).
 
-> **Update von 1.0.0:** Release 1.0.1 verlangt einmalige Schritte (Redis-Volume, externe
+> **Update von 1.0.1:** Release 1.0.2 bringt Dokument-Limit, Heartbeats und Korrekturen ohne
+> Migration – Checkliste in [§4.12 „Upgrade 1.0.1 → 1.0.2"](#412-upgrade-101--102).
+> **Update von 1.0.0:** verlangt zusätzlich die einmaligen Schritte von 1.0.1 (Redis-Volume, externe
 > Ollama-URL, Temporal-Dynamic-Config, Migration `c4e6a8b0d2f1`) – Checkliste in
-> [§4.10 „Upgrade 1.0.0 → 1.0.1"](#410-upgrade-100--101).
+> [§4.10 „Upgrade 1.0.0 → 1.0.1"](#410-upgrade-100--101), dort direkt `v1.0.2` verwenden.
 
 ---
 
@@ -87,7 +89,7 @@ Worker-Image enthält keine Testdaten.
 
 ```bash
 git clone <repo> eki && cd eki
-git checkout v1.0.1                       # bzw. gewünschter Release-Tag
+git checkout v1.0.2                       # bzw. gewünschter Release-Tag
 
 # 1. App-Konfiguration (.env.local) mit echten Secrets
 cp .env.example .env.local
@@ -104,7 +106,7 @@ sed -i.bak -e "s/CHANGE_ME_STRONG_PASSWORD_HERE/$PW/g" \
 cat > .env <<'EOF'
 COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml
 GHCR_OWNER=<github-owner>                 # in Kleinbuchstaben, wie die CI veröffentlicht
-EKI_IMAGE_TAG=1.0.1
+EKI_IMAGE_TAG=1.0.2
 EOF
 docker compose config -q                  # Syntax/Compose-Version prüfen
 
@@ -155,7 +157,7 @@ docker compose up -d --no-build
 **Verifikation:**
 
 ```bash
-curl -s localhost:8000/health                                    # status=healthy, version=1.0.1
+curl -s localhost:8000/health                                    # status=healthy, version=1.0.2
 curl -s -H "Authorization: Bearer eki_..." localhost:8000/ready  # database/redis/temporal = true
 # Ollama aus dem Worker erreichbar? (/ready prüft Ollama nicht) -> 200
 docker compose exec worker python -c "import os,httpx;print(httpx.get((os.environ.get('LOCAL_MISTRAL_BASE_URL') or os.environ['OLLAMA_BASE_URL'])+'/api/tags',timeout=10).status_code)"
@@ -311,8 +313,8 @@ regelmäßig auf einem Testsystem üben.
 
 ### 4.5 Updates / Rollback
 
-Allgemeiner Ablauf (Beispiel: Patch-Release `v1.0.2`). **Für das Update von 1.0.0 auf 1.0.1
-gilt zusätzlich die Checkliste in §4.10.**
+Allgemeiner Ablauf (Beispiel: Release `v1.0.2`). **Release-spezifische Schritte: 1.0.1 → 1.0.2
+in §4.12, 1.0.0 → 1.0.1 in §4.10.**
 
 ```bash
 # 1. Release Notes/CHANGELOG lesen: Ändert das Release Workflow-Code (workflows/security_check.py,
@@ -359,7 +361,7 @@ Workflow-Code unverändert bleibt (§5.8). Rollback von 1.0.1 auf 1.0.0: siehe �
 
 ### 4.6 Datenbank-Migrationen
 
-Aktueller Stand (head): **`c4e6a8b0d2f1`** (Release 1.0.1). Kette:
+Aktueller Stand (head): **`c4e6a8b0d2f1`** (seit Release 1.0.1, unverändert in 1.0.2). Kette:
 
 | Revision | Datei | Inhalt |
 |---|---|---|
@@ -659,6 +661,44 @@ KB-Embeddings laufen auf einer externen Instanz:
   löschen, sonst startet der Container nicht. Aufruf: README „Schnellstart“.
 
 ---
+
+### 4.12 Upgrade 1.0.1 → 1.0.2
+
+Zusätzlich zum allgemeinen Ablauf (§4.5). Was sich für den Betrieb ändert:
+
+| Änderung in 1.0.2 | Folge für das Update |
+|---|---|
+| Dokument-Limit `MAX_CONCURRENT_DOCUMENTS` (Standard `1`) | ab dem Update läuft immer nur ein Drehbuch zur Zeit, weitere warten als `pending` (bis 2 h, `DOCUMENT_QUEUE_TIMEOUT_SECONDS`); Werte und Profile: `LASTSTEUERUNG.md` |
+| Start-Validator für die Wartezeit | wer `BUFFER_TTL_SECONDS` oder `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` verkleinert hat, prüfen: Wartezeit < `BUFFER_TTL_SECONDS` und Wartezeit + `BUFFER_TTL_SECONDS` < Workflow-Timeout, sonst starten API und Worker nicht |
+| Neue Redis-Schlüssel `eki:docslot:*` | nur Job-IDs (`DATENSCHUTZ.md`); kein Volume-Eingriff nötig |
+| Heartbeats in den KI-Schritten | keine Aktion; abgebrochene Jobs geben Ollama nach spätestens etwa 30 s frei |
+| Drehbuch ohne erkennbare Szene → `failed` | ePro informieren (vorher `completed` mit 0 Befunden) |
+| `report.metadata.analysis_complete`, `coverage_notes`, PDF-Abschnitt „Hinweise zur Vollständigkeit“ | ePro informieren: unvollständige Reports sichtbar machen |
+| Workflow-Code geändert, aber replay-sicher | laufende 1.0.1-Jobs laufen ohne Dokument-Limit zu Ende, **kein Drain nötig** (geprüft: unter 1.0.1 aufgezeichnete Historien laufen auf dem 1.0.2-Code). Ein **Rollback** auf 1.0.1 braucht dagegen einen Drain (§4.5) |
+| Keine Migration | `alembic current` bleibt `c4e6a8b0d2f1 (head)` |
+
+**Schritte**
+
+1. ePro vorab informieren: Abfrage-Timeout mindestens 4,5 h, beim Neueinreichen neuer
+   `idempotency_key`, `failed` bei Drehbüchern ohne Szene, `analysis_complete=false` anzeigen
+   (`EPRO_INTEGRATION_GUIDE.md` §3, §4).
+2. Ollama-Server prüfen (§4.11, `LASTSTEUERUNG.md` §5): `OLLAMA_NUM_PARALLEL=1`,
+   `OLLAMA_MAX_LOADED_MODELS=2`, `OLLAMA_KEEP_ALIVE=30m` **auf dem Ollama-Host**; nur eine eKI-Instanz
+   pro Ollama-Server.
+3. `git fetch --tags && git checkout v1.0.2`; `diff .env.example .env.local` – neu und optional:
+   `MAX_CONCURRENT_DOCUMENTS`, `DOCUMENT_QUEUE_TIMEOUT_SECONDS` (die Standardwerte passen für eine GPU).
+4. Projekt-`.env`: `EKI_IMAGE_TAG=1.0.2`, dann `docker compose config -q`.
+5. `docker compose pull api worker && docker compose up -d --no-build api worker` (beide gemeinsam).
+6. Prüfen:
+
+   ```bash
+   curl -s localhost:8000/health                                    # version=1.0.2
+   docker compose exec api alembic current                          # c4e6a8b0d2f1 (head)
+   docker compose logs worker | grep "Worker concurrency caps"      # documents=1 …, ollama_requests=1
+   docker compose exec -e EKI_API_KEY=eki_... api python scripts/smoke_prod.py --worker-metrics http://worker:9090
+   ```
+
+7. Abnahmetests 2–7 auf 1.0.2 wiederholen (`UAT/UAT_TESTPLAN.md`).
 
 ## 5. Runbooks
 

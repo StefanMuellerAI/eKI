@@ -1,9 +1,9 @@
-# Datenschutz und Datenhaltung – eKI API v1.0.1
+# Datenschutz und Datenhaltung – eKI API v1.0.2
 
 Datenschutz-Inventar für die Übergabe: Welche personenbezogenen oder vertraulichen Daten
 die eKI verarbeitet, wo sie liegen, ob sie verschlüsselt sind, wann sie gelöscht werden
-und wer darauf zugreifen kann. Alle Angaben sind gegen den Code geprüft (Stand 16.10.2026,
-Release 1.0.1). Das Dokument ist eine technische Zuarbeit für das Verzeichnis von
+und wer darauf zugreifen kann. Alle Angaben sind gegen den Code geprüft (Stand 17.10.2026,
+Release 1.0.2). Das Dokument ist eine technische Zuarbeit für das Verzeichnis von
 Verarbeitungstätigkeiten und die TOM-Dokumentation der Filmakademie; es ersetzt keine
 rechtliche Bewertung.
 

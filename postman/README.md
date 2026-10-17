@@ -1,6 +1,6 @@
 # eKI API - Postman Collection v1.0
 
-Diese Postman Collection enthält alle API-Endpunkte der eKI API v1.0.1: Security-Checks (FDX/PDF, Push/Pull), Knowledge Base (M06), Operations/Dead Letters (M10) und Schnellnachweise für die Abnahmetests (M12).
+Diese Postman Collection enthält alle API-Endpunkte der eKI API v1.0.2: Security-Checks (FDX/PDF, Push/Pull), Knowledge Base (M06), Operations/Dead Letters (M10) und Schnellnachweise für die Abnahmetests (M12).
 
 ## Import
 

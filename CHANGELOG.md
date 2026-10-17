@@ -4,7 +4,12 @@ Alle wesentlichen Änderungen der eKI API. Format nach [Keep a Changelog](https:
 Versionierung nach [SemVer](https://semver.org/lang/de/). Ein Minor-Release pro Pflichtenheft-Meilenstein
 (M0x → 0.x.0), `1.0.0` mit dem UAT-Paket (M12). Die Versionsquelle ist `core/version.py`.
 
-## [Unreleased]
+## [1.0.2] – 2026-10-17 – Dokument-Limit, Heartbeats, Faktencheck
+
+Release für Übergabe und Go-Live (Nachfolger von 1.0.1). Keine Migration (head bleibt `c4e6a8b0d2f1`),
+laufende 1.0.1-Jobs überstehen das Update ohne Drain; ein Rollback auf 1.0.1 braucht dagegen einen Drain.
+Upgrade-Schritte: `docs/OPERATIONS_GUIDE.md` → „Upgrade 1.0.1 → 1.0.2". **Die Abnahmetests AT2–AT7 sind auf
+diesem Stand zu wiederholen.**
 
 Anlass: Auf der externen Ollama-Instanz liefen mehrere Drehbücher gleichzeitig; die Instanz wurde so
 langsam, dass keines fertig wurde. Die eKI begrenzte nur gleichzeitige KI-Aufrufe je Prozess, nicht die
