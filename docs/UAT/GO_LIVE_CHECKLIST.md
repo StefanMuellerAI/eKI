@@ -152,6 +152,9 @@ Dev-Abhängigkeiten, `docs/TESTING_GUIDE.md`).
 - [ ] `Idempotency-Key`-Header wird ePro-seitig dedupliziert (Guide §4b)
 - [ ] Jobs mit Status `failed`/`cancelled` und ein 410 beim Report-Abruf werden als
       „keine automatische Bewertung – manuelle Prüfung" angezeigt, nie als „kein Risiko" (Guide §3, §4)
+- [ ] Unvollständige Reports (`report.metadata.analysis_complete=false` bzw. `WARNING: Analysis
+      incomplete` in der Kurzbewertung) werden sichtbar markiert; die genannten Seiten werden manuell
+      bewertet (Guide §4, §4b)
 - [ ] Polling-Timeout ≥ 4,5 h (Warteschlange bis 2 h + Verarbeitung bis 2 h) und Polling-Intervall
       passend zum Rate Limit (Guide §3, §8); `pending` kann „wartet auf Verarbeitungsplatz“ bedeuten
 - [ ] Webhook-Endpunkt für `security.delivery.failed` bereit (optional); Grund
