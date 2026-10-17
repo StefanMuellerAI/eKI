@@ -38,6 +38,75 @@ _SEVERITY_COLORS = {
 }
 
 
+# Text before the first scene heading is never risk-checked (it only yields the
+# title). Up to this size it is taken for a title page and not mentioned.
+PREAMBLE_NOTE_MIN_CHARS = 1500
+
+
+def _page_list(pages: list[int]) -> str:
+    """Compact page list: [3, 7, 8, 9, 12] -> "3, 7–9, 12"."""
+    ordered = sorted({int(p) for p in pages})
+    runs: list[list[int]] = []
+    for page in ordered:
+        if runs and page == runs[-1][1] + 1:
+            runs[-1][1] = page
+        else:
+            runs.append([page, page])
+    return ", ".join(str(a) if a == b else f"{a}–{b}" for a, b in runs)
+
+
+def build_coverage_notes(parsed_metadata: dict[str, Any]) -> tuple[list[str], bool]:
+    """German, content-free notes on what the analysis did not cover.
+
+    Returns ``(notes, analysis_complete)``. Only page numbers and counts are
+    used, never script text. ``analysis_complete`` is False when part of the
+    script was not risk-checked; a purely informative note keeps it True.
+    """
+    notes: list[str] = []
+    complete = True
+
+    total = parsed_metadata.get("pages_total")
+    processed = parsed_metadata.get("pages_processed")
+    if isinstance(total, int) and isinstance(processed, int) and total > processed:
+        notes.append(
+            f"Nur die ersten {processed} von {total} Seiten wurden verarbeitet "
+            f"(Grenze MAX_PDF_PAGES); die Seiten {processed + 1}–{total} sind nicht geprüft."
+        )
+        complete = False
+
+    skipped = [p for p in parsed_metadata.get("ocr_pages_skipped") or [] if isinstance(p, int)]
+    if skipped:
+        notes.append(
+            f"{len(skipped)} Seite(n) ohne lesbaren Text wurden nicht geprüft (leer, Scan ohne "
+            f"Texterkennung oder Texterkennung ohne Ergebnis): Seite {_page_list(skipped)}."
+        )
+        complete = False
+
+    if parsed_metadata.get("used_page_fallback"):
+        notes.append(
+            "Keine Szenenüberschriften (INT./EXT., INNEN/AUSSEN) erkannt: Die eKI hat "
+            "seitenweise geprüft; Seite 1 galt als Titelseite und wurde nicht geprüft."
+        )
+        complete = False
+    else:
+        preamble = parsed_metadata.get("preamble_chars")
+        if isinstance(preamble, int) and preamble >= PREAMBLE_NOTE_MIN_CHARS:
+            notes.append(
+                f"Vor der ersten Szenenüberschrift stehen rund {preamble} Zeichen Text; die eKI "
+                "wertet sie als Titelseite und hat sie nicht auf Risiken geprüft."
+            )
+            complete = False
+
+    numbered = parsed_metadata.get("scenes_numbered_by_position")
+    if isinstance(numbered, int) and numbered > 0:
+        notes.append(
+            f"Die FDX-Datei enthält für {numbered} Szene(n) keine Szenennummer; die eKI hat "
+            "sie nach ihrer Reihenfolge nummeriert."
+        )
+
+    return notes, complete
+
+
 def build_report_dict(
     *,
     report_id: str,
@@ -45,10 +114,14 @@ def build_report_dict(
     script_format: str,
     findings: list[dict[str, Any]],
     processing_time_seconds: float,
+    coverage_notes: list[str] | None = None,
+    analysis_complete: bool = True,
 ) -> dict[str, Any]:
     """Build a complete report dictionary from aggregated findings.
 
-    Calculates risk_summary from findings and adds timestamps.
+    Calculates risk_summary from findings and adds timestamps. Coverage notes
+    (``build_coverage_notes``) go into ``metadata`` together with
+    ``analysis_complete``.
     """
     risk_summary = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
     for f in findings:
@@ -67,6 +140,8 @@ def build_report_dict(
         "metadata": {
             "engine_version": __version__,
             "taxonomy_version": "1.0",
+            "analysis_complete": analysis_complete,
+            "coverage_notes": list(coverage_notes or []),
         },
     }
 
@@ -165,6 +240,23 @@ def generate_pdf_report(report: dict[str, Any]) -> bytes:
     )
     elements.append(summary_table)
     elements.append(Spacer(1, 8 * mm))
+
+    # --- Coverage notes (what was not analysed) ---
+    meta = report.get("metadata", {}) or {}
+    coverage_notes = meta.get("coverage_notes") or []
+    if coverage_notes:
+        elements.append(Paragraph("Hinweise zur Vollständigkeit", h2_style))
+        if meta.get("analysis_complete") is False:
+            elements.append(
+                Paragraph(
+                    "<b>Die Analyse ist unvollständig.</b> Die folgenden Teile des Drehbuchs "
+                    "wurden nicht auf Risiken geprüft und müssen manuell bewertet werden.",
+                    body_style,
+                )
+            )
+        for note in coverage_notes:
+            elements.append(Paragraph(f"• {_escape_html(note)}", body_style))
+        elements.append(Spacer(1, 6 * mm))
 
     # --- Findings by Scene ---
     elements.append(Paragraph("Befunde nach Szenen", h2_style))
@@ -355,6 +447,20 @@ def generate_assessment_text(report: dict[str, Any]) -> str:
         f"Total findings: {total} ({', '.join(summary_parts) if summary_parts else 'none'})"
     )
     lines.append("")
+
+    meta = report.get("metadata", {}) or {}
+    coverage_notes = meta.get("coverage_notes") or []
+    if meta.get("analysis_complete") is False:
+        lines.append(
+            "WARNING: Analysis incomplete - parts of the script were not analysed "
+            "(see 'Hinweise zur Vollständigkeit' in the PDF report):"
+        )
+    elif coverage_notes:
+        lines.append("Notes:")
+    for note in coverage_notes:
+        lines.append(f"  - {note}")
+    if coverage_notes:
+        lines.append("")
 
     if total == 0:
         lines.append("No safety risks identified in the analyzed script.")

@@ -265,7 +265,7 @@ empfehlen: [`LASTSTEUERUNG.md`](LASTSTEUERUNG.md).
 | `PDF_STRUCTURE_CONCURRENCY` | int 1–8 | `1` | parallele Strukturierungs-Activities je Workflow (nur mit Master-Flag) | `api/routers/security.py` (eingefroren) |
 | `RISK_ANALYSIS_CONCURRENCY` | int 1–8 | `1` | parallele Risikoanalyse-Activities je Workflow (nur mit Master-Flag) | `api/routers/security.py` (eingefroren) |
 | `LLM_ACTIVITY_TIMEOUT_SECONDS` | int ≥ 60 | `600` | `start_to_close_timeout` der LLM-Activities | `api/routers/security.py` (eingefroren) |
-| `MAX_PDF_PAGES` | int ≥ 1 | `500` | Seitenlimit des PDF-Parsers: längere PDFs werden nicht abgelehnt, sondern nach dieser Seite abgeschnitten – ohne Fehler und ohne Hinweis im Report | `parsers/pdf.py` |
+| `MAX_PDF_PAGES` | int ≥ 1 | `500` | Seitenlimit des PDF-Parsers: längere PDFs werden nicht abgelehnt, sondern nach dieser Seite abgeschnitten; der Report nennt die fehlenden Seiten unter „Hinweise zur Vollständigkeit“ (`metadata.analysis_complete=false`) | `parsers/pdf.py` |
 | `MAX_PDF_SIZE_BYTES` | int ≥ 1 | `10485760` | Größenlimit des PDF-Parsers | `parsers/pdf.py` |
 | `MAX_UPLOAD_SIZE_BYTES` | int ≥ 1 | `10485760` | Limit für Multipart-Uploads. JSON-Uploads sind unabhängig davon fest begrenzt: Base64-Text max. 10 MiB (`core/models.py`), also Dateien bis ca. 7,5 MiB | `api/routers/security.py` |
 

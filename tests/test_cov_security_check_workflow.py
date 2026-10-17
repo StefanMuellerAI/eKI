@@ -309,6 +309,8 @@ class Harness:
                 "ocr_pages_skipped": [7],
                 "text_length": 4321,
                 "extraction_warnings": ["PDF contains very little extractable text."],
+                "pages_total": 620,
+                "pages_processed": 500,
             }
         if name == "split_scenes":
             scenes = self.pdf_blocks - (1 if self.pdf_preamble else 0)
@@ -318,6 +320,7 @@ class Harness:
                 "scene_count": scenes,
                 "has_preamble": self.pdf_preamble,
                 "used_page_fallback": self.page_fallback,
+                "preamble_chars": 2400 if self.pdf_preamble else 0,
             }
         if name == "structure_scene_llm":
             idx = payload["block_index"]
@@ -616,6 +619,9 @@ class TestPdfPipeline:
                 "blocks_ref_key": "blocks-ref",
                 "used_page_fallback": False,
                 "extra_warnings": ["PDF contains very little extractable text."],
+                "pages_total": 620,
+                "pages_processed": 500,
+                "preamble_chars": 2400,
             }
         ]
         assert h.payloads("analyze_scene_risk") == [

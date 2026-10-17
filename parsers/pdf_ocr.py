@@ -78,6 +78,8 @@ class PdfExtraction:
     ocr_pages_done: list[int] = field(default_factory=list)
     ocr_pages_skipped: list[int] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    # Pages in the file; more than ``len(page_texts)`` when MAX_PDF_PAGES cut it.
+    pages_total: int | None = None
 
     @property
     def ocr_needed_pages(self) -> list[int]:

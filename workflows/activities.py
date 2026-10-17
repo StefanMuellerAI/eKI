@@ -9,6 +9,7 @@ import asyncio
 import base64
 import contextlib
 import logging
+import math
 import re
 import time
 import urllib.parse
@@ -119,6 +120,19 @@ def _parsing_failed(fmt: str, exc: ParsingException) -> ApplicationError:
         reason = "FDX-Datei ist kein gültiges Final-Draft-XML"
     logger.warning("%s parsing failed (non-retryable): %s", fmt, type(exc).__name__)
     return _non_retryable(ERROR_TYPE_PARSING_FAILED, f"Parsing fehlgeschlagen: {reason}")
+
+
+def _no_scenes(reason: str) -> ApplicationError:
+    """Content-free, non-retryable failure for a script without any analysable scene.
+
+    Without it such a job ended ``completed`` with 0 findings and push status 0,
+    which reads like "no risk" although nothing was checked.
+    """
+    logger.warning("No analysable scene found (non-retryable): %s", reason)
+    return _non_retryable(
+        ERROR_TYPE_PARSING_FAILED,
+        f"Parsing fehlgeschlagen: keine Szene erkannt ({reason}) – Drehbuch manuell prüfen",
+    )
 
 
 def _get_buffer() -> SecureBuffer:
@@ -351,6 +365,8 @@ async def parse_fdx_activity(job_data: dict[str, Any]) -> dict[str, Any]:
         except ParsingException as exc:
             # Deterministic: the same bytes fail on every retry (M13).
             raise _parsing_failed("fdx", exc) from None
+        if parsed.total_scenes == 0:
+            raise _no_scenes("FDX enthält keinen Drehbuchtext")
 
         parsed_ref = await buffer.store(parsed.model_dump(mode="json"))
         await buffer.delete(ref_key)
@@ -413,6 +429,9 @@ async def extract_pdf_text_activity(job_data: dict[str, Any]) -> dict[str, Any]:
         "ocr_pages_skipped": extraction.ocr_pages_skipped,
         "text_length": len(full_text),
         "extraction_warnings": extraction.warnings,
+        # Coverage notes in the report: pages beyond MAX_PDF_PAGES are not read.
+        "pages_total": extraction.pages_total,
+        "pages_processed": len(page_texts),
     }
 
 
@@ -432,6 +451,14 @@ async def split_scenes_activity(job_data: dict[str, Any]) -> dict[str, Any]:
 
     blocks = split_into_scenes(full_text, page_texts=page_texts)
 
+    scene_count = sum(1 for b in blocks if not b.is_preamble)
+    if scene_count == 0:
+        # The text ref stays tracked by the workflow and is removed by its
+        # failure cleanup.
+        if not full_text.strip():
+            raise _no_scenes("kein lesbarer Text, z. B. nur Scan-Seiten ohne Texterkennung")
+        raise _no_scenes("keine Szenenüberschrift und nur eine Seite mit Text")
+
     used_page_fallback = any(
         not b.is_preamble and b.heading_line.startswith("PAGE ") for b in blocks
     )
@@ -449,15 +476,17 @@ async def split_scenes_activity(job_data: dict[str, Any]) -> dict[str, Any]:
     blocks_ref = await buffer.store({"blocks": blocks_data})
     await buffer.delete(text_ref_key)
 
-    scene_count = sum(1 for b in blocks if not b.is_preamble)
-    has_preamble = any(b.is_preamble for b in blocks)
+    preamble_chars = sum(len(b.text) for b in blocks if b.is_preamble)
 
     return {
         "blocks_ref_key": blocks_ref,
         "block_count": len(blocks),
         "scene_count": scene_count,
-        "has_preamble": has_preamble,
+        "has_preamble": preamble_chars > 0,
         "used_page_fallback": used_page_fallback,
+        # Text before the first heading is only used for the title, never
+        # risk-checked; the report says so when it is more than a title page.
+        "preamble_chars": preamble_chars,
     }
 
 
@@ -558,6 +587,10 @@ async def aggregate_script_activity(job_data: dict[str, Any]) -> dict[str, Any]:
     blocks_ref_key = job_data.get("blocks_ref_key", "")
     used_page_fallback = job_data.get("used_page_fallback", False)
     extra_warnings = job_data.get("extra_warnings", [])
+    # Absent in histories recorded before the coverage notes (-> no note).
+    pages_total = job_data.get("pages_total")
+    pages_processed = job_data.get("pages_processed")
+    preamble_chars = job_data.get("preamble_chars")
     t0 = time.monotonic()
     logger.info("Aggregating %d scenes into ParsedScript", len(scene_ref_keys))
 
@@ -664,6 +697,9 @@ async def aggregate_script_activity(job_data: dict[str, Any]) -> dict[str, Any]:
             "ocr_pages_done": ocr_pages_done,
             "ocr_pages_skipped": ocr_pages,
             "used_page_fallback": used_page_fallback,
+            "pages_total": pages_total,
+            "pages_processed": pages_processed,
+            "preamble_chars": preamble_chars,
         },
     )
 
@@ -1024,6 +1060,27 @@ def _chunk_text(text: str, size: int, overlap: int) -> list[str]:
         start = max(next_start, start + 1)
 
 
+_DEFAULT_CONFIDENCE = 0.8
+
+
+def _coerce_confidence(value: Any) -> float:
+    """Model confidence as a float in [0, 1]; RiskFinding rejects anything else.
+
+    Missing, zero, negative or non-numeric values get the default 0.8 (as
+    before). Values above 1 are read as percent (85 -> 0.85) up to 100 and
+    capped at 1.0 beyond that; unclamped they made the report GET fail (500).
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return _DEFAULT_CONFIDENCE
+    if math.isnan(number) or number <= 0:
+        return _DEFAULT_CONFIDENCE
+    if number > 1:
+        number = number / 100 if number <= 100 else 1.0
+    return round(number, 3)
+
+
 @activity.defn(name="analyze_scene_risk")
 async def analyze_scene_risk_activity(job_data: dict[str, Any]) -> dict[str, Any]:
     """Analyze one scene for safety risks (see ``_analyze_scene_risk``).
@@ -1066,7 +1123,8 @@ async def _analyze_scene_risk(job_data: dict[str, Any]) -> dict[str, Any]:
         return {"findings": [], "scene_index": scene_index}
 
     scene = scenes[scene_index]
-    scene_number = scene.get("number", str(scene_index + 1))
+    # FDX scenes without a Final Draft number carry ``None`` (older parses).
+    scene_number = scene.get("number") or str(scene_index + 1)
 
     from uuid import uuid4
 
@@ -1183,8 +1241,14 @@ async def _analyze_scene_risk(job_data: dict[str, Any]) -> dict[str, Any]:
             f["id"] = str(uuid4())
             f["scene_number"] = scene_number
             f["line_reference"] = None
-            if "confidence" not in f or not f["confidence"]:
-                f["confidence"] = 0.8
+            f["confidence"] = _coerce_confidence(f.get("confidence"))
+            # Required by RiskFinding: a missing or non-text value would make the
+            # report unreadable at GET time (500) instead of failing here.
+            for text_field in ("description", "recommendation"):
+                value = f.get(text_field)
+                f[text_field] = (
+                    value if isinstance(value, str) else ("" if value is None else str(value))
+                )
 
             # Convert measures to serializable dicts
             f["measures"] = [
@@ -1305,7 +1369,23 @@ async def aggregate_report_activity(
             processing_time = round(_elapsed_since(created_at), 3)
 
     # Build report using the report generator
-    from services.report_generator import build_report_dict, generate_pdf_base64
+    from services.report_generator import (
+        build_coverage_notes,
+        build_report_dict,
+        generate_pdf_base64,
+    )
+
+    # What the analysis did not cover (truncated pages, unreadable pages,
+    # untested title text) -- page numbers and counts only.
+    parsed_metadata: dict[str, Any] = {}
+    if parsed_ref_key:
+        parsed = await _retrieve(buffer, parsed_ref_key, "Geparstes Drehbuch")
+        parsed_metadata = dict(parsed.get("metadata") or {})
+    coverage_notes, analysis_complete = build_coverage_notes(parsed_metadata)
+    if coverage_notes:
+        logger.info(
+            "Report coverage: complete=%s, %d note(s)", analysis_complete, len(coverage_notes)
+        )
 
     report = build_report_dict(
         report_id=job_metadata.get("report_id", ""),
@@ -1313,6 +1393,8 @@ async def aggregate_report_activity(
         script_format=job_metadata.get("script_format") or "fdx",
         findings=flat_findings,
         processing_time_seconds=processing_time,
+        coverage_notes=coverage_notes,
+        analysis_complete=analysis_complete,
     )
 
     # Generate PDF

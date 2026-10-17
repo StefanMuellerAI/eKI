@@ -1158,7 +1158,14 @@ components:
         metadata:
           type: object
           additionalProperties: true
-          description: '`engine_version` (= API version) and `taxonomy_version`.'
+          description: >-
+            `engine_version` (= API version) and `taxonomy_version`. Since the
+            coverage notes also `analysis_complete` (false = parts of the script
+            were not risk-checked, e.g. pages beyond MAX_PDF_PAGES, pages without
+            readable text, untested text before the first scene heading) and
+            `coverage_notes` (German, content-free notes; also shown in the PDF
+            under "Hinweise zur Vollständigkeit"). Both are absent in reports of
+            older versions.
 
     AsyncSecurityCheckResponse:
       type: object

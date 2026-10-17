@@ -69,12 +69,32 @@ _LOC_PREFIXES: list[tuple[str, LocationType]] = [
 # the plain INNEN/AUSSEN prefixes, which would otherwise win and leave
 # "- AUSSEN. GARTEN" as the location.
 _INT_EXT_DE_RE = re.compile(
-    r"^(?:INNEN\s*[-–—/]\s*AUSSEN|AUSSEN\s*[-–—/]\s*INNEN)(?![A-ZÄÖÜ])\.?",
+    r"^(?:INNEN\s*[-–—/]\s*AU(?:SS|ß|ẞ)EN|AU(?:SS|ß|ẞ)EN\s*[-–—/]\s*INNEN)(?![A-ZÄÖÜ])\.?",
     re.IGNORECASE,
 )
 
 # Separator between location and time-of-day (dash variants)
 _SEP_RE = re.compile(r"\s*[-–—]\s*")
+
+
+def _chars_for_upper_prefix(text: str, upper_len: int) -> int:
+    """Number of characters of *text* that make up its first *upper_len* uppercase chars.
+
+    ``_upper`` turns "ß"/"ẞ" into "SS", so "AUßEN" (5 chars) matches the
+    6-char prefix "AUSSEN"; slicing the original text by the prefix length
+    would eat the first letter of the location.
+    """
+    consumed = 0
+    for i, ch in enumerate(text):
+        if consumed >= upper_len:
+            return i
+        consumed += len(_upper(ch))
+    return len(text)
+
+
+def _upper(text: str) -> str:
+    """Uppercase with the capital sharp s spelled "SS" (like ``"ß".upper()``)."""
+    return text.upper().replace("ẞ", "SS")
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,7 +113,7 @@ def parse_scene_heading(heading: str) -> HeadingComponents:
     location types or times default to ``UNKNOWN``.
     """
     text = heading.strip()
-    upper = text.upper()
+    upper = _upper(text)
 
     # 1. Determine location type by prefix
     loc_type = LocationType.UNKNOWN
@@ -106,7 +126,7 @@ def parse_scene_heading(heading: str) -> HeadingComponents:
         for prefix, lt in _LOC_PREFIXES:
             if upper.startswith(prefix):
                 loc_type = lt
-                remainder = text[len(prefix) :].strip()
+                remainder = text[_chars_for_upper_prefix(text, len(prefix)) :].strip()
                 break
 
     # 2. Split remainder on last separator to get location and time-of-day

@@ -78,7 +78,7 @@ class FDXParser(ParserBase):
 
         title = self._extract_title(root)
         paragraphs = self._extract_paragraphs(root)
-        scenes, warnings = self._build_scenes(paragraphs)
+        scenes, warnings, numbered_by_position = self._build_scenes(paragraphs)
         characters = self._build_character_index(scenes)
         overall_confidence = (
             sum(s.parse_confidence for s in scenes) / len(scenes) if scenes else 0.0
@@ -102,7 +102,11 @@ class FDXParser(ParserBase):
             parsing_time_seconds=round(elapsed, 3),
             overall_confidence=round(overall_confidence, 3),
             warnings=warnings,
-            metadata={"parser": "fdx", "paragraph_count": len(paragraphs)},
+            metadata={
+                "parser": "fdx",
+                "paragraph_count": len(paragraphs),
+                "scenes_numbered_by_position": numbered_by_position,
+            },
         )
 
     # ------------------------------------------------------------------
@@ -157,8 +161,8 @@ class FDXParser(ParserBase):
         return paragraphs
 
     @classmethod
-    def _build_scenes(cls, paragraphs: list[Element]) -> tuple[list[ParsedScene], list[str]]:
-        """Walk paragraphs and group them into scenes; returns (scenes, warnings).
+    def _build_scenes(cls, paragraphs: list[Element]) -> tuple[list[ParsedScene], list[str], int]:
+        """Group paragraphs into scenes; returns (scenes, warnings, numbered_by_position).
 
         Script content without a heading is kept as a fallback scene:
         * no ``Scene Heading`` at all -> one scene with the whole content,
@@ -189,6 +193,16 @@ class FDXParser(ParserBase):
         if current_heading_el is not None:
             scenes.append(cls._finalize_scene(current_heading_el, current_paras))
 
+        # Final Draft only writes ``Number`` when scene numbering is switched on.
+        # Without it every finding would land under one "Szene ?" in the report,
+        # so unnumbered scenes get their position (1-based) instead.
+        numbered_by_position = sum(1 for s in scenes if not (s.number or "").strip())
+        if numbered_by_position:
+            scenes = [
+                s if (s.number or "").strip() else s.model_copy(update={"number": str(pos)})
+                for pos, s in enumerate(scenes, start=1)
+            ]
+
         if cls._has_script_content(leading_paras):
             if scenes:
                 scenes.insert(0, cls._fallback_scene(leading_paras, "0", _PRE_HEADING_LABEL))
@@ -205,7 +219,7 @@ class FDXParser(ParserBase):
         elif not scenes:
             warnings.append("FDX contains no script content.")
 
-        return scenes, warnings
+        return scenes, warnings, numbered_by_position
 
     @staticmethod
     def _has_script_content(paras: list[Element]) -> bool:

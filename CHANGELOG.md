@@ -32,7 +32,28 @@ Semaphore, und diese Wartezeit lief gegen das Activity-Timeout. Keine Migration.
 - Metriken `eki_document_slots_in_use` und `eki_document_queue_length` (Worker); das Startlog des Workers
   nennt zusätzlich das Dokument-Limit und `OLLAMA_MAX_CONCURRENT_REQUESTS`.
 
+### Behoben (Ergebnis des Faktenchecks der Dokumentation)
+- **Drehbuch ohne erkennbare Szene endete als `completed` mit 0 Befunden** (Push-Status 0, wirkte wie
+  „kein Risiko“), z. B. ein PDF ohne lesbaren Text, ein einseitiges PDF ohne Szenenüberschrift oder eine
+  leere FDX-Datei. Jetzt `failed` mit „Parsing fehlgeschlagen: keine Szene erkannt (…) – Drehbuch
+  manuell prüfen“ (Webhook-Grund `parsing_failed`).
+- **Nicht geprüfte Teile blieben unerwähnt.** Der Report nennt jetzt unter „Hinweise zur
+  Vollständigkeit“ (PDF), in der Push-Kurzbewertung und in `report.metadata` (`analysis_complete`,
+  `coverage_notes`): Seiten über `MAX_PDF_PAGES`, Seiten ohne lesbaren Text (leer, Scan ohne
+  Texterkennung), bei fehlenden Szenenüberschriften die als Titelseite übersprungene Seite 1 und Text
+  vor der ersten Überschrift ab rund 1500 Zeichen. Nur Seitenzahlen und Mengen, keine Inhalte.
+- **FDX ohne Szenennummern:** Alle Befunde standen unter „Szene ?“ (Meldungen „Szene None“). Unnummerierte
+  Szenen erhalten jetzt ihre Position als Nummer; der Report weist darauf hin.
+- **Konfidenzwerte über 1** aus dem Modell ließen den Report-Abruf mit 500 scheitern. Jetzt als Prozent
+  gelesen (85 → 0,85, höchstens 1,0); fehlende, negative oder nicht numerische Werte → 0,8. Fehlende oder
+  nicht textuelle `description`/`recommendation` werden zu Text.
+- **„AUßEN“ mit ß** wurde im PDF nicht als Szenenüberschrift erkannt (auch „AUẞEN“, „INNEN/AUßEN“); im
+  FDX-Überschriftenparser verlor der Ort dabei seinen ersten Buchstaben.
+
 ### Für ePro relevant
+- Ein Drehbuch ohne erkennbare Szene endet jetzt mit `failed` statt mit einem leeren Report.
+  `report.metadata.analysis_complete=false` bzw. die Zeile `WARNING: Analysis incomplete` in der
+  Kurzbewertung zeigen an, dass Teile nicht geprüft wurden – ePro sollte das sichtbar machen.
 - Jobs können länger `pending` bleiben (Warteschlange). Polling-Timeout auf mindestens 4,5 h erhöhen
   (bis 2 h Wartezeit + rund 2 h Verarbeitung), wartende Jobs seltener abfragen (1000 Anfragen/h je
   API-Key), `docs/EPRO_INTEGRATION_GUIDE.md` §3.

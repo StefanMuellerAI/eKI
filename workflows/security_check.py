@@ -670,6 +670,10 @@ class SecurityCheckWorkflow:
                 "blocks_ref_key": split_result["blocks_ref_key"],
                 "used_page_fallback": used_page_fallback,
                 "extra_warnings": extraction_warnings,
+                # Coverage notes in the report (activity input only: replay-safe).
+                "pages_total": text_result.get("pages_total"),
+                "pages_processed": text_result.get("pages_processed"),
+                "preamble_chars": split_result.get("preamble_chars"),
             },
             start_to_close_timeout=timedelta(minutes=5),
             retry_policy=_RETRY_STANDARD,

@@ -217,6 +217,7 @@ Inhalte werden dabei sofort geloescht. `error_message` ist inhaltsfrei, zum Beis
 
 ```
 Parsing fehlgeschlagen: PDF ist passwortgeschützt
+Parsing fehlgeschlagen: keine Szene erkannt (kein lesbarer Text, z. B. nur Scan-Seiten ohne Texterkennung) – Drehbuch manuell prüfen
 Szene 7: Risikoanalyse fehlgeschlagen (LLMException)
 Kein freier Verarbeitungsplatz innerhalb von 120 min (Dokument-Limit 1, Warteposition 3) – Job bitte später neu einreichen
 Szene <nr>: vom Prompt-Injection-Filter blockiert – manuelle Prüfung erforderlich
@@ -345,7 +346,9 @@ Authorization: Bearer eki_<api_key>
     "processing_time_seconds": 3445.2,
     "metadata": {
       "engine_version": "1.0.1",
-      "taxonomy_version": "1.0"
+      "taxonomy_version": "1.0",
+      "analysis_complete": true,
+      "coverage_notes": []
     }
   },
   "pdf_base64": "JVBERi0xLjQK...",
@@ -360,6 +363,8 @@ Authorization: Bearer eki_<api_key>
 | report | object | Vollstaendiger JSON-Report (maschinenlesbar); `processing_time_seconds` = Sekunden von der Job-Annahme bis zur Report-Erzeugung |
 | report.findings | array | Liste aller Risiko-Findings mit Severity, Klasse, Massnahmen |
 | report.risk_summary | object | Aggregierte Zaehlung nach Severity-Level |
+| report.metadata.analysis_complete | bool | `false`, wenn Teile des Drehbuchs nicht auf Risiken geprueft wurden (Seiten ueber `MAX_PDF_PAGES`, Seiten ohne lesbaren Text, Text vor der ersten Szenenueberschrift ab rund 1500 Zeichen, bei fehlenden Ueberschriften Seite 1). Fehlt in Reports aelterer Versionen |
+| report.metadata.coverage_notes | array of string | Deutsche, inhaltsfreie Hinweise dazu (nur Seitenzahlen und Mengen), dieselben wie im PDF unter "Hinweise zur Vollstaendigkeit"; leer, wenn alles geprueft wurde |
 | pdf_base64 | string / null | Base64-kodiertes PDF (menschenlesbar, zum Anzeigen/Download); null, wenn die PDF-Erzeugung fehlschlug |
 | message | string | Status-Nachricht |
 
@@ -509,11 +514,15 @@ Ein `callback_url` im Request ersetzt fuer diesen Job das Standard-Ziel. Fuer eP
 
 Scheitert die Analyse selbst (Job `failed`, siehe 3), wird **nichts** gepusht --
 `status=0` bedeutet also eine durchgelaufene Analyse ohne hohe/kritische Findings. Den
-Abbruch erkennt ePro am Job-Status. Grenze: Inhalte, die die eKI nicht als Szene erkennt
-(Seiten ueber 500, nicht per OCR gelesene Scan-Seiten, Text vor der ersten Szenenueberschrift),
-prueft sie nicht, ohne dass der Job scheitert; ein PDF ohne lesbaren Text ergibt 0 Findings und
-`status=0`. Den Status gibt es nur im Push; im Pull-Modus leitet ePro ihn selbst aus
-`risk_summary` ab (`critical` + `high` > 0 → 1).
+Abbruch erkennt ePro am Job-Status; erkennt die eKI gar keine Szene (z. B. PDF ohne lesbaren
+Text), endet der Job ebenfalls mit `failed` (`parsing_failed`). Grenze: Teile, die die eKI nicht
+prueft (Seiten ueber 500, Seiten ohne lesbaren Text, laengerer Text vor der ersten
+Szenenueberschrift, bei fehlenden Ueberschriften Seite 1), lassen den Job nicht scheitern; der Report
+nennt sie unter "Hinweise zur Vollstaendigkeit" (PDF), in der Kurzbewertung (`WARNING: Analysis
+incomplete ...`) und in `report.metadata` (`analysis_complete: false`, `coverage_notes`).
+`status=0` mit unvollstaendiger Analyse heisst also nur "im gepruften Teil nichts Kritisches". Den
+Status gibt es nur im Push; im Pull-Modus leitet ePro ihn selbst aus `risk_summary` ab
+(`critical` + `high` > 0 → 1).
 
 ### Fehlerverhalten
 
@@ -570,7 +579,7 @@ Jedes Finding im Report enthaelt:
 | Feld | Typ | Beispiel | Beschreibung |
 |------|-----|---------|--------------|
 | id | UUID | "eff159cf-..." | Eindeutige Finding-ID |
-| scene_number | string / null | "3" | FDX: Szenennummer aus Final Draft (null, wenn das Drehbuch nicht nummeriert ist); PDF: laufende Nummer der erkannten Szene |
+| scene_number | string | "3" | FDX: Szenennummer aus Final Draft; ist das Drehbuch nicht nummeriert, die Position der Szene (1, 2, …; der Report weist darauf hin). PDF: laufende Nummer der erkannten Szene, nicht die gedruckte |
 | risk_level | enum | "critical" | Berechnete Severity (critical/high/medium/low/info) |
 | category | enum | "PHYSICAL" | Hauptkategorie (PHYSICAL/ENVIRONMENTAL/PSYCHOLOGICAL) |
 | risk_class | string | "FIRE" | Risiko-Klasse aus Taxonomie (23 moegliche Werte) |
@@ -580,7 +589,7 @@ Jedes Finding im Report enthaelt:
 | description | string | "Building fire..." | Beschreibung des Risikos |
 | recommendation | string | "Fire dept on standby" | Konkrete Massnahmenempfehlung |
 | measures | array | siehe unten | Kodifizierte Massnahmen aus dem Katalog |
-| confidence | float 0-1 | 0.9 | Selbsteinschaetzung des Modells, keine Messung; fehlt sie (oder ist 0), setzt die eKI 0.8. Nur im JSON, nicht im PDF und nicht im Push |
+| confidence | float 0-1 | 0.9 | Selbsteinschaetzung des Modells, keine Messung; fehlt sie (oder ist 0, negativ oder keine Zahl), setzt die eKI 0.8, Werte ueber 1 liest sie als Prozent (85 → 0.85, hoechstens 1.0). Nur im JSON, nicht im PDF und nicht im Push |
 | line_reference | string / null | null | derzeit immer null |
 | evidence | string | "Flames engulf the hallway." | Textbeleg (soll ein Zitat aus der Szene sein; die eKI prueft das nicht) oder Regelbegruendung |
 | vulnerability | string | "children" | Verletzlichkeitsfaktoren |

@@ -96,6 +96,7 @@ def extract_pdf_text(
     pages_text: list[str] = []
     warnings: list[str] = []
     ocr = OcrRunner(ocr_config)
+    total_pages: int | None = None
 
     try:
         with pdfplumber.open(io.BytesIO(content)) as pdf:
@@ -153,6 +154,7 @@ def extract_pdf_text(
         ocr_pages_done=sorted(ocr.pages_done),
         ocr_pages_skipped=sorted(ocr.pages_skipped),
         warnings=warnings,
+        pages_total=total_pages,
     )
 
 

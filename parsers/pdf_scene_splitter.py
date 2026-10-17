@@ -7,7 +7,8 @@ reliable structural signal in any screenplay, regardless of formatting.
 import re
 from dataclasses import dataclass
 
-# Matches lines that begin a new scene (DE + EN).
+# Matches lines that begin a new scene (DE + EN). AUSSEN may also be written
+# with ß/ẞ ("AUßEN"), which is common in German scripts.
 # Anchored to start-of-line via MULTILINE.
 # Allows optional leading scene numbers: "42 ", "42A ", "1. ", "12.1 ",
 # "12.1A. " (e.g. "42 INNEN. WOHNZIMMER - TAG", "1. EXT. FELD - TAG").
@@ -21,10 +22,10 @@ SCENE_MARKER_RE = re.compile(
     r"E\.?\s*/\s*I\.|"
     r"INT\.|"
     r"EXT\.|"
-    r"INNEN\s*[-–—/]\s*AUSSEN|"
-    r"AUSSEN\s*[-–—/]\s*INNEN|"
+    r"INNEN\s*[-–—/]\s*AU(?:SS|ß|ẞ)EN|"
+    r"AU(?:SS|ß|ẞ)EN\s*[-–—/]\s*INNEN|"
     r"INNEN[\.\s]|"
-    r"AUSSEN[\.\s]"
+    r"AU(?:SS|ß|ẞ)EN[\.\s]"
     r")",
     re.MULTILINE | re.IGNORECASE,
 )
