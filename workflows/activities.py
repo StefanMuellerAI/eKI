@@ -150,7 +150,8 @@ def _get_buffer() -> SecureBuffer:
 # terminated): it kept waiting for the Ollama semaphore and then sent its
 # request anyway, until its own start_to_close timeout (600 s) -- GPU time for
 # a result nobody collects. With heartbeats the server answers "attempt gone"
-# within one heartbeat and the SDK cancels the coroutine, which leaves the
+# to the next heartbeat the SDK sends (at most every 30 s by default) and the
+# SDK cancels the coroutine, which leaves the
 # semaphore queue or aborts the HTTP request to Ollama. (An attempt whose own
 # start_to_close timeout expires is cancelled by the SDK itself a few seconds
 # later, heartbeats or not.) No heartbeat_timeout is set on the activities:

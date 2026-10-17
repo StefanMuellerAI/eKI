@@ -24,8 +24,9 @@ Semaphore, und diese Wartezeit lief gegen das Activity-Timeout. Keine Migration.
   `processing_failed`). Der Start-Validator prüft, dass Wartezeit + `BUFFER_TTL_SECONDS` unter
   `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` bleiben und die Wartezeit kürzer als `BUFFER_TTL_SECONDS` ist.
 - **Heartbeats in den KI-Schritten** (`structure_scene_llm`, `analyze_scene_risk`, alle 10 s): Endet der
-  Workflow (Fehler, Abbruch, Terminate), bricht ein laufender KI-Schritt jetzt binnen eines Heartbeats ab,
-  statt bis zu seinem eigenen Timeout (600 s) weiter auf Ollama zu warten bzw. Ollama rechnen zu lassen.
+  Workflow (Fehler, Abbruch, Terminate), bricht ein laufender KI-Schritt jetzt nach spätestens etwa 30 s
+  ab (so oft sendet das SDK Heartbeats höchstens), statt bis zu seinem eigenen Timeout (600 s) weiter auf
+  Ollama zu warten bzw. Ollama rechnen zu lassen.
 - Metriken `eki_document_slots_in_use` und `eki_document_queue_length` (Worker); das Startlog des Workers
   nennt zusätzlich das Dokument-Limit und `OLLAMA_MAX_CONCURRENT_REQUESTS`.
 
