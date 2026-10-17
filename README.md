@@ -206,6 +206,7 @@ Veroeffentlicht werden nur Port 8000 (API) und im Entwicklungs-Stack 8080 (Tempo
 | `CHANGELOG.md` | Aenderungsprotokoll je Version |
 | `docs/OPERATIONS_GUIDE.md` | Betrieb: Installation, Updates, Migrationen, Backup/Restore, Runbooks, Troubleshooting |
 | `docs/CONFIGURATION.md` | Referenz aller Einstellungen (`.env.local`, Compose-Variablen) |
+| `docs/LASTSTEUERUNG.md` | Last, Parallelität und Zeitlimits im Detail: Dokument-Limit, Ollama-Grenzen, Ollama-Server, Profile |
 | `docs/TESTING_GUIDE.md` | Testebenen, lokale Ausfuehrung, CI-Pipeline |
 | `docs/EPRO_INTEGRATION_GUIDE.md` | Schnittstelle fuer das eProjekt-Team |
 | `docs/DATENSCHUTZ.md` | Datenhaltung: was wo wie lange gespeichert wird |
@@ -444,13 +445,14 @@ werden (Pflichtenheft §5 + §7 Abnahmetest 6). Erreicht wird das durch
 optionale Parallelisierung der LLM-Strukturierung und der Risikoanalyse,
 geschuetzt durch drei abgestufte Concurrency-Schichten.
 
-### Drei-Schicht-Schutz gegen Ollama-Ueberlast
+### Schutzschichten gegen Ollama-Ueberlast
 
 | Schicht | Variable | Default | Wirkung |
 |---|---|---|---|
+| Dokument-Limit | `MAX_CONCURRENT_DOCUMENTS` | `1` | So viele Jobs werden gleichzeitig verarbeitet; weitere warten als `pending` (Redis-Warteschlange, Priorität vor Eingang, max. `DOCUMENT_QUEUE_TIMEOUT_SECONDS`). `0` = kein Limit. `docs/OPERATIONS_GUIDE.md` §5.12. |
 | Master-Flag | `LLM_PARALLEL_ENABLED` | `false` | Wenn `false`: strikt sequenziell, bytewise identisch zu M06. |
 | Prozess-Cap | `OLLAMA_MAX_CONCURRENT_REQUESTS` | `1` | Modul-globaler Semaphore in `llm/ollama.py`. Greift ueber alle Workflows und Activities hinweg. |
-| Throttle | `OLLAMA_MIN_INTERVAL_MS` | `0` | Optionaler Mindestabstand zwischen zwei Calls fuer knapp dimensionierte Shared-GPU-Systeme. |
+| Throttle | `OLLAMA_MIN_INTERVAL_MS` | `0` | Optionaler Mindestabstand zwischen den Starts zweier Calls eines Prozesses; wirkt nur, wenn er laenger ist als ein Call dauert (`docs/LASTSTEUERUNG.md` §3.4). |
 | Workflow-Cap | `PDF_STRUCTURE_CONCURRENCY`, `RISK_ANALYSIS_CONCURRENCY` | `1` | Per-Workflow-Cap fuer parallel ausgefuehrte LLM-Activities. |
 
 Parallel-Pfad wird nur aktiv, wenn `LLM_PARALLEL_ENABLED=true` UND
@@ -743,12 +745,13 @@ eKI_API/
 │   ├── report_generator.py       # JSON + PDF Report Generator (M05)
 │   ├── knowledge_base.py         # KB Ingest/Search/Cleanup mit pgvector (M06)
 │   ├── parity.py                 # Cloud<->Lokal Paritaets-Harness (M11)
+│   ├── document_slots.py         # Dokument-Limit: Redis-Warteschlange fuer Verarbeitungsplaetze
 ├── workflows/                    # Temporal Workflows
 │   ├── security_check.py         # FDX/PDF Workflow-Router (M03)
 │   ├── maintenance.py            # KB-TTL- und Metadaten-Cleanup als Temporal-Schedules (2 Activities)
-│   └── activities.py             # 13 Activities inkl. LLM-Risikoanalyse und Zustellung (M03-M10)
+│   └── activities.py             # 15 Activities inkl. LLM-Risikoanalyse, Zustellung, Dokument-Limit
 ├── worker/
-│   └── main.py                   # Temporal Worker (3 Workflows, 15 Activities registriert)
+│   └── main.py                   # Temporal Worker (3 Workflows, 17 Activities registriert)
 ├── llm/                          # LLM Provider Abstraktion
 │   ├── base.py                   # BaseLLMProvider Interface (+ embed() M06)
 │   ├── factory.py                # Provider Factory

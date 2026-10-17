@@ -4,6 +4,60 @@ Alle wesentlichen Änderungen der eKI API. Format nach [Keep a Changelog](https:
 Versionierung nach [SemVer](https://semver.org/lang/de/). Ein Minor-Release pro Pflichtenheft-Meilenstein
 (M0x → 0.x.0), `1.0.0` mit dem UAT-Paket (M12). Die Versionsquelle ist `core/version.py`.
 
+## [Unreleased]
+
+Anlass: Auf der externen Ollama-Instanz liefen mehrere Drehbücher gleichzeitig; die Instanz wurde so
+langsam, dass keines fertig wurde. Die eKI begrenzte nur gleichzeitige KI-Aufrufe je Prozess, nicht die
+Zahl gleichzeitig verarbeiteter Dokumente: Alle Jobs liefen verzahnt, ihre KI-Schritte warteten auf den
+Semaphore, und diese Wartezeit lief gegen das Activity-Timeout. Keine Migration.
+
+### Neu
+- **Dokument-Limit** (`MAX_CONCURRENT_DOCUMENTS`, Standard `1`; `0` = kein Limit wie bis 1.0.1): Höchstens
+  so viele Jobs werden gleichzeitig verarbeitet. Alle weiteren warten als `pending` in einer
+  Warteschlange (Priorität, dann Eingang). Der Workflow fragt mit dauerhaften Timern nach
+  (`acquire_document_slot`, sofort, dann im Abstand von 5 s bis 60 s); ein wartender Job belegt keinen
+  Worker-Platz, und es läuft kein Activity-Timeout. Freigabe nach der Risikoanalyse bzw. bei Fehler/Abbruch (`release_document_slot`).
+  Zustand in Redis (`eki:docslot:*`, nur Job-IDs), Plätze mit 30-Minuten-Lease, die die KI-Schritte
+  verlängern. Die Grenze liest der Worker beim Start (nach Neuerzeugung gilt ein neuer Wert auch für schon
+  wartende Jobs); ob ein Job sich anstellt, friert die API beim Jobstart ein.
+- **Höchstwartezeit** (`DOCUMENT_QUEUE_TIMEOUT_SECONDS`, Standard 7200): danach endet der Job mit `failed`
+  und der inhaltsfreien Meldung „Kein freier Verarbeitungsplatz innerhalb von … min …“ (Webhook-Grund
+  `processing_failed`). Der Start-Validator prüft, dass Wartezeit + `BUFFER_TTL_SECONDS` unter
+  `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` bleiben und die Wartezeit kürzer als `BUFFER_TTL_SECONDS` ist
+  (nur bei Limit > 0; Zeit für die Verarbeitung reserviert er nicht).
+- **Heartbeats in den KI-Schritten** (`structure_scene_llm`, `analyze_scene_risk`, alle 10 s): Endet der
+  Workflow (Fehler, Abbruch, Terminate), bricht ein laufender KI-Schritt jetzt nach spätestens etwa 30 s
+  ab (so oft sendet das SDK Heartbeats höchstens), statt bis zu seinem eigenen Timeout (600 s) weiter auf
+  Ollama zu warten bzw. Ollama rechnen zu lassen.
+- Metriken `eki_document_slots_in_use` und `eki_document_queue_length` (Worker); das Startlog des Workers
+  nennt zusätzlich das Dokument-Limit und `OLLAMA_MAX_CONCURRENT_REQUESTS`.
+
+### Behoben (Ergebnis des Faktenchecks der Dokumentation)
+- **Drehbuch ohne erkennbare Szene endete als `completed` mit 0 Befunden** (Push-Status 0, wirkte wie
+  „kein Risiko“), z. B. ein PDF ohne lesbaren Text, ein einseitiges PDF ohne Szenenüberschrift oder eine
+  leere FDX-Datei. Jetzt `failed` mit „Parsing fehlgeschlagen: keine Szene erkannt (…) – Drehbuch
+  manuell prüfen“ (Webhook-Grund `parsing_failed`).
+- **Nicht geprüfte Teile blieben unerwähnt.** Der Report nennt jetzt unter „Hinweise zur
+  Vollständigkeit“ (PDF), in der Push-Kurzbewertung und in `report.metadata` (`analysis_complete`,
+  `coverage_notes`): Seiten über `MAX_PDF_PAGES`, Seiten ohne lesbaren Text (leer, Scan ohne
+  Texterkennung), bei fehlenden Szenenüberschriften die als Titelseite übersprungene Seite 1 und Text
+  vor der ersten Überschrift ab rund 1500 Zeichen. Nur Seitenzahlen und Mengen, keine Inhalte.
+- **FDX ohne Szenennummern:** Alle Befunde standen unter „Szene ?“ (Meldungen „Szene None“). Unnummerierte
+  Szenen erhalten jetzt ihre Position als Nummer; der Report weist darauf hin.
+- **Konfidenzwerte über 1** aus dem Modell ließen den Report-Abruf mit 500 scheitern. Jetzt als Prozent
+  gelesen (85 → 0,85, höchstens 1,0); fehlende, negative oder nicht numerische Werte → 0,8. Fehlende oder
+  nicht textuelle `description`/`recommendation` werden zu Text.
+- **„AUßEN“ mit ß** wurde im PDF nicht als Szenenüberschrift erkannt (auch „AUẞEN“, „INNEN/AUßEN“); im
+  FDX-Überschriftenparser verlor der Ort dabei seinen ersten Buchstaben.
+
+### Für ePro relevant
+- Ein Drehbuch ohne erkennbare Szene endet jetzt mit `failed` statt mit einem leeren Report.
+  `report.metadata.analysis_complete=false` bzw. die Zeile `WARNING: Analysis incomplete` in der
+  Kurzbewertung zeigen an, dass Teile nicht geprüft wurden – ePro sollte das sichtbar machen.
+- Jobs können länger `pending` bleiben (Warteschlange). Polling-Timeout auf mindestens 4,5 h erhöhen
+  (bis 2 h Wartezeit + rund 2 h Verarbeitung), wartende Jobs seltener abfragen (1000 Anfragen/h je
+  API-Key), `docs/EPRO_INTEGRATION_GUIDE.md` §3.
+
 ## [1.0.1] – 2026-10-16 – Stabilisierung zur Übergabe
 
 Ergebnis eines Test- und Doku-Reviews vor der Übergabe und der daraus folgenden Projektentscheidungen.

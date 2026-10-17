@@ -20,7 +20,9 @@ Ausführliche Anleitung: `docs/OPERATIONS_GUIDE.md`; alle Einstellungen: `docs/C
       `v1.0.0`-Images verwenden (ohne die Korrekturen, noch mit echten Drehbüchern) (eKI)
 - [ ] eKI-Host: Docker ≥ 24 mit **Docker Compose ≥ 2.24** (das Prod-Overlay nutzt `!reset`) (IT)
 - [ ] Externe Ollama-Instanz bereit (`OPERATIONS_GUIDE.md` §4.11): GPU ≥ 24 GB VRAM, NVIDIA-Treiber
-      bzw. Container Toolkit auf dem Ollama-Host, `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_KEEP_ALIVE=30m`,
+      bzw. Container Toolkit auf dem Ollama-Host, `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_KEEP_ALIVE=30m`
+      **auf dem Ollama-Host gesetzt** (nicht in `.env.local`; Kontrolle `journalctl -u ollama | grep
+      "server config"`), keine weitere eKI-Instanz (Stage/Entwicklung) auf derselben Instanz,
       Port 11434 nur für die eKI-Hosts erreichbar; Ollama-Version dokumentiert
       (`curl -s http://<ollama-host>:11434/api/version`) und der Pin in `docker-compose.ollama.yml`
       (derzeit `0.33.3`) darauf abgeglichen (IT)
@@ -59,6 +61,8 @@ Ausführliche Anleitung: `docs/OPERATIONS_GUIDE.md`; alle Einstellungen: `docs/C
 - [ ] `CORS_ORIGINS`, `TRUST_PROXY_HEADERS=true` + `TRUSTED_PROXY_IPS` (nur hinter Reverse-Proxy;
       sonst teilen sich alle Clients das Rate Limit der Proxy-IP)
 - [ ] `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT=36000`, `BUFFER_TTL_SECONDS=21600`
+- [ ] Dokument-Limit passend zur Ollama-Instanz: `MAX_CONCURRENT_DOCUMENTS=1` bei einer GPU mit
+      `OLLAMA_NUM_PARALLEL=1`, `DOCUMENT_QUEUE_TIMEOUT_SECONDS=7200` (`OPERATIONS_GUIDE.md` §4.2, §5.12)
 - [ ] `CALLBACK_URL_ALLOWED_HOSTS` mit ePro abgestimmt (Standard: `epro.filmakademie.de`,
       `staging.epro.filmakademie.de`), `TEMPORAL_PRIORITY_LEVELS=10` passend zu
       `matching.priorityLevels` der Dynamic Config
@@ -70,7 +74,7 @@ Ausführliche Anleitung: `docs/OPERATIONS_GUIDE.md`; alle Einstellungen: `docs/C
 
   ```bash
   export COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml
-  export GHCR_OWNER=<github-owner> EKI_IMAGE_TAG=<Release-Tag>
+  export GHCR_OWNER=<github-owner, kleingeschrieben> EKI_IMAGE_TAG=<Release-Tag>
   export GRAFANA_ADMIN_PASSWORD='<starkes Passwort>'   # sonst gilt wörtlich CHANGE_ME
   ```
 
@@ -103,9 +107,12 @@ Observability-Overlay braucht die Key-Datei.
 - [ ] Observability-Overlay starten:
       `COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml:docker-compose.observability.yml docker compose up -d --no-build`
 - [ ] Reverse-Proxy/TLS für `eki-api:8000` (Pflichtenheft §5 „durchgehend verschlüsselt (TLS)")
-- [ ] Firewall: eingehend nur ePro → eKI:443; ausgehend vom eKI-Host nur ePro, GHCR und die
-      Ollama-Instanz (`<ollama-host>:11434`); die Ollama-Registry nur vom Ollama-Host;
-      `api.mistral.ai` blockiert
+- [ ] Firewall: eingehend nur ePro → eKI:443; Port 8000 (HTTP, alle Interfaces) nur für den
+      Reverse-Proxy – Docker umgeht ufw/firewalld, Regeln daher in der Kette `DOCKER-USER`; mit
+      Overlay auch Grafana 3000 und Jaeger 16686 (ohne Anmeldung) beschränken. Ausgehend vom eKI-Host
+      nur ePro, GitHub (Checkout), GHCR (bei privaten Paketen `docker login ghcr.io`), Docker Hub
+      (PostgreSQL, Redis, Temporal, Observability – oder eigener Mirror) und die Ollama-Instanz
+      (`<ollama-host>:11434`); die Ollama-Registry nur vom Ollama-Host; `api.mistral.ai` blockiert
 - [ ] Container-Logs: Das Prod-Overlay rotiert nach Größe (20 MB × 5 je Container); ist eine
       zeitliche Frist gefordert, Weiterleitung an einen zentralen Log-Speicher eingerichtet
       (`DATENSCHUTZ.md` §3.4)
@@ -145,7 +152,11 @@ Dev-Abhängigkeiten, `docs/TESTING_GUIDE.md`).
 - [ ] `Idempotency-Key`-Header wird ePro-seitig dedupliziert (Guide §4b)
 - [ ] Jobs mit Status `failed`/`cancelled` und ein 410 beim Report-Abruf werden als
       „keine automatische Bewertung – manuelle Prüfung" angezeigt, nie als „kein Risiko" (Guide §3, §4)
-- [ ] Polling-Timeout ≥ 2,5 h und Polling-Intervall passend zum Rate Limit (Guide §3, §8)
+- [ ] Unvollständige Reports (`report.metadata.analysis_complete=false` bzw. `WARNING: Analysis
+      incomplete` in der Kurzbewertung) werden sichtbar markiert; die genannten Seiten werden manuell
+      bewertet (Guide §4, §4b)
+- [ ] Polling-Timeout ≥ 4,5 h (Warteschlange bis 2 h + Verarbeitung bis 2 h) und Polling-Intervall
+      passend zum Rate Limit (Guide §3, §8); `pending` kann „wartet auf Verarbeitungsplatz“ bedeuten
 - [ ] Webhook-Endpunkt für `security.delivery.failed` bereit (optional); Grund
       `invalid_callback_url` bekannt
 - [ ] Falls ePro `callback_url` nutzt: Callback-Host steht in `CALLBACK_URL_ALLOWED_HOSTS`, löst

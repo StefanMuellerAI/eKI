@@ -486,6 +486,7 @@ class TestSplitScenesActivity:
             "scene_count": 1,
             "has_preamble": False,
             "used_page_fallback": False,
+            "preamble_chars": 0,
         }
 
 
@@ -689,6 +690,10 @@ class TestAggregateScriptActivity:
             "ocr_pages_done": [2],
             "ocr_pages_skipped": [5],
             "used_page_fallback": False,
+            # Not passed by this caller (histories before the coverage notes).
+            "pages_total": None,
+            "pages_processed": None,
+            "preamble_chars": None,
         }
 
     async def test_empty_page_fallback_script(self, buf):
@@ -2093,3 +2098,212 @@ class TestWebhookAttemptCount:
         )
 
         assert json.loads(requests[0].read())["attempts"] == 0
+
+
+# ===================================================================
+# Coverage and robustness fixes (zero scenes, numbering, confidence, notes)
+# ===================================================================
+
+_EMPTY_FDX = (
+    b'<?xml version="1.0" encoding="UTF-8"?>'
+    b'<FinalDraft DocumentType="Script" Template="No" Version="5"><Content>'
+    b'<Paragraph Type="Transition"><Text>FADE IN:</Text></Paragraph>'
+    b"</Content></FinalDraft>"
+)
+
+
+@pytest.mark.asyncio
+class TestNoAnalysableScene:
+    """A script without any scene fails instead of completing with 0 findings."""
+
+    async def test_fdx_without_script_text_fails_without_retry(self, buf):
+        buffer, redis = buf
+        ref = await buffer.store({"script_content": base64.b64encode(_EMPTY_FDX).decode()})
+
+        with pytest.raises(ApplicationError) as err:
+            await parse_fdx_activity({"ref_key": ref})
+
+        assert err.value.type == "ParsingFailed"
+        assert err.value.non_retryable is True
+        assert "keine Szene erkannt" in err.value.message
+        assert "FDX enthält keinen Drehbuchtext" in err.value.message
+        # Nothing parsed is stored; the raw script stays for the failure cleanup.
+        assert list(redis._store) == [ref]
+
+    @pytest.mark.parametrize(
+        ("full_text", "page_texts", "reason"),
+        [
+            ("", ["", ""], "kein lesbarer Text"),
+            ("   \n  ", None, "kein lesbarer Text"),
+            ("Ein Titel\nvon Autorin", ["Ein Titel\nvon Autorin"], "nur eine Seite"),
+            ("Titel", ["Titel", "   "], "nur eine Seite"),
+        ],
+        ids=["blank-pages", "whitespace", "one-page-no-heading", "title-plus-blank-page"],
+    )
+    async def test_pdf_without_scene_fails_without_retry(self, buf, full_text, page_texts, reason):
+        buffer, redis = buf
+        ref = await buffer.store({"full_text": full_text, "page_texts": page_texts})
+
+        with pytest.raises(ApplicationError) as err:
+            await split_scenes_activity({"text_ref_key": ref})
+
+        assert err.value.type == "ParsingFailed"
+        assert err.value.non_retryable is True
+        assert "keine Szene erkannt" in err.value.message
+        assert reason in err.value.message
+        # Content-free: the title text never appears in the error.
+        assert "Titel" not in err.value.message
+        assert list(redis._store) == [ref]
+
+    async def test_preamble_size_is_reported(self, buf):
+        buffer, _ = buf
+        preamble = "Titelseite " * 20
+        ref = await buffer.store({"full_text": preamble + "\nINT. HAUS - TAG\nText."})
+
+        result = await split_scenes_activity({"text_ref_key": ref})
+
+        assert result["scene_count"] == 1
+        assert result["has_preamble"] is True
+        assert result["preamble_chars"] == len(preamble.strip())
+
+
+@pytest.mark.asyncio
+class TestFindingRobustness:
+    async def test_scene_without_number_uses_its_position(self, buf, install_llm, risk_settings):
+        buffer, _ = buf
+        install_llm(lambda *_: _risk_output())
+        parsed_ref = await buffer.store(
+            {"scenes": [{"number": None, "text": "INT. LAB - NIGHT\nA fire breaks out."}]}
+        )
+
+        result = await analyze_scene_risk_activity({"parsed_ref_key": parsed_ref, "scene_index": 0})
+
+        assert result["scene_number"] == "1"
+        findings = (await buffer.retrieve(result["findings_ref_key"]))["findings"]
+        assert {f["scene_number"] for f in findings} == {"1"}
+
+    async def test_model_values_that_broke_the_report_get_are_normalised(
+        self, buf, install_llm, risk_settings
+    ):
+        buffer, _ = buf
+        output = _risk_output()
+        output["findings"][0]["confidence"] = 85  # percent instead of 0..1
+        output["findings"][1]["confidence"] = "very sure"
+        output["findings"][1]["description"] = None
+        output["findings"][1]["recommendation"] = ["Check", "twice"]
+        install_llm(lambda *_: output)
+        parsed_ref = await _store_parsed(buffer)
+
+        result = await analyze_scene_risk_activity({"parsed_ref_key": parsed_ref, "scene_index": 0})
+
+        fire, odd = (await buffer.retrieve(result["findings_ref_key"]))["findings"]
+        assert fire["confidence"] == 0.85
+        assert odd["confidence"] == 0.8
+        assert odd["description"] == ""
+        assert odd["recommendation"] == "['Check', 'twice']"
+        # The report can be read back through the public model (no 500 on GET).
+        from core.models import RiskFinding
+
+        RiskFinding(**{k: v for k, v in odd.items() if k in RiskFinding.model_fields})
+        RiskFinding(**{k: v for k, v in fire.items() if k in RiskFinding.model_fields})
+
+
+class TestCoerceConfidence:
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            (None, 0.8),
+            (0, 0.8),
+            (-0.3, 0.8),
+            ("abc", 0.8),
+            (float("nan"), 0.8),
+            (0.42, 0.42),
+            ("0.7", 0.7),
+            (1, 1.0),
+            (85, 0.85),
+            (100, 1.0),
+            (250, 1.0),
+            (float("inf"), 1.0),
+        ],
+    )
+    def test_coerce_confidence(self, raw, expected):
+        assert activities._coerce_confidence(raw) == expected
+
+
+@pytest.mark.asyncio
+class TestReportCoverageNotes:
+    async def test_gaps_from_the_parsed_script_reach_json_pdf_and_assessment(self, buf):
+        buffer, redis = buf
+        parsed_ref = await buffer.store(
+            {
+                "scenes": [],
+                "metadata": {
+                    "pages_total": 620,
+                    "pages_processed": 500,
+                    "ocr_pages_skipped": [12, 13, 14, 51],
+                    "used_page_fallback": False,
+                    "preamble_chars": 200,
+                },
+            }
+        )
+
+        result = await aggregate_report_activity(
+            {"all_findings": [], "parsed_ref_key": parsed_ref},
+            {"report_id": "r-gaps", "project_id": "75", "script_format": "pdf"},
+        )
+
+        package = await buffer.retrieve(result["report_ref_key"])
+        meta = package["report"]["metadata"]
+        assert meta["analysis_complete"] is False
+        assert meta["coverage_notes"] == [
+            "Nur die ersten 500 von 620 Seiten wurden verarbeitet (Grenze MAX_PDF_PAGES); "
+            "die Seiten 501–620 sind nicht geprüft.",
+            "4 Seite(n) ohne lesbaren Text wurden nicht geprüft (leer, Scan ohne "
+            "Texterkennung oder Texterkennung ohne Ergebnis): Seite 12–14, 51.",
+        ]
+        assert list(redis._store) == [result["report_ref_key"]]
+
+        import io
+
+        import pdfplumber
+
+        pdf = base64.b64decode(package["pdf_base64"])
+        with pdfplumber.open(io.BytesIO(pdf)) as doc:
+            text = "\n".join(page.extract_text() or "" for page in doc.pages)
+        assert "Hinweise zur Vollständigkeit" in text
+        assert "Die Analyse ist unvollständig." in text
+        assert "501–620" in text
+
+        from services.report_generator import generate_assessment_text
+
+        assessment = generate_assessment_text(package["report"])
+        assert "WARNING: Analysis incomplete" in assessment
+        assert "Seite 12–14, 51" in assessment
+
+    async def test_complete_script_has_no_notes(self, buf):
+        buffer, _ = buf
+        parsed_ref = await buffer.store({"scenes": [], "metadata": {"parser": "fdx"}})
+
+        result = await aggregate_report_activity(
+            {"all_findings": [], "parsed_ref_key": parsed_ref}, {"report_id": "r-ok"}
+        )
+
+        report = (await buffer.retrieve(result["report_ref_key"]))["report"]
+        assert report["metadata"]["analysis_complete"] is True
+        assert report["metadata"]["coverage_notes"] == []
+
+        from services.report_generator import generate_assessment_text
+
+        assert "WARNING" not in generate_assessment_text(report)
+
+
+class TestExtractionPageCount:
+    def test_pages_beyond_the_limit_are_counted(self):
+        from parsers.pdf import extract_pdf_text
+
+        content = (FIXTURES / "pdf" / "multi_scene.pdf").read_bytes()
+
+        extraction = extract_pdf_text(content, max_pages=1)
+
+        assert extraction.pages_total == 2
+        assert len(extraction.page_texts) == 1

@@ -306,6 +306,17 @@ class TestApiWiring:
         assert (job_data["callback_url"], job_data["delivery_mode"]) == (CALLBACK, "push")
         assert started["kwargs"]["priority"] == Priority(priority_key=1)
 
+    def test_document_limit_is_frozen_into_job_data(self, client, auth_headers, mock_temporal):
+        resp = client.post(
+            "/v1/security/check:async",
+            json={"script_content": _b64(FDX), "script_format": "fdx", "project_id": "dl"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 202, resp.text
+        job_data = mock_temporal.started[-1]["args"][1]
+        assert job_data["max_concurrent_documents"] == 1
+        assert job_data["document_queue_timeout_seconds"] == 7200
+
     def test_non_mapping_input_is_left_to_pydantic(self):
         with pytest.raises(ValidationError, match="valid dictionary"):
             AsyncSecurityCheckRequest.model_validate(["not", "a", "dict"])

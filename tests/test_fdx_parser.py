@@ -244,8 +244,12 @@ class TestFDXParser:
         result = await FDXParser().parse(content)
 
         assert result.total_scenes == 2
-        assert result.scenes[0].number is None
-        assert result.scenes[1].number is None
+        # Without Final Draft numbering the scenes are numbered by position, so
+        # the report does not lump every finding under "Szene ?".
+        assert result.scenes[0].number == "1"
+        assert result.scenes[1].number == "2"
+        assert result.metadata["scenes_numbered_by_position"] == 2
+        assert result.warnings == []
         assert result.scenes[0].time_of_day == TimeOfDay.MORNING
 
     @pytest.mark.asyncio

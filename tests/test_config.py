@@ -1,6 +1,7 @@
 """Tests for application settings parsing."""
 
 import pytest
+from pydantic import ValidationError
 
 from api.config import Settings
 
@@ -171,3 +172,56 @@ class TestProductionSecurityValidator:
             API_SECRET_KEY="CHANGE_ME_256_BIT_SECRET_KEY_HERE",
         )
         assert not settings.is_production
+
+
+class TestDocumentLimitSettings:
+    """MAX_CONCURRENT_DOCUMENTS / DOCUMENT_QUEUE_TIMEOUT_SECONDS."""
+
+    def _settings(self, monkeypatch, **env: str) -> Settings:
+        for name in (
+            "MAX_CONCURRENT_DOCUMENTS",
+            "DOCUMENT_QUEUE_TIMEOUT_SECONDS",
+            "BUFFER_TTL_SECONDS",
+            "TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT",
+        ):
+            monkeypatch.delenv(name, raising=False)
+        for name, value in env.items():
+            monkeypatch.setenv(name, value)
+        return Settings(_env_file=None)
+
+    def test_defaults_queue_one_document_for_two_hours(self, monkeypatch):
+        settings = self._settings(monkeypatch)
+        assert settings.max_concurrent_documents == 1
+        assert settings.document_queue_timeout_seconds == 7200
+
+    def test_zero_disables_the_limit(self, monkeypatch):
+        assert (
+            self._settings(monkeypatch, MAX_CONCURRENT_DOCUMENTS="0").max_concurrent_documents == 0
+        )
+
+    @pytest.mark.parametrize("value", ["-1", "51"])
+    def test_limit_out_of_range_is_rejected(self, monkeypatch, value):
+        with pytest.raises(ValidationError):
+            self._settings(monkeypatch, MAX_CONCURRENT_DOCUMENTS=value)
+
+    def test_queue_timeout_has_a_floor(self, monkeypatch):
+        with pytest.raises(ValidationError):
+            self._settings(monkeypatch, DOCUMENT_QUEUE_TIMEOUT_SECONDS="30")
+
+    def test_queue_timeout_must_be_shorter_than_the_buffer_ttl(self, monkeypatch):
+        with pytest.raises(ValidationError, match="must be shorter than BUFFER_TTL_SECONDS"):
+            self._settings(monkeypatch, DOCUMENT_QUEUE_TIMEOUT_SECONDS="21600")
+
+    def test_queue_and_buffer_ttl_must_fit_into_the_workflow_timeout(self, monkeypatch):
+        with pytest.raises(ValidationError, match="must stay below TEMPORAL_WORKFLOW_EXECUTION"):
+            self._settings(
+                monkeypatch,
+                DOCUMENT_QUEUE_TIMEOUT_SECONDS="14400",
+                TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT="36000",
+            )
+
+    def test_timing_rules_do_not_apply_without_a_limit(self, monkeypatch):
+        settings = self._settings(
+            monkeypatch, MAX_CONCURRENT_DOCUMENTS="0", DOCUMENT_QUEUE_TIMEOUT_SECONDS="99999"
+        )
+        assert settings.document_queue_timeout_seconds == 99999

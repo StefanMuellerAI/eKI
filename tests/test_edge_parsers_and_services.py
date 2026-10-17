@@ -212,7 +212,8 @@ class TestFDXStructure:
 
     @pytest.mark.parametrize(
         ("number", "expected"),
-        [("12A", "12A"), ("012", "012"), ("12.1", "12.1"), ("", ""), (None, None), (" 7 ", " 7 ")],
+        # Missing or empty numbers fall back to the scene position (1-based).
+        [("12A", "12A"), ("012", "012"), ("12.1", "12.1"), ("", "1"), (None, "1"), (" 7 ", " 7 ")],
         ids=repr,
     )
     async def test_scene_number_attribute_kept_verbatim(self, number, expected):

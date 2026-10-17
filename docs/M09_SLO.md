@@ -41,6 +41,7 @@ Stand: M09. Ableitung aus Pflichtenheft v1 §3.4 (Erfolgskriterien), §5
 | Delete-on-Delivery | `eki_buffer_deletes_total{source=~"push\|pull"}` ≥ erfolgreiche Zustellungen | Activity + Router |
 | LLM-Fehlerrate | `eki_llm_requests_total{outcome="error"}` / alle | Provider-Adapter |
 | LLM-Wartezeit | `histogram_quantile(0.95, eki_llm_queue_wait_seconds_bucket)` | `_ollama_slot()` |
+| Warteschlange (Dokument-Limit) | `eki_document_queue_length`, `eki_document_slots_in_use` (Job-Laufzeit enthält die Wartezeit) | `acquire_document_slot` / `release_document_slot` |
 | Dead Letters | `eki_dead_letters_unacknowledged` | M10 Ops-Endpoints |
 
 ---
@@ -85,16 +86,16 @@ Prometheus-Werte dienen dem laufenden Betrieb.
 
 | Alert (`alerts.yml`) | SLO | Schwelle | Severity |
 |---|---|---|---|
-| `EkiApiDown` | S1 | `up == 0` für 2 min | critical |
+| `EkiApiDown` | S1 | `up == 0` für 2 min (Scrape von `/metrics` scheitert – auch bei abgelaufenem/gesperrtem Scraper-Key) | critical |
 | `EkiWorkerDown` | S2 | `up == 0` für 5 min | critical |
 | `EkiHttp5xxRateHigh` | S1 | > 5 % 5xx für 10 min | warning |
-| `EkiJobDurationSloBreach` | S3–S5 | p95 > 7200 s für 30 min | warning |
+| `EkiJobDurationSloBreach` | S3–S5 | p95 (6-h-Fenster) > 7200 s für 30 min; Dauer ab Annahme, inkl. Wartezeit in der Dokument-Warteschlange | warning |
 | `EkiJobFailureRateHigh` | S6 | > 10 % failed für 30 min | warning |
 | `EkiDeliveryFailureRateHigh` | S7 | > 50 % Push-Fehlversuche für 30 min | warning |
 | `EkiDeadLettersPending` | S7 | > 0 unbestätigte Dead Letters für 15 min | warning |
 | `EkiWebhookFailing` | S7 | Webhook-Fehler in 1 h | warning |
 | `EkiLlmErrorRateHigh` | S9 | > 20 % Fehler für 15 min | warning |
-| `EkiOllamaQueueWaitHigh` | S3–S5 | p95 Wartezeit > 120 s | info |
+| `EkiOllamaQueueWaitHigh` | S3–S5 | p95 Wartezeit am prozessinternen Ollama-Semaphor > 120 s für 15 min (nicht die Dokument-Warteschlange; für sie gibt es keinen Alarm) | info |
 | `EkiPromptSanitizerBlockedSpike` | Security | > 20 blockierte Prompts/h | info |
 
 ---

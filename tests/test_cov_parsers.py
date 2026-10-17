@@ -1468,7 +1468,11 @@ class TestFdxEdgeCases:
         ]
         assert script.overall_confidence == pytest.approx(0.65)
         assert [c.name for c in script.characters] == ["NARRATOR"]
-        assert script.metadata == {"parser": "fdx", "paragraph_count": 5}
+        assert script.metadata == {
+            "parser": "fdx",
+            "paragraph_count": 5,
+            "scenes_numbered_by_position": 0,
+        }
 
     async def test_transition_only_preamble_does_not_create_a_scene(self):
         body = "".join(

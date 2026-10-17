@@ -1122,6 +1122,8 @@ def worker_module(monkeypatch):
             temporal_task_queue="q",
             worker_max_concurrent_workflow_tasks=1,
             worker_max_concurrent_activities=1,
+            max_concurrent_documents=1,
+            ollama_max_concurrent_requests=1,
             otel_enabled=False,
             api_secret_key="worker-test-secret-key-with-32-chars!!",
         ),

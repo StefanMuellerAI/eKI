@@ -18,6 +18,7 @@ from core.temporal_codec import EncryptionCodec, temporal_client_options
 from core.tracing import configure_tracing, temporal_interceptors
 from core.version import __version__
 from workflows.activities import (
+    acquire_document_slot_activity,
     aggregate_report_activity,
     aggregate_script_activity,
     analyze_scene_risk_activity,
@@ -27,6 +28,7 @@ from workflows.activities import (
     extract_pdf_text_activity,
     parse_fdx_activity,
     record_dead_letter_activity,
+    release_document_slot_activity,
     send_delivery_failed_webhook_activity,
     split_scenes_activity,
     structure_scene_llm_activity,
@@ -114,15 +116,21 @@ async def main() -> None:
                 kb_cleanup_expired_activity,
                 # 1.0.1 -- metadata retention
                 metadata_cleanup_expired_activity,
+                # Document limit (MAX_CONCURRENT_DOCUMENTS)
+                acquire_document_slot_activity,
+                release_document_slot_activity,
             ],
             max_concurrent_workflow_tasks=settings.worker_max_concurrent_workflow_tasks,
             max_concurrent_activities=settings.worker_max_concurrent_activities,
         )
 
         logger.info(
-            "Worker concurrency caps: workflow_tasks=%d, activities=%d",
+            "Worker concurrency caps: workflow_tasks=%d, activities=%d, "
+            "documents=%d (0 = no limit), ollama_requests=%d",
             settings.worker_max_concurrent_workflow_tasks,
             settings.worker_max_concurrent_activities,
+            settings.max_concurrent_documents,
+            settings.ollama_max_concurrent_requests,
         )
 
         # M09/1.0.1: Wartungs-Schedules anlegen bzw. an die Settings angleichen

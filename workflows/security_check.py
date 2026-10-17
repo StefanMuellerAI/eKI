@@ -37,6 +37,15 @@ already exist in recorded histories is guarded by ``workflow.patched``:
 
 All other M13 changes only alter activity *arguments/results* or activity
 code, which Temporal does not compare during replay.
+
+Document limit (``MAX_CONCURRENT_DOCUMENTS``)
+--------------------------------------------
+A job whose ``job_data`` carries ``max_concurrent_documents > 0`` first waits
+for a processing slot (``acquire_document_slot``, polled with durable timers,
+status stays ``pending``) and gives it back after the risk analysis or when it
+fails / is cancelled (``release_document_slot``). The step is gated by the
+workflow *input*, not by ``workflow.patched``: histories recorded before the
+change never carry the key, so they replay without the new commands.
 """
 
 import asyncio
@@ -57,6 +66,8 @@ with workflow.unsafe.imports_passed_through():
         ERROR_TYPE_INVALID_PROJECT_ID,
         ERROR_TYPE_PARSING_FAILED,
         ERROR_TYPE_PROMPT_BLOCKED,
+        ERROR_TYPE_QUEUE_TIMEOUT,
+        acquire_document_slot_activity,
         aggregate_report_activity,
         aggregate_script_activity,
         analyze_scene_risk_activity,
@@ -66,6 +77,7 @@ with workflow.unsafe.imports_passed_through():
         extract_pdf_text_activity,
         parse_fdx_activity,
         record_dead_letter_activity,
+        release_document_slot_activity,
         send_delivery_failed_webhook_activity,
         split_scenes_activity,
         structure_scene_llm_activity,
@@ -130,6 +142,13 @@ _DELIVERY_FAILURE_REASONS = {
     ERROR_TYPE_INVALID_CALLBACK_URL: "invalid_callback_url",
 }
 _TERMINAL_STATUSES = frozenset({"failed", "cancelled"})
+
+# Document limit: a waiting job polls for a slot, starting after 5 s and
+# doubling up to once a minute (bounded history: ~10 events per poll).
+_SLOT_POLL_INITIAL = timedelta(seconds=5)
+_SLOT_POLL_MAX = timedelta(seconds=60)
+_SLOT_ACTIVITY_TIMEOUT = timedelta(seconds=30)
+_DEFAULT_QUEUE_TIMEOUT_SECONDS = 7200
 
 # ``reason`` of the security.delivery.failed webhook for processing failures.
 _PROCESSING_FAILURE_REASONS = {
@@ -201,6 +220,31 @@ def _resolve_activity_timeout(job_data: dict[str, Any]) -> timedelta:
     return timedelta(seconds=max(60, seconds))
 
 
+def _document_limit_enabled(job_data: dict[str, Any]) -> bool:
+    """True when the API froze an active document limit into this job.
+
+    Jobs started before the document limit existed (or with
+    ``MAX_CONCURRENT_DOCUMENTS=0``) skip the queue entirely.
+    """
+    try:
+        return int(job_data.get("max_concurrent_documents") or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _resolve_queue_timeout(job_data: dict[str, Any]) -> timedelta:
+    """Maximum time a job waits for a processing slot (frozen at job start)."""
+    seconds = (
+        job_data.get("document_queue_timeout_seconds", _DEFAULT_QUEUE_TIMEOUT_SECONDS)
+        or _DEFAULT_QUEUE_TIMEOUT_SECONDS
+    )
+    try:
+        seconds = int(seconds)
+    except (TypeError, ValueError):
+        seconds = _DEFAULT_QUEUE_TIMEOUT_SECONDS
+    return timedelta(seconds=max(60, seconds))
+
+
 @workflow.defn(name="SecurityCheckWorkflow")
 class SecurityCheckWorkflow:
     """Routes to FDX or PDF pipeline based on script_format."""
@@ -212,6 +256,9 @@ class SecurityCheckWorkflow:
         # True once the delivery outcome is decided; from then on the job's
         # terminal state is owned by the delivery logic, not by cancellation.
         self._delivery_settled = False
+        # Document limit: set while this job holds or waits for a slot.
+        self._slot_job_id = ""
+        self._slot_pending_release = False
 
     def _track(self, *refs: Any) -> None:
         for ref in refs:
@@ -342,6 +389,72 @@ class SecurityCheckWorkflow:
                 type(exc).__name__,
             )
 
+    async def _acquire_document_slot(self, job_data: dict[str, Any], job_id: str) -> None:
+        """Wait (status ``pending``) until the document limit admits this job.
+
+        Polls ``acquire_document_slot`` with durable timers (5 s, doubling to
+        60 s): a waiting job holds no worker slot and no activity timeout
+        runs. Gives up after ``document_queue_timeout_seconds`` with the
+        content-free ``DocumentQueueTimeout`` (job ``failed``).
+        """
+        timeout = _resolve_queue_timeout(job_data)
+        deadline = workflow.now() + timeout
+        payload = {
+            "job_id": job_id,
+            "priority": job_data.get("priority", 5),
+            # Arrival = first poll; deterministic on replay.
+            "enqueued_at_ms": int(workflow.now().timestamp() * 1000),
+        }
+        self._slot_job_id = job_id
+        self._slot_pending_release = True
+        delay = _SLOT_POLL_INITIAL
+        while True:
+            result: dict[str, Any] = await workflow.execute_activity(
+                acquire_document_slot_activity,
+                payload,
+                start_to_close_timeout=_SLOT_ACTIVITY_TIMEOUT,
+                retry_policy=_RETRY_STANDARD,
+            )
+            if result.get("granted"):
+                return
+            remaining = deadline - workflow.now()
+            if remaining <= timedelta(0):
+                minutes = int(timeout.total_seconds() // 60)
+                raise ApplicationError(
+                    f"Kein freier Verarbeitungsplatz innerhalb von {minutes} min "
+                    f"(Dokument-Limit {result.get('limit')}, Warteposition "
+                    f"{result.get('position')}) – Job bitte später neu einreichen",
+                    type=ERROR_TYPE_QUEUE_TIMEOUT,
+                    non_retryable=True,
+                )
+            await workflow.sleep(min(delay, remaining))
+            delay = min(delay * 2, _SLOT_POLL_MAX)
+
+    async def _release_document_slot(self) -> None:
+        """Give the slot back / leave the queue (best effort; the lease is the safety net).
+
+        A cancellation that lands on the release is re-raised and the release
+        stays pending, so the cancellation branch of ``run`` retries it.
+        """
+        if not self._slot_pending_release:
+            return
+        try:
+            await workflow.execute_activity(
+                release_document_slot_activity,
+                {"job_id": self._slot_job_id},
+                start_to_close_timeout=_SLOT_ACTIVITY_TIMEOUT,
+                retry_policy=_RETRY_STANDARD,
+            )
+        except Exception as exc:
+            if is_cancelled_exception(exc):
+                raise
+            logger.warning(
+                "Document slot release failed (non-fatal, lease expires): job=%s exc_type=%s",
+                self._slot_job_id,
+                type(exc).__name__,
+            )
+        self._slot_pending_release = False
+
     @workflow.run
     async def run(self, job_data: dict[str, Any]) -> dict[str, Any]:
         workflow_id = workflow.info().workflow_id
@@ -352,6 +465,10 @@ class SecurityCheckWorkflow:
         self._track(job_data.get("ref_key", ""))
 
         try:
+            if _document_limit_enabled(job_data):
+                # Keyed by workflow id (= job_id): the LLM activities renew the
+                # lease under activity.info().workflow_id.
+                await self._acquire_document_slot(job_data, workflow_id)
             await self._update_job(job_id, "running", progress=0)
             if fmt == "pdf":
                 return await self._run_pdf(job_data, workflow_id)
@@ -361,6 +478,7 @@ class SecurityCheckWorkflow:
             if is_cancelled_exception(e) and workflow.patched(_PATCH_CANCELLATION):
                 # M13: an operator cancel is not a processing failure.
                 logger.warning("Workflow %s cancelled", workflow_id)
+                await self._release_document_slot()
                 if not self._delivery_settled:
                     await self._cleanup_buffers(job_id)
                     await self._update_job(
@@ -371,6 +489,7 @@ class SecurityCheckWorkflow:
                 raise
             error = _failure_message(e)
             logger.error("Workflow %s failed: %s", workflow_id, error, exc_info=True)
+            await self._release_document_slot()
             if workflow.patched(_PATCH_FAILURE_CLEANUP):
                 # M13: no script content may stay in the eKI after the job ended.
                 await self._cleanup_buffers(job_id)
@@ -431,6 +550,7 @@ class SecurityCheckWorkflow:
             job_id=job_id,
             progress_range=(10, 90),
         )
+        await self._release_document_slot()  # LLM work done: next document may start
 
         # Step 3 & 4: Aggregate report and deliver
         await self._update_job(job_id, "running", progress=90)
@@ -550,6 +670,10 @@ class SecurityCheckWorkflow:
                 "blocks_ref_key": split_result["blocks_ref_key"],
                 "used_page_fallback": used_page_fallback,
                 "extra_warnings": extraction_warnings,
+                # Coverage notes in the report (activity input only: replay-safe).
+                "pages_total": text_result.get("pages_total"),
+                "pages_processed": text_result.get("pages_processed"),
+                "preamble_chars": split_result.get("preamble_chars"),
             },
             start_to_close_timeout=timedelta(minutes=5),
             retry_policy=_RETRY_STANDARD,
@@ -570,6 +694,7 @@ class SecurityCheckWorkflow:
             job_id=job_id,
             progress_range=(52, 92),
         )
+        await self._release_document_slot()  # LLM work done: next document may start
 
         # Step 6 & 7: Aggregate report and deliver
         await self._update_job(job_id, "running", progress=95)

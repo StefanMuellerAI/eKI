@@ -123,7 +123,7 @@ jeweiligen Overlay wirkungslos:
 | `DEFAULT_NAMESPACE` | `temporal` (auto-setup) | nicht gesetzt ⇒ `default`; nur relevant, wenn `TEMPORAL_NAMESPACE` geändert wird |
 | `DEFAULT_NAMESPACE_RETENTION` | `temporal` (auto-setup) | nicht gesetzt ⇒ `24h`; wirkt nur beim **ersten** Anlegen des Namespace. Spätere Änderung mit der Temporal-CLI (`OPERATIONS_GUIDE.md` §5.11) |
 | `DYNAMIC_CONFIG_FILE_PATH` | `temporal` | in `docker-compose.yml` fest `config/dynamicconfig/eki.yaml` (gemountet aus `docker/temporal/dynamicconfig/`, §2.4) |
-| `OLLAMA_KEEP_ALIVE`, `OLLAMA_NUM_PARALLEL` | Ollama-Container des Overlays `docker-compose.ollama.yml` | dort `30m` bzw. `1`; für die externe Produktionsinstanz dieselben Werte empfohlen (`OPERATIONS_GUIDE.md` §4.11) |
+| `OLLAMA_KEEP_ALIVE`, `OLLAMA_NUM_PARALLEL` | Ollama-Container des Overlays `docker-compose.ollama.yml` | dort `30m` bzw. `1`; für die externe Produktionsinstanz dieselben Werte empfohlen und **dort** zu setzen, nicht in `.env.local` (`OPERATIONS_GUIDE.md` §4.11; alle Ollama-Server-Variablen: `LASTSTEUERUNG.md` §5) |
 
 ### 2.4 Temporal-Dynamic-Config (`docker/temporal/dynamicconfig/eki.yaml`)
 
@@ -160,7 +160,7 @@ keine Wirkung.
 | `METRICS_ENABLED` | bool | `true` | `/metrics` der API (API-Key) und Worker-Exporter auf `PROMETHEUS_PORT` | `api/main.py`, `worker/main.py` |
 | `API_HOST` | str | `0.0.0.0` | ungenutzt (reserviert) – Bind-Adresse steht im Dockerfile-`CMD` bzw. Gunicorn-Kommando | – |
 | `API_PORT` | int | `8000` | ungenutzt (reserviert) – Port steht im Dockerfile/Compose | – |
-| `API_WORKERS` | int | `4` | ungenutzt (reserviert) – Prod nutzt 1 Gunicorn-Worker je Container, Skalierung über `--scale api=N` | – |
+| `API_WORKERS` | int | `4` | ungenutzt (reserviert) – Prod nutzt 1 Gunicorn-Worker je Container, Skalierung über `--scale api=N` (dafür `container_name` und die feste Port-Veröffentlichung `8000:8000` des Dienstes entfernen) | – |
 | `API_RELOAD` | bool | `false` | ungenutzt (reserviert) | – |
 
 ### 3.2 Datenbank
@@ -176,9 +176,9 @@ keine Wirkung.
 
 | Variable | Typ | Default | Bedeutung | Gelesen in |
 |---|---|---|---|---|
-| `REDIS_URL` | RedisDsn | `redis://localhost:6379/0` | SecureBuffer (verschlüsselte Inhalte), Rate-Limit-Zähler | `api/dependencies.py`, `workflows/activities.py`, `scripts/uat/run_acceptance_tests.py` (Fallback) |
+| `REDIS_URL` | RedisDsn | `redis://localhost:6379/0` | SecureBuffer (verschlüsselte Inhalte), Rate-Limit-Zähler, Warteschlange des Dokument-Limits (`eki:docslot:*`) | `api/dependencies.py`, `workflows/activities.py`, `scripts/uat/run_acceptance_tests.py` (Fallback) |
 | `REDIS_MAX_CONNECTIONS` | int | `50` | Verbindungs-Cap des Redis-Pools, den die API je Request öffnet | `api/dependencies.py` |
-| `BUFFER_TTL_SECONDS` | int | `21600` | Lebensdauer von Skript-/Report-Inhalten in Redis (≤ 6 h laut Pflichtenheft); zugleich Pull-Abholfenster, danach Löschung + Dead Letter | `api/routers/security.py`, `workflows/activities.py` (Wert wird beim Jobstart eingefroren) |
+| `BUFFER_TTL_SECONDS` | int | `21600` | Lebensdauer von Skript-/Report-Inhalten in Redis (≤ 6 h laut Pflichtenheft); zugleich Pull-Abholfenster, danach Löschung + Dead Letter | `api/routers/security.py`, `workflows/activities.py` (Redis-TTL: Startwert des speichernden Prozesses – API für das Drehbuch, Worker für Zwischenstände/Report; das Pull-Abholfenster wird beim Jobstart eingefroren) |
 
 ### 3.4 Temporal & Worker
 
@@ -191,6 +191,8 @@ keine Wirkung.
 | `TEMPORAL_PRIORITY_LEVELS` | int 1–100 | `10` | Anzahl der Prioritätsstufen des Temporal-Servers (= Dynamic Config `matching.priorityLevels`, §2.4). Die API bildet das Request-Feld `priority` 1–10 auf Temporal-Schlüssel 1–N ab: `((p - 1) * N) // 10 + 1` (bei 10 identisch). Muss zur Server-Konfiguration passen | `api/routers/security.py` |
 | `WORKER_MAX_CONCURRENT_WORKFLOW_TASKS` | int ≥ 1 | `10` | Temporal-Worker-Cap | `worker/main.py` |
 | `WORKER_MAX_CONCURRENT_ACTIVITIES` | int ≥ 1 | `20` | Temporal-Worker-Cap | `worker/main.py` |
+| `MAX_CONCURRENT_DOCUMENTS` | int 0–50 | `1` | Dokument-Limit: so viele Jobs werden gleichzeitig verarbeitet, alle weiteren warten als `pending` in einer Warteschlange (Priorität, dann Eingang; Redis `eki:docslot:*`). `0` = kein Limit (Verhalten bis 1.0.1). Die API friert beim Jobstart nur ein, **ob** sich der Job anstellt (> 0); die Grenze selbst liest der Worker beim Start (nicht pro Job eingefroren) – nach `up -d --force-recreate api worker` gilt ein neuer Wert ab der nächsten Nachfrage auch für schon wartende Jobs. Ausführlich: `LASTSTEUERUNG.md` §3.1, Betrieb: `OPERATIONS_GUIDE.md` §5.12 | `api/routers/security.py` (eingefroren), `workflows/activities.py`, `workflows/security_check.py` |
+| `DOCUMENT_QUEUE_TIMEOUT_SECONDS` | int ≥ 60 | `7200` | Höchstwartezeit auf einen Verarbeitungsplatz; danach `failed` („Kein freier Verarbeitungsplatz …“). Start-Validator (nur bei Limit > 0): kürzer als `BUFFER_TTL_SECONDS` (das Drehbuch liegt ab Upload nur so lange im Buffer) und Wartezeit + `BUFFER_TTL_SECONDS` < `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` (beide strikt; Zeit für die Verarbeitung reserviert der Validator nicht – wer die Wartezeit erhöht, erhöht den Workflow-Timeout um denselben Betrag) | `api/routers/security.py` (eingefroren), `api/config.py` |
 
 Die Temporal-Payloads (Workflow-/Activity-Ein- und -Ausgaben, Header, Fehlermeldungen) werden seit
 1.0.1 immer verschlüsselt (AES-256-GCM, `core/temporal_codec.py`); es gibt keinen Schalter und
@@ -243,15 +245,19 @@ Mit `mistral_cloud` ist die Knowledge Base nicht nutzbar (der Provider hat kein 
 |---|---|---|---|---|
 | `OLLAMA_BASE_URL` | str | `http://ollama:11434` | Ollama-Endpoint für Inferenz und KB-Embeddings. Seit 1.0.1 enthält der Stack kein Ollama: **die URL der externen Instanz setzen** (`.env.example`: Platzhalter `http://ollama-host.invalid:11434`). Der Code-Default passt nur zum Overlay `docker-compose.ollama.yml`, das den Wert selbst setzt. Ohne erreichbare URL scheitern Jobs beim ersten LLM-Aufruf (`/ready` prüft Ollama nicht) | `llm/factory.py` |
 | `OLLAMA_MODEL` | str | `mistral` | Modell **nur** für `LLM_PROVIDER=ollama` (`.env.example`: `mistral-small3.2`) | `llm/factory.py` |
-| `OLLAMA_TIMEOUT` | int (s) | `300` | HTTP-Timeout je Ollama-Call | `llm/factory.py` |
+| `OLLAMA_TIMEOUT` | int (s) | `300` | HTTP-Timeout je Ollama-Call, je Phase (Verbindung, Senden, Warten auf die Antwort) – kein Gesamtlimit; die Wartezeit am Semaphor zählt nicht dazu | `llm/factory.py` |
 | `OLLAMA_THINK` | bool | `false` | Thinking-Modus für gemma4/qwen3.x; von Mistral ignoriert | `llm/factory.py` |
 | `OLLAMA_NUM_CTX` | int | `32768` | Kontextfenster in Tokens (16384 spart VRAM) | `llm/factory.py` |
 | `OLLAMA_EMBEDDING_MODEL` | str | `mxbai-embed-large` | KB-Embedding-Modell, **muss 1024-dimensionale Vektoren liefern** (Spalte `vector(1024)`). Alternative `bge-m3`. Wechsel ⇒ KB leeren und neu einspielen (`OPERATIONS_GUIDE.md` §5.6) | `llm/factory.py` |
 | `OLLAMA_EMBEDDING_MAX_CHARS` | int | `1000` | Eingabe für `embed()` wird auf diese Länge gekürzt; `mxbai-embed-large` ≤ 1000, `bge-m3` ca. 30000 | `llm/factory.py` |
-| `OLLAMA_MAX_CONCURRENT_REQUESTS` | int 1–8 | `1` | prozessweiter Semaphore für Ollama-Calls (je API-/Worker-Prozess) | `llm/ollama.py` |
-| `OLLAMA_MIN_INTERVAL_MS` | int ≥ 0 | `0` | Mindestabstand zwischen zwei Ollama-Calls (ms) | `llm/ollama.py` |
+| `OLLAMA_MAX_CONCURRENT_REQUESTS` | int 1–8 | `1` | prozessweiter Semaphore für Ollama-Calls (je API-/Worker-Prozess); Wartezeit: `eki_llm_queue_wait_seconds` (nicht die Dokument-Warteschlange) | `llm/ollama.py` |
+| `OLLAMA_MIN_INTERVAL_MS` | int ≥ 0 | `0` | Mindestabstand zwischen den **Starts** zweier Ollama-Calls eines Prozesses (ms); wirkt nur, wenn er länger ist als ein Aufruf dauert oder mehrere Aufrufe gleichzeitig erlaubt sind (`LASTSTEUERUNG.md` §3.4) | `llm/ollama.py` |
 
 ### 3.9 Großdokumente & Parallelisierung (M07)
+
+Wie diese Werte mit `OLLAMA_MAX_CONCURRENT_REQUESTS`, dem Dokument-Limit, den Worker-Caps und den
+Variablen des Ollama-Servers zusammenwirken, wann welche Änderung greift und welche Profile sich
+empfehlen: [`LASTSTEUERUNG.md`](LASTSTEUERUNG.md).
 
 | Variable | Typ | Default | Bedeutung | Gelesen in |
 |---|---|---|---|---|
@@ -259,7 +265,7 @@ Mit `mistral_cloud` ist die Knowledge Base nicht nutzbar (der Provider hat kein 
 | `PDF_STRUCTURE_CONCURRENCY` | int 1–8 | `1` | parallele Strukturierungs-Activities je Workflow (nur mit Master-Flag) | `api/routers/security.py` (eingefroren) |
 | `RISK_ANALYSIS_CONCURRENCY` | int 1–8 | `1` | parallele Risikoanalyse-Activities je Workflow (nur mit Master-Flag) | `api/routers/security.py` (eingefroren) |
 | `LLM_ACTIVITY_TIMEOUT_SECONDS` | int ≥ 60 | `600` | `start_to_close_timeout` der LLM-Activities | `api/routers/security.py` (eingefroren) |
-| `MAX_PDF_PAGES` | int ≥ 1 | `500` | Seitenlimit des PDF-Parsers | `parsers/pdf.py` |
+| `MAX_PDF_PAGES` | int ≥ 1 | `500` | Seitenlimit des PDF-Parsers: längere PDFs werden nicht abgelehnt, sondern nach dieser Seite abgeschnitten; der Report nennt die fehlenden Seiten unter „Hinweise zur Vollständigkeit“ (`metadata.analysis_complete=false`) | `parsers/pdf.py` |
 | `MAX_PDF_SIZE_BYTES` | int ≥ 1 | `10485760` | Größenlimit des PDF-Parsers | `parsers/pdf.py` |
 | `MAX_UPLOAD_SIZE_BYTES` | int ≥ 1 | `10485760` | Limit für Multipart-Uploads. JSON-Uploads sind unabhängig davon fest begrenzt: Base64-Text max. 10 MiB (`core/models.py`), also Dateien bis ca. 7,5 MiB | `api/routers/security.py` |
 
