@@ -252,9 +252,10 @@ def _int_or(value: Any, default: int) -> int:
 async def acquire_document_slot_activity(payload: dict[str, Any]) -> dict[str, Any]:
     """Take a processing slot for the job, or report its place in the queue.
 
-    The limit is read live from the worker settings: raising
-    ``MAX_CONCURRENT_DOCUMENTS`` (or setting it to 0) also admits jobs that
-    are already waiting. Content-free: ids, counts and positions only.
+    The limit comes from the worker's settings, read once at process start
+    (not frozen per job): after the worker is recreated, a raised
+    ``MAX_CONCURRENT_DOCUMENTS`` (or 0) also admits jobs that are already
+    waiting. Content-free: ids, counts and positions only.
     """
     settings = get_settings()
     limit = _slot_limit(settings)

@@ -84,8 +84,11 @@ Bei der datenschutzrechtlichen Bewertung sind folgende Punkte zu berücksichtige
   `rate_limit:api_key:<16 Hex-Zeichen des Key-Hashes>` (TTL 1 h).
 - **Dokument-Limit:** `eki:docslot:holders`, `eki:docslot:queue`, `eki:docslot:seen` enthalten nur
   Job-IDs mit Zeitstempeln bzw. Priorität, keine Inhalte. Ein Eintrag verschwindet mit der Freigabe nach
-  der Risikoanalyse bzw. bei Fehler/Abbruch, spätestens nach Ablauf der Lease (30 min) bzw. 5 min ohne
-  Nachfrage eines wartenden Jobs (`OPERATIONS_GUIDE.md` §5.12).
+  der Risikoanalyse bzw. bei Fehler/Abbruch. Die Schlüssel haben keine Redis-TTL: Endet ein Workflow
+  ohne Freigabe (Terminate, Workflow-Timeout, gescheiterte Freigabe), bleibt der Eintrag stehen, bis ein
+  beliebiger Job das nächste Mal nach einem Platz fragt; dann entfernt die eKI Einträge mit abgelaufener
+  Lease (30 min) bzw. Wartende ohne Nachfrage seit 5 min. Kommen keine neuen Jobs, bleiben die Job-IDs
+  so lange in Redis (und im AOF) stehen (`OPERATIONS_GUIDE.md` §5.12).
 
 ### 3.2 PostgreSQL – Anwendungsdatenbank (`eki_db`)
 

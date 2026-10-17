@@ -452,7 +452,7 @@ geschuetzt durch drei abgestufte Concurrency-Schichten.
 | Dokument-Limit | `MAX_CONCURRENT_DOCUMENTS` | `1` | So viele Jobs werden gleichzeitig verarbeitet; weitere warten als `pending` (Redis-Warteschlange, Priorität vor Eingang, max. `DOCUMENT_QUEUE_TIMEOUT_SECONDS`). `0` = kein Limit. `docs/OPERATIONS_GUIDE.md` §5.12. |
 | Master-Flag | `LLM_PARALLEL_ENABLED` | `false` | Wenn `false`: strikt sequenziell, bytewise identisch zu M06. |
 | Prozess-Cap | `OLLAMA_MAX_CONCURRENT_REQUESTS` | `1` | Modul-globaler Semaphore in `llm/ollama.py`. Greift ueber alle Workflows und Activities hinweg. |
-| Throttle | `OLLAMA_MIN_INTERVAL_MS` | `0` | Optionaler Mindestabstand zwischen zwei Calls fuer knapp dimensionierte Shared-GPU-Systeme. |
+| Throttle | `OLLAMA_MIN_INTERVAL_MS` | `0` | Optionaler Mindestabstand zwischen den Starts zweier Calls eines Prozesses; wirkt nur, wenn er laenger ist als ein Call dauert (`docs/LASTSTEUERUNG.md` §3.4). |
 | Workflow-Cap | `PDF_STRUCTURE_CONCURRENCY`, `RISK_ANALYSIS_CONCURRENCY` | `1` | Per-Workflow-Cap fuer parallel ausgefuehrte LLM-Activities. |
 
 Parallel-Pfad wird nur aktiv, wenn `LLM_PARALLEL_ENABLED=true` UND

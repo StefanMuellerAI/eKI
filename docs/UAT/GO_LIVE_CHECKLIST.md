@@ -74,7 +74,7 @@ Ausführliche Anleitung: `docs/OPERATIONS_GUIDE.md`; alle Einstellungen: `docs/C
 
   ```bash
   export COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml
-  export GHCR_OWNER=<github-owner> EKI_IMAGE_TAG=<Release-Tag>
+  export GHCR_OWNER=<github-owner, kleingeschrieben> EKI_IMAGE_TAG=<Release-Tag>
   export GRAFANA_ADMIN_PASSWORD='<starkes Passwort>'   # sonst gilt wörtlich CHANGE_ME
   ```
 
@@ -107,9 +107,12 @@ Observability-Overlay braucht die Key-Datei.
 - [ ] Observability-Overlay starten:
       `COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml:docker-compose.observability.yml docker compose up -d --no-build`
 - [ ] Reverse-Proxy/TLS für `eki-api:8000` (Pflichtenheft §5 „durchgehend verschlüsselt (TLS)")
-- [ ] Firewall: eingehend nur ePro → eKI:443; ausgehend vom eKI-Host nur ePro, GHCR und die
-      Ollama-Instanz (`<ollama-host>:11434`); die Ollama-Registry nur vom Ollama-Host;
-      `api.mistral.ai` blockiert
+- [ ] Firewall: eingehend nur ePro → eKI:443; Port 8000 (HTTP, alle Interfaces) nur für den
+      Reverse-Proxy – Docker umgeht ufw/firewalld, Regeln daher in der Kette `DOCKER-USER`; mit
+      Overlay auch Grafana 3000 und Jaeger 16686 (ohne Anmeldung) beschränken. Ausgehend vom eKI-Host
+      nur ePro, GitHub (Checkout), GHCR (bei privaten Paketen `docker login ghcr.io`), Docker Hub
+      (PostgreSQL, Redis, Temporal, Observability – oder eigener Mirror) und die Ollama-Instanz
+      (`<ollama-host>:11434`); die Ollama-Registry nur vom Ollama-Host; `api.mistral.ai` blockiert
 - [ ] Container-Logs: Das Prod-Overlay rotiert nach Größe (20 MB × 5 je Container); ist eine
       zeitliche Frist gefordert, Weiterleitung an einen zentralen Log-Speicher eingerichtet
       (`DATENSCHUTZ.md` §3.4)

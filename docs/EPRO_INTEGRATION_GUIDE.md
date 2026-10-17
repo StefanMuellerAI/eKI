@@ -115,13 +115,13 @@ delivery: pull
 | script_content | Ja (JSON) | string | Base64-kodierter Dateiinhalt |
 | file | Ja (Multipart) | binary | Drehbuch-Datei (.fdx oder .pdf) |
 | script_format | Ja (JSON) | "fdx" / "pdf" | Format des Drehbuchs; bei Multipart optional (sonst aus der Dateiendung) |
-| project_id | Ja | string | eProjekt Projekt-ID (poAllgemeinId, alphanumerisch, max 100 Zeichen) |
+| project_id | Ja (JSON); bei Multipart optional | string | eProjekt Projekt-ID (poAllgemeinId, alphanumerisch, max 100 Zeichen). Fehlt sie im Multipart-Upload, speichert die eKI `unknown` und pusht an `.../set-risk-assessment/unknown` -- fuer Push daher immer angeben |
 | script_id | Nein | int (32 Bit) | eProjekt Drehbuch-Dokument-ID. Wird bei Push an ePro zurueckgegeben, damit ePro das Assessment dem korrekten Dokument zuordnen kann. -1 wenn unbekannt. |
 | delivery | Nein | "pull" / "push" | Delivery-Modus. Default "pull"; mit `callback_url` Default "push"; "pull" zusammen mit `callback_url` → 422. Gross-/Kleinschreibung egal, leer = Default, jeder andere Wert → 422 |
-| idempotency_key | Nein | string (max 255) | Verhindert doppelte Jobs bei Retry (gilt pro API-Key-User); leer = kein Key, Steuerzeichen → 422 |
-| priority | Nein | int 1-10 | 1 (hoechste) ... 10 (niedrigste), Default 5; ausserhalb 1..10 → 422 (Multipart: als Text). Temporal-Task-Queue-Prioritaet: Warten mehr Jobs als Verarbeitungsplaetze frei sind, werden hoeher priorisierte zuerst gestartet bzw. fortgesetzt; laufende Jobs werden nicht unterbrochen, gleiche Prioritaet bleibt in Eingangsreihenfolge (bei mehreren Task-Queue-Partitionen nur naeherungsweise) |
+| idempotency_key | Nein | string (max 255) | Verhindert doppelte Jobs bei Retry (gilt pro API-Key-User); leer = kein Key, Steuerzeichen → 422. Derselbe Key liefert den bestehenden Job in **jedem** Status zurueck, auch `failed`/`cancelled` -- zum Neueinreichen einen neuen Key verwenden (siehe Idempotenz) |
+| priority | Nein | int 1-10 | 1 (hoechste) ... 10 (niedrigste), Default 5; ausserhalb 1..10 → 422 (Multipart: als Text). Ordnet die Warteschlange des Dokument-Limits (siehe 3, Polling) und die Temporal-Task-Queue: Warten mehr Jobs als Verarbeitungsplaetze frei sind, werden hoeher priorisierte zuerst gestartet bzw. fortgesetzt; laufende Jobs werden nicht unterbrochen, gleiche Prioritaet bleibt in Eingangsreihenfolge (bei mehreren Task-Queue-Partitionen nur naeherungsweise) |
 | callback_url | Nein | string (HTTPS, max. 2083 Zeichen) | Push-Ziel **dieses** Jobs anstelle von `EPRO_BASE_URL/eki/scl/set-risk-assessment/{project_id}`; die eKI haengt nichts an (vollstaendige Ziel-URL senden). Impliziert `delivery=push`. Nur HTTPS, keine Zugangsdaten in der URL, keine private/interne IP, Host muss in `CALLBACK_URL_ALLOWED_HOSTS` stehen (Standard `epro.filmakademie.de`, `staging.epro.filmakademie.de`), sonst 422. Details: 4b „Push an callback_url" |
-| metadata | Nein (nur JSON) | object | Max. 50 Schluessel, Werte max. 1000 Zeichen. Wird nicht in der Datenbank gespeichert; laeuft durch die Workflow-Historie (seit 1.0.1 verschluesselt) -- trotzdem keine Drehbuchinhalte oder Personendaten hineinschreiben. |
+| metadata | Nein (nur JSON; Multipart ignoriert das Feld) | object | Max. 50 Schluessel (`[A-Za-z0-9_-]`, max. 50 Zeichen), Werte Text bis 1000 Zeichen, Zahl, Wahrheitswert oder null. Wird nicht an ePro zurueckgegeben und nicht in der Datenbank gespeichert; laeuft durch die Workflow-Historie (seit 1.0.1 verschluesselt) -- trotzdem keine Drehbuchinhalte oder Personendaten hineinschreiben. |
 
 Groessenlimits: Bei JSON gilt das Limit von 10 485 760 Zeichen fuer den
 **Base64-String**, also Dateien bis ca. 7,5 MB (darueber 422). Per Multipart sind
@@ -149,8 +149,11 @@ eKI `unknown`). Ein Textfeld, das als Datei-Teil gesendet wird, ergibt 422.
 Wenn idempotency_key gesetzt ist und fuer denselben API-Key-User bereits ein
 Job mit diesem Key existiert, wird der bestehende Job zurueckgegeben (HTTP 202,
 gleiche `job_id`, kein neuer Workflow) -- auch bei gleichzeitigen Requests.
-Das ist wichtig fuer Retry-Szenarien, damit keine Duplikate entstehen. Ein Key wirkt,
-solange der Job gespeichert ist: Seit 1.0.1 werden Job-Metadaten 90 Tage nach der letzten
+Das ist wichtig fuer Retry-Szenarien, damit keine Duplikate entstehen. Der bestehende Job
+kommt in **jedem** Status zurueck, auch `failed` oder `cancelled`: Wer nach einem Fehlschlag,
+Abbruch oder verlorenem Report neu einreicht, braucht einen **neuen** Key (z. B. Dokument-ID +
+Version + Versuchszaehler). Nur wenn ein Job gar nicht starten konnte (`503`), gibt die eKI den Key
+wieder frei. Ein Key wirkt, solange der Job gespeichert ist: Seit 1.0.1 werden Job-Metadaten 90 Tage nach der letzten
 Aenderung geloescht; danach startet derselbe Key einen neuen Job.
 
 ---
@@ -221,7 +224,9 @@ Szene <nr>: vom Prompt-Injection-Filter blockiert – manuelle Prüfung erforder
 
 Der Prompt-Injection-Filter prueft auf gezielte, englischsprachige Muster, die sich
 an das Modell selbst richten (z. B. "ignore previous instructions", Rollenwechsel
-zu einer KI, Chat-Template-Token, eingeschleuste Szenen-Begrenzer). Normale
+zu einer KI, Chat-Template-Token, eingeschleuste Szenen-Begrenzer), sowie auf Code- und
+Steuerzeichenfolgen (drei Anfuehrungszeichen oder Backticks in Folge, `<script`, `javascript:`,
+`eval(`, `exec(`). Deutschsprachige Formulierungen erkennt er nicht. Normale
 Drehbuchsprache loest ihn in der Regel nicht aus; ein Treffer ist trotzdem ein
 Fall fuer die manuelle Pruefung.
 
@@ -255,14 +260,18 @@ Verarbeitung brauchen; ein frueherer Abbruch des Pollings verliert fertige Repor
 
 **Warteschlange (Dokument-Limit, neu nach 1.0.1):** Die eKI verarbeitet nur so viele Drehbuecher
 gleichzeitig, wie `MAX_CONCURRENT_DOCUMENTS` erlaubt (Standard 1). Weitere Jobs bleiben `pending`,
-bis ein Platz frei wird -- hoeher priorisierte (`priority`) zuerst, sonst in Eingangsreihenfolge.
+bis ein Platz frei wird -- hoeher priorisierte (`priority`) zuerst, sonst in Eingangsreihenfolge
+(genauer: Reihenfolge der ersten Nachfrage des Jobs nach einem Platz).
 Ein Job wartet hoechstens `DOCUMENT_QUEUE_TIMEOUT_SECONDS` (Standard 2 h) und endet danach mit
 `failed` und der Meldung `Kein freier Verarbeitungsplatz innerhalb von 120 min (Dokument-Limit 1,
 Warteposition 3) – Job bitte später neu einreichen` (Webhook-Grund `processing_failed`). Daraus
-ergibt sich der Polling-Timeout von 4,5 h: bis 2 h Wartezeit, bis 2 h Verarbeitung, Puffer.
-Ein Pull-Report bleibt nach Fertigstellung 6 Stunden abrufbar. Alle Polls zaehlen
-gegen die Rate Limits (Abschnitt 8) -- bei vielen parallelen Jobs das Intervall
-entsprechend verlaengern.
+ergibt sich der Polling-Timeout von 4,5 h: bis 2 h Wartezeit (harte Grenze), rund 2 h
+Verarbeitung (Zielwert des Pflichtenhefts, keine harte Grenze -- ein spaeter fertiger Job liefert
+trotzdem einen Report), Puffer. Ein Pull-Report bleibt nach Fertigstellung 6 Stunden abrufbar.
+Alle Polls zaehlen gegen die Rate Limits (Abschnitt 8): Mit Warteschlange sind oft viele Jobs
+gleichzeitig `pending`. Bei 30-s-Takt verbraucht jeder Job 120 Anfragen pro Stunde, das Limit von
+1000 Anfragen/h je API-Key reicht also fuer rund 8 gleichzeitig gepollte Jobs. Wartende Jobs daher
+seltener abfragen (z. B. alle 60-120 s).
 
 ### Wann ist der Report bereit?
 
@@ -499,15 +508,19 @@ Ein `callback_url` im Request ersetzt fuer diesen Job das Standard-Ziel. Fuer eP
 | Keine critical/high Findings | 0 |
 
 Scheitert die Analyse selbst (Job `failed`, siehe 3), wird **nichts** gepusht --
-`status=0` bedeutet also immer eine vollstaendig durchgelaufene Analyse ohne
-hohe/kritische Findings. Den Abbruch erkennt ePro am Job-Status.
+`status=0` bedeutet also eine durchgelaufene Analyse ohne hohe/kritische Findings. Den
+Abbruch erkennt ePro am Job-Status. Grenze: Inhalte, die die eKI nicht als Szene erkennt
+(Seiten ueber 500, nicht per OCR gelesene Scan-Seiten, Text vor der ersten Szenenueberschrift),
+prueft sie nicht, ohne dass der Job scheitert; ein PDF ohne lesbaren Text ergibt 0 Findings und
+`status=0`. Den Status gibt es nur im Push; im Pull-Modus leitet ePro ihn selbst aus
+`risk_summary` ab (`critical` + `high` > 0 → 1).
 
 ### Fehlerverhalten
 
 | ePro-Antwort | Verhalten der eKI |
 |--------------|-------------------|
 | 2xx | Zustellung abgeschlossen, Report wird sofort aus dem Buffer geloescht |
-| 5xx, 408, 425, 429, Netzwerkfehler | Automatischer Retry mit exponentiellem Backoff (2 s ... 10 min) bis zu 6 Stunden |
+| 3xx (Weiterleitungen werden nicht verfolgt), 5xx, 408, 425, 429, Netzwerkfehler | Automatischer Retry mit exponentiellem Backoff (2 s ... 10 min) bis zu 6 Stunden |
 | sonstige 4xx | Kein Retry (Hard-Fail): Loeschung, Job `failed`, Dead Letter, Webhook |
 | 6 h ohne Erfolg | Loeschung, Job `failed` (`delivery_failed:retry_window_exhausted`), Dead Letter, Webhook |
 | (vor dem Senden) Report nicht mehr im Buffer, z. B. nach einem One-Shot-GET | Kein Retry: Job `failed` (`delivery_failed:report_expired`), Dead Letter, Webhook |
@@ -557,7 +570,7 @@ Jedes Finding im Report enthaelt:
 | Feld | Typ | Beispiel | Beschreibung |
 |------|-----|---------|--------------|
 | id | UUID | "eff159cf-..." | Eindeutige Finding-ID |
-| scene_number | string | "3" | Szenennummer |
+| scene_number | string / null | "3" | FDX: Szenennummer aus Final Draft (null, wenn das Drehbuch nicht nummeriert ist); PDF: laufende Nummer der erkannten Szene |
 | risk_level | enum | "critical" | Berechnete Severity (critical/high/medium/low/info) |
 | category | enum | "PHYSICAL" | Hauptkategorie (PHYSICAL/ENVIRONMENTAL/PSYCHOLOGICAL) |
 | risk_class | string | "FIRE" | Risiko-Klasse aus Taxonomie (23 moegliche Werte) |
@@ -567,9 +580,9 @@ Jedes Finding im Report enthaelt:
 | description | string | "Building fire..." | Beschreibung des Risikos |
 | recommendation | string | "Fire dept on standby" | Konkrete Massnahmenempfehlung |
 | measures | array | siehe unten | Kodifizierte Massnahmen aus dem Katalog |
-| confidence | float 0-1 | 0.9 | Konfidenz der KI-Bewertung |
+| confidence | float 0-1 | 0.9 | Selbsteinschaetzung des Modells, keine Messung; fehlt sie (oder ist 0), setzt die eKI 0.8. Nur im JSON, nicht im PDF und nicht im Push |
 | line_reference | string / null | null | derzeit immer null |
-| evidence | string | "Flames engulf the hallway." | Textbeleg (Zitat aus der Szene) oder Regelbegruendung |
+| evidence | string | "Flames engulf the hallway." | Textbeleg (soll ein Zitat aus der Szene sein; die eKI prueft das nicht) oder Regelbegruendung |
 | vulnerability | string | "children" | Verletzlichkeitsfaktoren |
 | complexity | string | "extras, night shoot" | Komplexitaetsfaktoren |
 | exposure_duration | string | "several hours" | Geschaetzte Expositionsdauer |
@@ -613,13 +626,13 @@ Support-Anfragen bitte immer die `request_id` angeben.
 |------|---------|-----------|--------|
 | 200 | -- | Erfolg | Daten verarbeiten |
 | 202 | -- | Job angenommen | Polling starten |
-| 400 | `BadRequest` | Ungueltige Anfrage: Body ist kein gueltiges JSON (Syntax, leer, nicht UTF-8, form-urlencoded), Multipart ohne `file`, leere Datei, falscher Dateityp, kein gueltiges PDF | Request pruefen |
+| 400 | `BadRequest` | Ungueltige Anfrage: Body ist kein gueltiges JSON (Syntax, leer, nicht UTF-8, form-urlencoded); beim Multipart-Upload ausserdem: ohne `file`, leere Datei, falsche Dateiendung, kein gueltiges PDF (dieselben Fehler im JSON-Weg → 422) | Request pruefen |
 | 401 | `Unauthorized` | Nicht authentifiziert (Key fehlt, ungueltig, abgelaufen, deaktiviert) | API-Key pruefen |
 | 403 | `Forbidden` | `X-Actor-User-Id` passt nicht zur `user_id` des API-Keys; bzw. `/v1/kb/*` oder `/v1/ops/*` mit einem Nicht-Admin-Key (`Admin API key required for this endpoint`) | Header korrigieren oder weglassen; KB/Ops sind nicht fuer den ePro-Key vorgesehen |
 | 404 | `NotFound` | Nicht gefunden / Kein Zugriff (fremder Job/Report); auch der in 1.0.1 entfernte Endpunkt `POST /v1/security/check` | Job-ID/Report-ID pruefen; `check:async` verwenden |
 | 410 | `Gone` | Report bereits abgeholt | Report war schon einmal abgerufen |
 | 413 | `PayloadTooLarge` | Multipart-Datei groesser als 10 MB | Datei verkleinern |
-| 422 | `ValidationError` | Validierungsfehler: JSON ist kein Objekt, Base64, `project_id`-Format, `delivery`, `script_format`, `script_id` ausserhalb 32 Bit, Steuerzeichen im `idempotency_key`, `priority` ausserhalb 1..10, `callback_url` nicht erlaubt (kein HTTPS, Host nicht in der Allow-List, Zugangsdaten in der URL, private IP), `delivery=pull` zusammen mit `callback_url`, Base64-String zu lang, Textfeld als Datei-Teil | Request-Format pruefen |
+| 422 | `ValidationError` | Validierungsfehler: JSON ist kein Objekt, Base64, `project_id`-Format, `delivery`, `script_format`, `script_id` ausserhalb 32 Bit, Steuerzeichen im `idempotency_key`, `priority` ausserhalb 1..10, `callback_url` nicht erlaubt (kein HTTPS, Host nicht in der Allow-List, Zugangsdaten in der URL, private IP), `delivery=pull` zusammen mit `callback_url`, Base64-String zu lang, leerer Inhalt oder Inhalt passt nicht zum Format (kein PDF, FDX mit Binaerdaten) im JSON-Weg, Textfeld als Datei-Teil | Request-Format pruefen |
 | 429 | `RateLimitExceeded` | Rate Limit ueberschritten | `Retry-After` abwarten |
 | 500 | `InternalServerError` | Unerwarteter Serverfehler | mit `request_id` an den Support |
 | 503 | `ServiceUnavailable` / `ServiceUnavailableException` | PostgreSQL, Redis oder Temporal voruebergehend nicht erreichbar | spaeter erneut senden (siehe Hinweis unten) |

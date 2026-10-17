@@ -398,7 +398,7 @@ async def security_check_async(
         # M10: Pull-TTL-Watch laeuft deterministisch mit dem beim Start gueltigen TTL.
         "buffer_ttl_seconds": settings.buffer_ttl_seconds,
         # Dokument-Limit: > 0 = der Job stellt sich vor der Verarbeitung an
-        # (die Grenze selbst liest der Worker live); maximale Wartezeit.
+        # (die Grenze selbst liest der Worker beim Start); maximale Wartezeit.
         "max_concurrent_documents": settings.max_concurrent_documents,
         "document_queue_timeout_seconds": settings.document_queue_timeout_seconds,
     }

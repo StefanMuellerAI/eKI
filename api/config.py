@@ -491,7 +491,8 @@ class Settings(BaseSettings):
     # Alle weiteren warten als ``pending`` in einer Warteschlange (Priorität,
     # dann Eingang), ohne Worker-Slot und ohne laufendes Activity-Timeout
     # (services/document_slots.py). Die API friert beim Jobstart nur ein, OB
-    # ein Job sich anstellt; die Grenze selbst liest der Worker live.
+    # ein Job sich anstellt; die Grenze selbst liest der Worker beim Start
+    # (gecachte Settings), nach Neuerzeugung auch fuer schon wartende Jobs.
     max_concurrent_documents: int = Field(
         default=1,
         ge=0,

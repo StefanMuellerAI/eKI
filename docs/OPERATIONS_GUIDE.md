@@ -26,12 +26,12 @@ Zielgruppe: IT-Betrieb der Filmakademie. Maßgebliches Betriebsdokument; das fr�
 
 | Container | Image | Aufgabe | Port | Skalierbar |
 |---|---|---|---|---|
-| `eki-api` | `ghcr.io/<owner>/eki-api:<version>` | REST-API (Gunicorn + Uvicorn) | 8000 – **einziger veröffentlichter Port** | ja, `--scale api=N` hinter Reverse-Proxy |
-| `eki-worker` | `ghcr.io/<owner>/eki-worker:<version>` | Temporal-Worker: Parsing, LLM, Report, Zustellung, KB-Cleanup, Metadaten-Cleanup | 9090 Metriken, nur intern | ja, `--scale worker=N` |
+| `eki-api` | `ghcr.io/<owner>/eki-api:<version>` | REST-API (Gunicorn + Uvicorn) | 8000 – **einziger veröffentlichter Port** | ja, `--scale api=N` hinter Reverse-Proxy – vorher `container_name` und die feste Port-Veröffentlichung `8000:8000` entfernen (eigene Compose-Datei) |
+| `eki-worker` | `ghcr.io/<owner>/eki-worker:<version>` | Temporal-Worker: Parsing, LLM, Report, Zustellung, KB-Cleanup, Metadaten-Cleanup | 9090 Metriken, nur intern | ja, `--scale worker=N` – vorher `container_name` entfernen |
 | `eki-temporal` | `temporalio/auto-setup:1.29.4` | Workflow-Engine, Retry-Fenster, Schedules, Task-Queue-Priorität (Dynamic Config `docker/temporal/dynamicconfig/eki.yaml`) | 7233 intern | – |
 | `eki-temporal-ui` | `temporalio/ui:2.47.3` | Operator-UI ohne Authentifizierung; zeigt Payloads seit 1.0.1 nur verschlüsselt | 8080 intern (Zugriff §8.2) | – |
 | `eki-postgres` | `pgvector/pgvector:pg16` | Datenbanken `eki_db` (App, KB), `temporal`, `temporal_visibility` | 5432 intern | – |
-| `eki-redis` | `redis:7.2-alpine` (Prod: AOF, `maxmemory 1gb`, `noeviction`) | SecureBuffer (verschlüsselt, TTL 6 h), Rate-Limit-Zähler. Versionswahl und Support-Risiko: §4.9 | 6379 intern | – |
+| `eki-redis` | `redis:7.2-alpine` (Prod: AOF, `maxmemory 1gb`, `noeviction`) | SecureBuffer (verschlüsselt, TTL 6 h), Rate-Limit-Zähler, Warteschlange des Dokument-Limits (`eki:docslot:*`, nur Job-IDs). Versionswahl und Support-Risiko: §4.9 | 6379 intern | – |
 
 **Inferenz und KB-Embeddings** laufen auf einer **externen Ollama-Instanz** (GPU-Host), die
 nicht Teil des Stacks ist; API und Worker erreichen sie über `OLLAMA_BASE_URL` bzw.
@@ -40,9 +40,12 @@ nicht Teil des Stacks ist; API und Worker erreichen sie über `OLLAMA_BASE_URL` 
 
 Persistente Volumes: `postgres_data`, `redis_data` (mit
 Observability-Overlay zusätzlich `prometheus_data`, `alertmanager_data`, `grafana_data`;
-veröffentlicht werden dort Grafana 3000 und Jaeger 16686). CI prüft, dass das
-Prod-Overlay nur Port 8000 veröffentlicht, keinen Quellcode mountet und keinen
-`ollama`-Dienst enthält.
+veröffentlicht werden dort Grafana 3000 und Jaeger 16686 – Jaeger ohne Anmeldung, beide per
+Firewall beschränken). CI prüft, dass das Prod-Overlay nur Port 8000 veröffentlicht, keinen
+Quellcode mountet und keinen `ollama`-Dienst enthält. Port 8000 ist unverschlüsseltes HTTP auf
+**allen** Interfaces des Hosts; Docker umgeht ufw/firewalld mit eigenen iptables-Regeln. Den Zugriff
+daher in der Kette `DOCKER-USER` auf den Reverse-Proxy beschränken oder per eigener Compose-Datei an
+`127.0.0.1` binden, wenn der Proxy auf demselben Host läuft.
 
 Auf Infrastruktur-Dienste greift man nur per `docker compose exec` zu, z. B.
 PostgreSQL (die Datenbank verlangt auch im Container ein Passwort, `-A md5`):
@@ -70,12 +73,15 @@ Worker-Image enthält keine Testdaten.
   (Pflichtenheft §8), Plattenplatz dort ca. 15 GB für `mistral-small3.2` und ~1 GB für
   `mxbai-embed-large`. Der eKI-Host selbst braucht keine GPU.
 - Plattenplatz auf dem eKI-Host: Images, Datenbank und Logs (§5.5)
-- Ausgehend vom eKI-Host nur: GHCR (Images), ePro (Push, Webhook) und die Ollama-Instanz
-  (`<ollama-host>:11434`, internes Netz). Die Ollama-Registry (Modell-Pull) braucht nur der
-  Ollama-Host. **Kein** ausgehender LLM-Cloud-Verkehr
+- Ausgehend vom eKI-Host nur: GitHub (Checkout), GHCR (eKI-Images; bei privaten Paketen vorher
+  `docker login ghcr.io` mit einem Token mit `read:packages`), Docker Hub (PostgreSQL, Redis,
+  Temporal, ggf. Observability-Images – oder ein eigener Mirror), ePro (Push, Webhook) und die
+  Ollama-Instanz (`<ollama-host>:11434`, internes Netz). Die Ollama-Registry (Modell-Pull) braucht
+  nur der Ollama-Host. **Kein** ausgehender LLM-Cloud-Verkehr
 - Eingehend: ePro → `eki-api:8000` (TLS-Terminierung durch Reverse-Proxy)
 - Python 3 auf dem Host nur für `scripts/generate_secrets.py` und optional
-  `scripts/seed_kb.py` (§5.6)
+  `scripts/seed_kb.py` (§5.6; braucht `requests` und einen Repo-Checkout, `--status` geht auch im
+  API-Container)
 
 ### 2.2 Schritte
 
@@ -97,7 +103,7 @@ sed -i.bak -e "s/CHANGE_ME_STRONG_PASSWORD_HERE/$PW/g" \
 # 2. Compose-Variablen: werden NICHT aus .env.local gelesen (CONFIGURATION.md §2)
 cat > .env <<'EOF'
 COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml
-GHCR_OWNER=<github-owner>
+GHCR_OWNER=<github-owner>                 # in Kleinbuchstaben, wie die CI veröffentlicht
 EKI_IMAGE_TAG=1.0.1
 EOF
 docker compose config -q                  # Syntax/Compose-Version prüfen
@@ -120,16 +126,20 @@ docker compose exec api python scripts/create_api_key.py --insert --admin  # Ops
 docker compose exec api python scripts/create_api_key.py --insert          # Prometheus-Scraper-Key
 ```
 
-Der Start-Validator verweigert mit `ENV=production` Platzhalter-Secrets
-(`CHANGE_ME…`, `replace-me`), Schlüssel unter 32 Zeichen, `DEBUG=true` und
-`mistral_cloud` – die Secrets trotzdem immer wie oben erzeugen, nie von Hand ausdenken.
+Der Start-Validator verweigert mit `ENV=production` den Start, wenn `API_SECRET_KEY` oder
+`DATABASE_URL` Platzhalter enthalten (`CHANGE_ME…`, `replace-me`), `API_SECRET_KEY` kürzer als
+32 Zeichen ist, `DEBUG=true` gilt oder `LLM_PROVIDER=mistral_cloud` ohne
+`LLM_ALLOW_EXTERNAL_PROVIDERS=true` gesetzt ist. Andere Werte (`POSTGRES_PASSWORD`, `EPRO_*`,
+`GRAFANA_ADMIN_PASSWORD`) prüft er nicht – die Secrets daher immer wie oben erzeugen, nie von Hand
+ausdenken.
 Das DB-Passwort muss in `POSTGRES_PASSWORD`, `POSTGRES_PWD` und `DATABASE_URL`
 identisch sein; es gilt nur bei der ersten Initialisierung des Volumes (§5.9).
 Den `API_SECRET_KEY` zusätzlich im Passwort-Tresor ablegen (für Backups nötig, §4.4).
 
 **Observability (optional):** zuerst `secrets/prometheus_api_key.txt` mit dem
-Scraper-Key anlegen (`secrets/README.md` §3 – fehlt die Datei beim Start, legt Docker
-ein Verzeichnis an), dann in der `.env` ergänzen und neu starten:
+Scraper-Key anlegen, Besitzer `65534` (Prometheus-Nutzer), `chmod 600` (`secrets/README.md` §3 –
+fehlt die Datei beim Start, legt Docker ein Verzeichnis an), dann in der `.env` ergänzen und neu
+starten:
 
 ```
 COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml:docker-compose.observability.yml
@@ -193,11 +203,17 @@ Vollständige Referenz: [`CONFIGURATION.md`](CONFIGURATION.md). `.env.local` gil
 ### 4.1 Tägliche Checks (5 Minuten)
 
 1. Grafana `eki-overview`: API/Worker up, Jobs failed (24 h) = 0, Dead Letters = 0.
-2. `GET /v1/ops/summary` (Admin-Key): keine `dead_lettered`, keine hängenden `delivering` > 6 h.
+2. `GET /v1/ops/summary` (Admin-Key): `dead_letters_unacknowledged` = 0 (`jobs_by_delivery_status`
+   zählt auch quittierte Dead Letters weiter, bis die Job-Zeile gelöscht ist; Zeiten enthält die
+   Übersicht nicht). Hängende Zustellungen: `GET /v1/ops/jobs?delivery_status=delivering` – kein Job
+   mit `delivery_last_attempt_at` bzw. `created_at` älter als 6 h.
    Offene Dead Letters zeitnah bearbeiten und quittieren – nach 90 Tagen löscht
    `eki-metadata-cleanup` sie ohnehin, quittiert oder nicht (§5.10).
-3. Alertmanager: keine offenen Alerts. Fehlgeschlagene Jobs: `error_message` in
-   `GET /v1/ops/jobs?status=failed` prüfen (§5.4, §8).
+3. Offene Alerts (nur mit Observability-Overlay; Alertmanager veröffentlicht keinen Port):
+   `docker compose exec alertmanager amtool alert query --alertmanager.url=http://localhost:9093`.
+   Zugestellt werden Alerts erst, wenn in `docker/observability/alertmanager.yml` ein Empfänger
+   eingerichtet ist. Fehlgeschlagene Jobs: `error_message` in `GET /v1/ops/jobs?status=failed`
+   prüfen (§5.4, §8).
 
 ### 4.2 Skalierung
 
@@ -212,7 +228,9 @@ Alle Stellschrauben mit Wechselwirkungen und Profilen: [`LASTSTEUERUNG.md`](LAST
   dann `LLM_PARALLEL_ENABLED=true` mit `*_CONCURRENCY=2`, zuletzt zweiter Worker
   (`--scale worker=2`, dafür `container_name` des Dienstes entfernen; beide teilen die Ollama-Instanz,
   der Cap wirkt pro Prozess, das Dokument-Limit gilt über alle Worker).
-- API-Replikas: `--scale api=2` hinter Reverse-Proxy; jedes Replikat exportiert eigene Metriken.
+- API-Replikas: `--scale api=2` hinter Reverse-Proxy – vorher per eigener Compose-Datei
+  `container_name` und die feste Veröffentlichung `8000:8000` entfernen (sonst Namens- und
+  Portkonflikt); jedes Replikat exportiert eigene Metriken.
 
 ### 4.3 API-Key-Verwaltung
 
@@ -221,9 +239,9 @@ API-Keys liegen nur als SHA-256-Hash in `api_keys`; der Klartext wird einmal ang
 | Aufgabe | Vorgehen |
 |---|---|
 | Anlegen | `docker compose exec api python scripts/create_api_key.py --insert` (interaktiv: User ID, Organisation, Name, Beschreibung, Gültigkeit – Default **365 Tage**). `--admin` erlaubt zusätzlich `/v1/ops/*` und (seit 1.0.1 ausschließlich Admin-Keys) `/v1/kb/*`, also auch `scripts/seed_kb.py`. Ohne `--insert` wird nur ein Key erzeugt, nicht gespeichert |
-| Auflisten | psql (§1): `SELECT name, user_id, is_admin, is_active, expires_at, last_used_at, usage_count FROM api_keys ORDER BY created_at;` |
-| Sperren | `UPDATE api_keys SET is_active = false WHERE name = '<Name>';` – wirkt sofort (jede Anfrage prüft die DB) |
-| Verlängern | `UPDATE api_keys SET expires_at = now() + interval '365 days' WHERE name = '<Name>';` |
+| Auflisten | psql (§1): `SELECT id, name, user_id, is_admin, is_active, expires_at, last_used_at, usage_count FROM api_keys ORDER BY created_at;` |
+| Sperren | `UPDATE api_keys SET is_active = false WHERE id = '<id>';` – wirkt sofort (jede Anfrage prüft die DB). `id` aus der Ausgabe von `create_api_key.py` oder der Liste; Namen sind nicht eindeutig (Default `API Key`, bei Rotation oft doppelt) |
+| Verlängern | `UPDATE api_keys SET expires_at = now() + interval '365 days' WHERE id = '<id>';` |
 | Rotieren | neuen Key **mit derselben User ID** anlegen (Jobs, Reports und Idempotenz-Keys sind an die User ID gebunden – mit anderer ID findet ePro laufende Jobs/Reports nicht mehr), ePro umstellen, alten Key sperren |
 
 Abgelaufene oder gesperrte Keys liefern `401 Invalid or expired API key`. Rotationsplan
@@ -321,7 +339,11 @@ die eine 1.0.1-API gestartet hat, nicht lesen (Worker-Log `Unknown payload encod
 binary/encrypted`, die Jobs bleiben `pending`, bis der neue Worker läuft). Beide brauchen
 denselben `API_SECRET_KEY` (§5.7, §8.1).
 
-**Rollback:** `EKI_IMAGE_TAG` auf die vorige Version, `docker compose up -d --no-build api worker`.
+**Rollback:** Unterscheidet sich der Workflow-Code der beiden Versionen, vorher drainen (§5.8) –
+offene Workflows der neueren Version laufen auf dem alten Worker sonst nicht weiter (Beispiel:
+Workflows mit Dokument-Limit rufen `acquire_document_slot`/`release_document_slot` auf, die ein
+1.0.1-Worker nicht kennt). Dann `git checkout v<alt>`, `EKI_IMAGE_TAG` auf die vorige Version,
+`docker compose up -d --no-build api worker`.
 Migrationen sind bislang additiv bzw. erweiternd; das ältere Image läuft daher auf dem
 neueren Schema. Ist ein Downgrade nötig, **vor** dem Zurückschalten mit dem *neuen* Image
 ausführen – das alte Image kennt die neuere Revision nicht
@@ -644,8 +666,8 @@ Kurzübersicht (Alert → erste Maßnahme):
 
 | Symptom | Erste Maßnahme | Details |
 |---|---|---|
-| `EkiApiDown` | `docker compose ps`, `docker compose logs api --tail 200` | Startfehler meist Konfig-Validator oder `*_FILE` (§8) |
-| `EkiWorkerDown` | `docker compose logs worker --tail 200` | Temporal erreichbar? Namespace? (§5.3, §8) |
+| `EkiApiDown` | `docker compose ps`, `docker compose logs api --tail 200` | Startfehler meist Konfig-Validator oder `*_FILE` (§8). Läuft die API, kann Prometheus `/metrics` nicht abfragen: Scraper-Key abgelaufen oder gesperrt (§4.3) |
+| `EkiWorkerDown` | `docker compose logs worker --tail 200` | Temporal erreichbar? Namespace? (§5.3, §8); `METRICS_ENABLED=false` löst den Alarm ebenfalls aus |
 | `EkiLlmErrorRateHigh`, Jobs `failed` mit LLM-Fehler | §5.4 | Ollama-Instanz erreichbar? Modell gepullt? VRAM? |
 | Jobs bleiben lange `pending`, Worker-Log `Document limit reached, job waits` | Warteschlange ansehen | §5.12 |
 | Jobs hängen in `running` | Temporal UI (§8.2): Pending Activities; Worker-Logs nach `job_id` filtern | Korrelation via `request_id`/`job_id` in jeder Logzeile |
@@ -960,16 +982,25 @@ Temporal liest die Dynamic-Config-Datei auch im laufenden Betrieb periodisch neu
 
 **Was läuft:** Vor der Verarbeitung holt sich jeder Job einen von `MAX_CONCURRENT_DOCUMENTS`
 Verarbeitungsplätzen (Activity `acquire_document_slot`). Ist keiner frei, bleibt der Job `pending` und
-fragt mit dauerhaften Timern nach (5 s, verdoppelt bis 60 s); er belegt dabei keinen Worker-Platz, und
-kein Activity-Timeout läuft. Reihenfolge: Priorität (1 zuerst), dann Eingang. Nach der Risikoanalyse
-gibt der Job den Platz frei (`release_document_slot`), ebenso bei Fehler und bei einem Workflow-Cancel.
+fragt mit dauerhaften Timern nach (erste Nachfrage sofort, dann im Abstand von 5 s, verdoppelt bis
+60 s); er belegt dabei keinen Worker-Platz, und kein Activity-Timeout läuft – die Höchstwartezeit und
+der Workflow-Timeout laufen dagegen weiter. Reihenfolge: Priorität (1 zuerst), dann Reihenfolge der
+ersten Nachfrage (praktisch: Eingang). Nach der Risikoanalyse gibt der Job den Platz frei
+(`release_document_slot`), ebenso bei Fehler und bei einem Workflow-Cancel; scheitert die Freigabe
+selbst (z. B. Redis-Störung), läuft der Job weiter und der Platz wird mit Ablauf der Lease frei.
 Nach `DOCUMENT_QUEUE_TIMEOUT_SECONDS` (Standard 2 h) ohne Platz endet der Job mit `failed`
-(„Kein freier Verarbeitungsplatz innerhalb von … min …“), ePro reicht ihn später neu ein.
+(„Kein freier Verarbeitungsplatz innerhalb von … min …“); ePro muss ihn später mit neuem
+`idempotency_key` neu einreichen.
 
 Der Zustand liegt in Redis (nur Job-IDs, keine Inhalte): `eki:docslot:holders` (Job → Ende der Lease in
 Epoch-Millisekunden), `eki:docslot:queue` (Wartende), `eki:docslot:seen` (letzte Nachfrage). Eine Lease
 gilt 30 min; die KI-Schritte verlängern sie jede Minute. Wartende, die 5 min nicht mehr nachgefragt
-haben, fallen aus der Schlange; fragen sie wieder nach, stehen sie wieder an ihrer alten Stelle.
+haben, fallen aus der Schlange; fragen sie wieder nach, stehen sie wieder an ihrer alten Stelle. Die
+Schlüssel haben keine Redis-TTL: Abgelaufene Leases und Wartende ohne Nachfrage räumt die eKI erst auf,
+wenn ein Job das nächste Mal nach einem Platz fragt. Bekannter Grenzfall: Bei FDX kann das Parsen im
+ungünstigsten Fall (3 Versuche à 10 min) länger dauern als die Lease, die erst der erste KI-Schritt
+verlängert – dann bekommt kurzzeitig ein weiterer Job einen Platz. Bei PDF bleiben die Schritte vor
+der ersten KI-Gliederung unter 30 min.
 
 **Ansehen:**
 
@@ -987,15 +1018,19 @@ Metriken (Worker): `eki_document_slots_in_use`, `eki_document_queue_length`; war
 - *Schlange abbauen:* `MAX_CONCURRENT_DOCUMENTS` erhöhen (nur wenn Ollama es verkraftet, §4.2) oder
   auf `0` setzen, dann `docker compose up -d --force-recreate api worker`. Wartende Jobs bekommen beim
   nächsten Nachfragen (≤ 60 s) einen Platz.
-- *Platz bleibt belegt, obwohl der Job beendet ist* (z. B. nach `terminate` statt `cancel`, der Workflow
-  gibt dann nichts frei): Die Lease läuft spätestens nach 30 min ab. Sofort freigeben:
+- *Platz bleibt belegt, obwohl der Job beendet ist* (nach `terminate` statt `cancel`, nach Ablauf des
+  Workflow-Timeouts oder bei gescheiterter Freigabe – der Workflow gibt dann nichts frei): Die Lease
+  läuft spätestens 30 min nach der letzten Verlängerung ab. Sofort freigeben:
   `docker compose exec redis redis-cli ZREM eki:docslot:holders <job_id>`. Jobs zum Entlasten der KI
   daher per Cancel beenden, nicht per Terminate.
-- *Redis-Inhalt verloren* (Volume geleert): Die Belegung ist vergessen; kurzzeitig laufen mehr Jobs als
-  erlaubt, die Schlange baut sich beim nächsten Nachfragen in der alten Reihenfolge neu auf.
+- *Redis-Inhalt verloren* (Volume geleert): Mit der Belegung sind auch alle zwischengespeicherten
+  Drehbücher und Zwischenstände weg. Laufende und wartende Jobs enden mit `failed` („… ist im
+  SecureBuffer abgelaufen oder nicht mehr vorhanden – Job bitte neu einreichen“; wartende, sobald sie
+  einen Platz bekommen) und müssen neu eingereicht werden. Das Limit gilt danach wieder normal.
 - *Jobs scheitern mit „Kein freier Verarbeitungsplatz“:* Die Schlange war länger als die Wartezeit. Last
   verteilen (ePro staffeln), das Limit erhöhen (§4.2) oder `DOCUMENT_QUEUE_TIMEOUT_SECONDS` anheben – dann
-  aber `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` mit erhöhen (Start-Validator, `CONFIGURATION.md` §3.4).
+  `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` um denselben Betrag erhöhen, damit die Verarbeitung ihre Zeit
+  behält. Der Start-Validator (`CONFIGURATION.md` §3.4) lehnt erst ab, wenn gar keine Zeit mehr bliebe.
 
 ---
 

@@ -33,19 +33,20 @@ Die Grenzen wirken auf fünf Ebenen:
 | Ollama-Server | `OLLAMA_NUM_PARALLEL` u. a. | Ollama-Server (systemd/Docker) | wie viele Anfragen Ollama je Modell gleichzeitig rechnet – für alle Absender |
 
 Wichtig: Die Variablen der `.env.local` erreichen den Ollama-Server nicht. Er liest nur seine
-eigenen Umgebungsvariablen (§5).
+eigenen Umgebungsvariablen (§5). Mit jeder Anfrage schickt die eKI lediglich Modell und – bei
+Gliederung und Risikoanalyse – die Kontextgröße (`OLLAMA_NUM_CTX`, §3.8) mit.
 
 ## 2. Wann eine Änderung wirkt
 
 | Wie die eKI den Wert liest | Einstellungen | Änderung wirkt |
 |---|---|---|
-| Beim Jobstart in den Job eingefroren (API) | `LLM_PARALLEL_ENABLED`, `PDF_STRUCTURE_CONCURRENCY`, `RISK_ANALYSIS_CONCURRENCY`, `LLM_ACTIVITY_TIMEOUT_SECONDS`, `BUFFER_TTL_SECONDS`, `DOCUMENT_QUEUE_TIMEOUT_SECONDS`, ob sich ein Job anstellt (`MAX_CONCURRENT_DOCUMENTS` > 0), `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` | nur für Jobs, die danach eingereicht werden |
-| Beim Start des Prozesses gelesen | Grenze `MAX_CONCURRENT_DOCUMENTS` (Worker), `OLLAMA_MAX_CONCURRENT_REQUESTS`, `OLLAMA_MIN_INTERVAL_MS`, `OLLAMA_TIMEOUT`, `OLLAMA_NUM_CTX`, `OLLAMA_THINK`, `WORKER_MAX_CONCURRENT_ACTIVITIES`, `WORKER_MAX_CONCURRENT_WORKFLOW_TASKS` | nach `docker compose up -d --force-recreate api worker`, dann sofort – die Grenze `MAX_CONCURRENT_DOCUMENTS` auch für schon wartende Jobs |
+| Beim Jobstart in den Job eingefroren (API) | `LLM_PARALLEL_ENABLED`, `PDF_STRUCTURE_CONCURRENCY`, `RISK_ANALYSIS_CONCURRENCY`, `LLM_ACTIVITY_TIMEOUT_SECONDS`, `DOCUMENT_QUEUE_TIMEOUT_SECONDS`, ob sich ein Job anstellt (`MAX_CONCURRENT_DOCUMENTS` > 0), `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT`, `BUFFER_TTL_SECONDS` als Abholfenster (Pull-Überwachung) | auch die API liest die `.env.local` nur beim Start: nach `docker compose up -d --force-recreate api`, dann für alle danach eingereichten Jobs |
+| Beim Start des Prozesses gelesen | Grenze `MAX_CONCURRENT_DOCUMENTS` (Worker), `BUFFER_TTL_SECONDS` als Lebensdauer im Zwischenspeicher (API für das Drehbuch, Worker für Zwischenstände und Report), `OLLAMA_MAX_CONCURRENT_REQUESTS`, `OLLAMA_MIN_INTERVAL_MS`, `OLLAMA_TIMEOUT`, `OLLAMA_NUM_CTX`, `OLLAMA_THINK`, `WORKER_MAX_CONCURRENT_ACTIVITIES`, `WORKER_MAX_CONCURRENT_WORKFLOW_TASKS` | nach `docker compose up -d --force-recreate api worker`, dann sofort – die Grenze `MAX_CONCURRENT_DOCUMENTS` ab der nächsten Nachfrage auch für schon wartende Jobs |
 | Ollama-Server | `OLLAMA_NUM_PARALLEL`, `OLLAMA_MAX_LOADED_MODELS`, `OLLAMA_KEEP_ALIVE` … | nach Neustart des Ollama-Dienstes |
 
 `docker compose restart` liest die `.env.local` **nicht** neu ein. Was im Container tatsächlich gilt:
 `docker compose exec worker env | grep -E "OLLAMA|WORKER_MAX|LLM_|DOCUMENT"` und die Startzeile des
-Workers `Worker concurrency caps: workflow_tasks=…, activities=…, documents=…, ollama_requests=…`.
+Workers `Worker concurrency caps: workflow_tasks=…, activities=…, documents=… (0 = no limit), ollama_requests=…`.
 
 ---
 
@@ -60,8 +61,10 @@ Workers `Worker concurrency caps: workflow_tasks=…, activities=…, documents=
 **Was es tut:** Höchstens so viele Jobs werden gleichzeitig verarbeitet. Ein Job holt sich vor dem
 ersten Verarbeitungsschritt (Parsen bzw. Textextraktion) einen Platz und gibt ihn nach der
 Risikoanalyse zurück – vor Report-Erzeugung und Zustellung. Bei Fehler oder Abbruch (Cancel) gibt er
-ihn ebenfalls frei. Weitere Jobs bleiben `pending` und warten in einer Warteschlange: zuerst nach
-`priority` (1 = höchste), bei gleicher Priorität in Eingangsreihenfolge. Ein wartender Job fragt mit
+ihn ebenfalls frei; scheitert die Freigabe (z. B. Redis-Störung), läuft der Job trotzdem weiter und der
+Platz wird mit Ablauf der Lease frei (§4). Weitere Jobs bleiben `pending` und warten in einer Warteschlange: zuerst nach
+`priority` (1 = höchste), bei gleicher Priorität in der Reihenfolge der ersten Nachfrage (praktisch: Eingang;
+nach einem Worker-Ausfall kann sie abweichen). Ein wartender Job fragt mit
 dauerhaften Temporal-Timern nach (§4); er belegt dabei keinen Worker-Platz, und es läuft kein
 Zeitlimit eines Arbeitsschritts.
 
@@ -102,11 +105,13 @@ wird gelöscht, und – falls `EPRO_WEBHOOK_URL` gesetzt ist – geht der Webhoo
   Job noch Zeit für die Verarbeitung und danach bis zu `BUFFER_TTL_SECONDS` für das Abholfenster (Pull)
   bzw. bis zu 6 h für Push-Wiederholungen.
 
-Verstößt die Konfiguration dagegen, starten API und Worker nicht und nennen beide Variablen.
+Verstößt die Konfiguration dagegen, starten API und Worker nicht und nennen beide Variablen. Beide
+Prüfungen sind strikt (`<`) und reservieren **keine** Zeit für die Verarbeitung: Bei Standardwerten
+lehnt der Validator erst ab 14 400 s ab, 14 399 s ließen der Verarbeitung aber nur noch 1 s.
 
 **Wann ändern:** Länger, wenn regelmäßig viele große Drehbücher gleichzeitig kommen und sie lieber
-warten als scheitern sollen – dann `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` mit erhöhen und ePro informieren
-(längeres Abfragen). Kürzer, wenn ePro schneller eine klare Absage braucht.
+warten als scheitern sollen – dann `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` um denselben Betrag erhöhen,
+damit die Verarbeitung ihre rund 2 h behält, und ePro informieren (längeres Abfragen). Kürzer, wenn ePro schneller eine klare Absage braucht.
 
 ### 3.3 `OLLAMA_MAX_CONCURRENT_REQUESTS` – KI-Aufrufe je Prozess
 
@@ -116,7 +121,8 @@ warten als scheitern sollen – dann `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` mit e
 
 **Was es tut:** Ein Semaphor im Prozess lässt höchstens so viele Anfragen gleichzeitig an Ollama –
 für Gliederung, Risikoanalyse, Embeddings und Testaufrufe. Weitere Aufrufe warten im Prozess; diese
-Wartezeit misst `eki_llm_queue_wait_seconds` (Alarm `EkiOllamaQueueWaitHigh` ab 2 min).
+Wartezeit misst `eki_llm_queue_wait_seconds` (Alarm `EkiOllamaQueueWaitHigh`, wenn das 95. Perzentil
+15 min lang über 2 min liegt). Die Wartezeit in der Dokument-Warteschlange (§3.1) zählt nicht dazu.
 
 **Gilt nicht** über Prozessgrenzen: API und Worker haben je einen eigenen Semaphor, mehrere Worker
 ebenso, und andere Anwendungen oder eine zweite eKI-Instanz (Stage, Entwicklung) am selben
@@ -163,7 +169,7 @@ Schritt, startet der Job keine neuen, lässt laufende zu Ende laufen und endet d
 **Wann ändern:** Wenn einzelne große Dokumente schneller fertig werden sollen (Pflichtenheft: 300–350
 Seiten in ≤ 120 min) und der Ollama-Server Parallelität verkraftet. Dann
 `OLLAMA_MAX_CONCURRENT_REQUESTS` und `OLLAMA_NUM_PARALLEL` auf denselben Wert setzen und
-`WORKER_MAX_CONCURRENT_ACTIVITIES` mindestens um diesen Wert über der Zahl gleichzeitiger Dokumente
+`WORKER_MAX_CONCURRENT_ACTIVITIES` mindestens auf `MAX_CONCURRENT_DOCUMENTS` × `*_CONCURRENCY` + 2
 halten. Sind die `*_CONCURRENCY`-Werte größer als `OLLAMA_MAX_CONCURRENT_REQUESTS`, warten die
 überzähligen Schritte am Semaphor – und diese Wartezeit zählt gegen ihr Zeitlimit (§3.6).
 
@@ -194,8 +200,10 @@ von `OLLAMA_TIMEOUT`, damit ein langsamer Aufruf nicht sofort den ganzen Schritt
 |---|---|---|---|
 | `300` (5 min) | Sekunden | Worker und API (`local_mistral`, `ollama`) | nach Neuerzeugung |
 
-**Was es tut:** HTTP-Zeitlimit einer einzelnen Anfrage an Ollama (Verbindungsaufbau, Senden, Warten auf
-die Antwort). Die eKI fordert Antworten ohne Streaming an: Ollama schickt erst, wenn die ganze Antwort
+**Was es tut:** HTTP-Zeitlimit einer Anfrage an Ollama – kein Gesamtlimit, sondern je Phase
+(Verbindungsaufbau, Senden, Warten auf die Antwort). Praktisch zählt das Warten auf die Antwort,
+einschließlich der Zeit in Ollamas eigener Warteschlange; die Wartezeit am Semaphor der eKI (§3.3) zählt
+nicht dazu. Die eKI fordert Antworten ohne Streaming an: Ollama schickt erst, wenn die ganze Antwort
 fertig ist. Rechnet Ollama länger, bricht der Aufruf ab (`LLMException`).
 
 **Folgen eines Abbruchs:** in der Risikoanalyse ein Fehler des Schritts (Wiederholung, dann `failed`,
@@ -233,23 +241,27 @@ Szenen werden ohnehin in Abschnitte geteilt. Nach jeder Änderung den Paritätsl
 **Was es tut:** `WORKER_MAX_CONCURRENT_ACTIVITIES` begrenzt, wie viele Arbeitsschritte ein
 Worker-Prozess gleichzeitig ausführt – KI-Schritte, Parsen, Report, Zustellung, Statusupdates,
 Warteschlangen-Abfragen. Weitere Schritte warten in der Temporal-Warteschlange; dort läuft ihr
-Zeitlimit **noch nicht**. `WORKER_MAX_CONCURRENT_WORKFLOW_TASKS` begrenzt gleichzeitige
+Zeitlimit **noch nicht** (Ausnahme: das 6-h-Fenster der Zustellung läuft ab ihrer Einplanung). `WORKER_MAX_CONCURRENT_WORKFLOW_TASKS` begrenzt gleichzeitige
 Workflow-Entscheidungen (kurze Rechenschritte); das ist kein Limit für die Zahl der Jobs.
 
 **Wann ändern:** Mit Dokument-Limit kaum nötig. Ohne Dokument-Limit (`MAX_CONCURRENT_DOCUMENTS=0`
 oder Stand 1.0.1) verhindert ein kleiner Wert, dass viele KI-Schritte gleichzeitig am Semaphor warten
 und dabei ihr Zeitlimit verbrauchen: etwa `OLLAMA_MAX_CONCURRENT_REQUESTS + 2`. Nicht kleiner als die
-Zahl gleichzeitig möglicher KI-Schritte plus 1, sonst warten Statusupdates und Zustellungen unnötig.
+Zahl der KI-Schritte, die ein Dokument gleichzeitig startet (`*_CONCURRENCY`), plus 2, sonst warten
+Statusupdates und Zustellungen unnötig.
 
 ### 3.10 `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` und `BUFFER_TTL_SECONDS`
 
 | Variable | Standard | wirkt |
 |---|---|---|
 | `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` | `36000` (10 h) | für neue Jobs (API setzt es beim Start) |
-| `BUFFER_TTL_SECONDS` | `21600` (6 h) | eingefroren, neue Jobs; Pflichtenheft ≤ 6 h |
+| `BUFFER_TTL_SECONDS` | `21600` (6 h) | Abholfenster eingefroren, Zwischenspeicher nach Neuerzeugung; Pflichtenheft ≤ 6 h |
 
 `BUFFER_TTL_SECONDS` ist die Lebensdauer von Drehbuch, Zwischenständen und Report im
 Zwischenspeicher, gezählt ab dem jeweiligen Speichern, und zugleich das Abholfenster im Pull-Modus.
+Eingefroren wird nur das Abholfenster (Pull-Überwachung im Workflow); die Lebensdauer im
+Zwischenspeicher setzt der jeweils speichernde Prozess mit seinem Startwert – die API für das Drehbuch,
+der Worker für Zwischenstände und Report.
 Push-Wiederholungen laufen unabhängig davon fest bis zu 6 h; ist `BUFFER_TTL_SECONDS` kürzer, ist der
 Report vorher gelöscht und die Zustellung endet als Dead Letter `report_expired`. `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` ist die Gesamtlebensdauer eines
 Jobs; endet er dadurch, laufen keine Aufräumschritte mehr (der Status bleibt stehen). Deshalb muss der
@@ -268,13 +280,13 @@ nicht verdrängt. `TEMPORAL_PRIORITY_LEVELS` muss zur Temporal-Dynamic-Config pa
 
 | Was | Wert | Wozu |
 |---|---|---|
-| Nachfragen eines wartenden Jobs | nach 5, 10, 20, 40 s, danach alle 60 s | dauerhafte Timer, kein Worker-Platz |
+| Nachfragen eines wartenden Jobs | sofort, dann im Abstand von 5, 10, 20, 40 s, danach alle 60 s | dauerhafte Timer, kein Worker-Platz |
 | Lease eines belegten Platzes | 30 min | gibt Plätze von Jobs frei, die ohne Freigabe verschwunden sind (z. B. Terminate) |
-| Verlängerung der Lease | jede Minute, durch die laufenden KI-Schritte | Lücken ohne KI-Schritt (Textextraktion, Zusammenführen) bleiben unter 30 min |
+| Verlängerung der Lease | jede Minute, durch die laufenden KI-Schritte | Lücken ohne KI-Schritt bleiben bei PDF unter 30 min (Textextraktion und Szenenteilung im ungünstigsten Fall zusammen rund 21 min). Bekannter Grenzfall: Bei FDX kann das Parsen mit 3 Versuchen à 10 min die Lease überschreiten – dann bekommt kurzzeitig ein weiterer Job einen Platz |
 | Wartende ohne Nachfrage | nach 5 min aus der Schlange | ein beendeter wartender Workflow blockiert niemanden; fragt er wieder nach, erhält er seinen alten Platz |
 | Heartbeat der KI-Schritte | alle 10 s; das SDK sendet höchstens alle 30 s | endet der Job (Fehler, Cancel, Terminate), bricht ein laufender KI-Schritt nach spätestens etwa 30 s ab, statt bis zu seinem Zeitlimit weiterzulaufen |
-| Wiederholung eines KI-Schritts | 2 Versuche, 5 s Abstand (bis 1 min) | danach `failed` |
-| Warteschlangen-Schritte (`acquire`/`release_document_slot`) | 30 s Zeitlimit, 3 Versuche | Redis-Ausfall lässt den Job scheitern (wie den Zwischenspeicher) |
+| Wiederholung eines KI-Schritts | 2 Versuche, 5 s Abstand | danach `failed` |
+| Warteschlangen-Schritte (`acquire`/`release_document_slot`) | 30 s Zeitlimit, 3 Versuche | scheitert `acquire` (Redis weg), scheitert der Job; scheitert `release`, läuft der Job weiter und der Platz wird erst mit Ablauf der Lease (≤ 30 min) frei. Scheitert die Verlängerung der Lease, läuft der KI-Schritt ebenfalls weiter |
 
 ---
 
@@ -329,8 +341,9 @@ in der Verarbeitung, je KI-Schritt:  |<-- ≤ 10 min inkl. Warten (LLM_ACTIVITY_
   Seiten. Was die Warteschlange nicht verbraucht, steht der Verarbeitung zusätzlich zur Verfügung.
 - ePro sollte mindestens Warteschlange + Verarbeitung + Puffer abfragen: bei Standardwerten 4,5 h.
   Ein fertiger Pull-Report bleibt danach 6 h abrufbar.
-- Wer `DOCUMENT_QUEUE_TIMEOUT_SECONDS` erhöht, muss `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` mitziehen
-  (Start-Validator, §3.2) und ePro informieren.
+- Wer `DOCUMENT_QUEUE_TIMEOUT_SECONDS` erhöht, sollte `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` um denselben
+  Betrag erhöhen und ePro informieren. Der Start-Validator (§3.2) erzwingt das nur grob: Er lehnt erst ab,
+  wenn für die Verarbeitung gar keine Zeit mehr bliebe.
 
 ---
 

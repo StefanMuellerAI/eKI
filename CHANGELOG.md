@@ -15,14 +15,16 @@ Semaphore, und diese Wartezeit lief gegen das Activity-Timeout. Keine Migration.
 - **Dokument-Limit** (`MAX_CONCURRENT_DOCUMENTS`, Standard `1`; `0` = kein Limit wie bis 1.0.1): Höchstens
   so viele Jobs werden gleichzeitig verarbeitet. Alle weiteren warten als `pending` in einer
   Warteschlange (Priorität, dann Eingang). Der Workflow fragt mit dauerhaften Timern nach
-  (`acquire_document_slot`, 5 s bis 60 s); ein wartender Job belegt keinen Worker-Platz, und es läuft kein
-  Activity-Timeout. Freigabe nach der Risikoanalyse bzw. bei Fehler/Abbruch (`release_document_slot`).
+  (`acquire_document_slot`, sofort, dann im Abstand von 5 s bis 60 s); ein wartender Job belegt keinen
+  Worker-Platz, und es läuft kein Activity-Timeout. Freigabe nach der Risikoanalyse bzw. bei Fehler/Abbruch (`release_document_slot`).
   Zustand in Redis (`eki:docslot:*`, nur Job-IDs), Plätze mit 30-Minuten-Lease, die die KI-Schritte
-  verlängern. Die Grenze liest der Worker live; ob ein Job sich anstellt, friert die API beim Start ein.
+  verlängern. Die Grenze liest der Worker beim Start (nach Neuerzeugung gilt ein neuer Wert auch für schon
+  wartende Jobs); ob ein Job sich anstellt, friert die API beim Jobstart ein.
 - **Höchstwartezeit** (`DOCUMENT_QUEUE_TIMEOUT_SECONDS`, Standard 7200): danach endet der Job mit `failed`
   und der inhaltsfreien Meldung „Kein freier Verarbeitungsplatz innerhalb von … min …“ (Webhook-Grund
   `processing_failed`). Der Start-Validator prüft, dass Wartezeit + `BUFFER_TTL_SECONDS` unter
-  `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` bleiben und die Wartezeit kürzer als `BUFFER_TTL_SECONDS` ist.
+  `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT` bleiben und die Wartezeit kürzer als `BUFFER_TTL_SECONDS` ist
+  (nur bei Limit > 0; Zeit für die Verarbeitung reserviert er nicht).
 - **Heartbeats in den KI-Schritten** (`structure_scene_llm`, `analyze_scene_risk`, alle 10 s): Endet der
   Workflow (Fehler, Abbruch, Terminate), bricht ein laufender KI-Schritt jetzt nach spätestens etwa 30 s
   ab (so oft sendet das SDK Heartbeats höchstens), statt bis zu seinem eigenen Timeout (600 s) weiter auf
@@ -32,7 +34,8 @@ Semaphore, und diese Wartezeit lief gegen das Activity-Timeout. Keine Migration.
 
 ### Für ePro relevant
 - Jobs können länger `pending` bleiben (Warteschlange). Polling-Timeout auf mindestens 4,5 h erhöhen
-  (bis 2 h Wartezeit + bis 2 h Verarbeitung), `docs/EPRO_INTEGRATION_GUIDE.md` §3.
+  (bis 2 h Wartezeit + rund 2 h Verarbeitung), wartende Jobs seltener abfragen (1000 Anfragen/h je
+  API-Key), `docs/EPRO_INTEGRATION_GUIDE.md` §3.
 
 ## [1.0.1] – 2026-10-16 – Stabilisierung zur Übergabe
 
