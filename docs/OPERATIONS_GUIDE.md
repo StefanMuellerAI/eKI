@@ -628,7 +628,7 @@ KB-Embeddings laufen auf einer externen Instanz:
   nicht. Ist die URL falsch oder die Instanz weg, scheitern Jobs erst beim ersten LLM-Aufruf
   (fail-closed, §5.4). Erreichbarkeit nach jeder Änderung prüfen (Kommando in §4.10, Schritt 18).
 - **Einstellungen der Instanz** (wie der frühere Ollama-Dienst im Prod-Overlay):
-  `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_KEEP_ALIVE=30m`, GPU ≥ 24 GB VRAM, `OLLAMA_DEBUG` nicht setzen.
+  `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_KEEP_ALIVE=30m`, GPU ≥ 24 GB VRAM, `OLLAMA_DEBUG` und `OLLAMA_DEBUG_LOG_REQUESTS` nicht setzen.
   Diese Variablen werden **auf dem Ollama-Host** gesetzt (systemd: `systemctl edit ollama.service`,
   Abschnitt `[Service]`, `Environment="OLLAMA_NUM_PARALLEL=1"`; Docker: `-e`/`environment:`), nicht in
   der `.env.local` der eKI; prüfen mit `journalctl -u ollama | grep "server config"` und `ollama ps`

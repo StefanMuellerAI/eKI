@@ -304,26 +304,29 @@ sie ganz auf der GPU liegen (`100% GPU`).
 | `OLLAMA_NUM_PARALLEL` | `1` | `1` (ältere Versionen wählten automatisch 1 oder 4) | Anfragen, die Ollama je Modell gleichzeitig rechnet; weitere warten in Ollamas Warteschlange |
 | `OLLAMA_MAX_LOADED_MODELS` | `2`, wenn der Server nur der eKI dient | 3 × Anzahl GPUs bzw. 3 bei CPU | Modelle gleichzeitig im Speicher – hier Sprach- und Embedding-Modell |
 | `OLLAMA_KEEP_ALIVE` | `30m` | 5 min | wie lange ein Modell nach der letzten Anfrage geladen bleibt |
-| `OLLAMA_MAX_QUEUE` | Standard lassen | 512 | Anfragen, die Ollama puffert; darüber lehnt es neue ab (die eKI wertet das als Fehler des Aufrufs) |
-| `OLLAMA_HOST` | `0.0.0.0:11434` | `127.0.0.1:11434` | Adresse, auf der Ollama lauscht; Port per Firewall nur für den eKI-Host öffnen – Ollama hat keine Anmeldung |
-| `OLLAMA_FLASH_ATTENTION` | optional `1` | aus | spart bei großen Kontextfenstern Speicher; danach Paritätslauf |
-| `OLLAMA_DEBUG` | nicht setzen | aus | Debug-Ausgaben können Drehbuchtext enthalten |
+| `OLLAMA_MAX_QUEUE` | Standard lassen | 512 | Warteschlange des Ollama-Schedulers (Anfragen, die auf das Laden eines Modells warten); ist sie voll, antwortet Ollama mit HTTP 503 (`server busy … maximum pending requests exceeded`), was die eKI als Fehler des Aufrufs wertet. Anfragen an ein schon geladenes Modell, die nur auf einen freien Parallel-Platz warten, zählen nicht dazu: Sie warten ohne Obergrenze, bis ein Platz frei wird – praktisch begrenzt das `OLLAMA_TIMEOUT` der eKI |
+| `OLLAMA_HOST` | `0.0.0.0:11434` | `127.0.0.1:11434` (im offiziellen Docker-Image `0.0.0.0:11434`) | Adresse, auf der Ollama lauscht; Port per Firewall nur für den eKI-Host öffnen – Ollama hat keine Anmeldung. Im Docker-Betrieb erreichen ihn alle Container im selben Docker-Netz und alle über veröffentlichte Ports |
+| `OLLAMA_FLASH_ATTENTION` | nicht setzen | automatisch an, wenn die GPU sie unterstützt (seit Ollama 0.30.0; für Mistral Small 3.x schon seit 0.13.2) | senkt den Speicherbedarf großer Kontexte; `=1` erzwingt, `=0` schaltet ab. Voraussetzung für `OLLAMA_KV_CACHE_TYPE=q8_0`, das den Kontextspeicher etwa halbiert (danach Paritätslauf) |
+| `OLLAMA_DEBUG`, `OLLAMA_DEBUG_LOG_REQUESTS` | nicht setzen | aus | ab `OLLAMA_DEBUG=2` protokolliert Ollama Modellausgaben im Klartext (sie können Drehbuchpassagen zitieren), `OLLAMA_DEBUG_LOG_REQUESTS=1` speichert ganze Anfragen samt Szenentext; ältere Versionen loggten schon bei `OLLAMA_DEBUG=1` ganze Prompts |
 
 ### 5.1 Grafikspeicher abschätzen
 
 Ollama reserviert für jeden Parallel-Platz ein eigenes Kontextfenster in der Größe von `num_ctx`. Der
 Speicherbedarf wächst also mit `OLLAMA_NUM_PARALLEL` × `OLLAMA_NUM_CTX`. Richtwerte für
-`mistral-small3.2` (Gewichte rund 15 GB, Kontextspeicher in 16-Bit-Genauigkeit rund 5 GiB je
-32 768 Token):
+`mistral-small3.2` (Tag `latest` = q4_K_M; Gewichte samt Vision-Encoder rund 14 GiB bzw. 15 GB Download;
+Kontextspeicher in Ollamas Standard-Genauigkeit f16: 160 KiB je Token, also 5 GiB je 32 768 Token):
 
 | `OLLAMA_NUM_PARALLEL` | Bedarf bei `OLLAMA_NUM_CTX=32768` | passt auf 24 GB? |
 |---|---|---|
-| 1 | rund 20 GB plus Arbeitsspeicher der Laufzeit | ja, knapp |
-| 2 | rund 25 GB plus Laufzeit | nein – Teile laufen auf der CPU |
-| 4 | rund 35 GB plus Laufzeit | nein |
+| 1 | rund 19 GiB plus 1–2 GiB Laufzeit | ja, knapp |
+| 2 | rund 24 GiB plus Laufzeit | nein – Teile laufen auf der CPU |
+| 4 | rund 34 GiB plus Laufzeit | nein |
 
-Passt das Modell nicht ganz in den Grafikspeicher, lagert Ollama Schichten auf die CPU aus; jeder Aufruf
-dauert dann ein Vielfaches. Die tatsächliche Größe zeigt `ollama ps` (Spalten SIZE und PROCESSOR).
+Passt das Modell nicht ganz in den Grafikspeicher, bricht Ollama nicht ab, sondern lagert Schichten auf
+die CPU aus; jeder Aufruf dauert dann ein Vielfaches. Die Formel ist eine Schätzung – maßgeblich ist
+`ollama ps` nach der ersten Anfrage mit dem produktiven `OLLAMA_NUM_CTX` (Spalten SIZE, PROCESSOR und
+CONTEXT). Schicken Anwendungen am selben Server unterschiedliche `num_ctx`, lädt Ollama das Modell bei
+jedem Wechsel neu.
 
 ---
 

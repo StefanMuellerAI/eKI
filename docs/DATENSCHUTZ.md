@@ -193,7 +193,9 @@ Buffer-Schlüssel `eki:buf:` noch Skripttext; jede Payload ist `binary/encrypted
   Retention weiterleiten (journald/syslog/Loki o. Ä.) – siehe §8.
 - **Ollama** läuft seit 1.0.1 als externe Instanz außerhalb des Compose-Stacks; ihre Logs liegen
   beim Betreiber der Instanz. Im Normalbetrieb protokolliert Ollama keine Prompt-Inhalte; den
-  Debug-Modus (`OLLAMA_DEBUG`) im Betrieb nicht aktivieren.
+  Debug-Modus (`OLLAMA_DEBUG`) und `OLLAMA_DEBUG_LOG_REQUESTS` im Betrieb nicht aktivieren – ab
+  `OLLAMA_DEBUG=2` landen Modellausgaben (ggf. mit Drehbuchzitaten) im Log, `OLLAMA_DEBUG_LOG_REQUESTS=1`
+  speichert ganze Anfragen samt Szenentext.
 
 ### 3.5 Observability (nur mit `docker-compose.observability.yml`)
 
@@ -272,7 +274,7 @@ Löschung (§7).
 - Seit 1.0.1 ist Ollama nicht mehr Teil des Compose-Stacks: Drehbuchszenen gehen per HTTP an die
   externe Ollama-Instanz. Sie gehört damit zur Verarbeitungsumgebung: nur im internen Netz
   betreiben, Port 11434 nur für die eKI-Hosts freigeben (die Ollama-API hat keine Anmeldung),
-  keine Prompt-Protokollierung (`OLLAMA_DEBUG` aus); für die Instanz dieselben TOM ansetzen wie
+  keine Prompt-Protokollierung (`OLLAMA_DEBUG` und `OLLAMA_DEBUG_LOG_REQUESTS` aus); für die Instanz dieselben TOM ansetzen wie
   für die eKI selbst (`OPERATIONS_GUIDE.md` §4.11).
 
 - Der Produktions-Validator (`api/config.py`) verweigert den Start mit
@@ -306,7 +308,7 @@ Löschung (§7).
 | `/health` | ohne Anmeldung | Version und Status |
 | Swagger/ReDoc/`/openapi.json` | nur bei `DEBUG=true` | – (in Produktion abgeschaltet; der Validator erzwingt `DEBUG=false`) |
 | PostgreSQL, Redis, Temporal | nur im internen Docker-Netz | wer Shell-Zugriff auf den Host hat, sieht Metadaten und KB-Chunks; Temporal-Historien seit 1.0.1 nur verschlüsselt (ältere Historien bis zum Ablauf der Retention im Klartext: Titel, Client-`metadata`); mit zusätzlich `API_SECRET_KEY` auch die Buffer-Inhalte und die Temporal-Payloads |
-| Ollama (externe Instanz) | eKI-Hosts über das interne Netz (die Ollama-API hat keine Anmeldung) | wer die Instanz betreibt bzw. erreicht, kann Modelle nutzen; Prompts mit Drehbuchszenen werden nicht gespeichert, solange `OLLAMA_DEBUG` aus ist |
+| Ollama (externe Instanz) | eKI-Hosts über das interne Netz (die Ollama-API hat keine Anmeldung) | wer die Instanz betreibt bzw. erreicht, kann Modelle nutzen; Prompts mit Drehbuchszenen werden nicht gespeichert, solange `OLLAMA_DEBUG` und `OLLAMA_DEBUG_LOG_REQUESTS` aus sind |
 | Temporal-UI | Produktion: nur per SSH-Tunnel | Workflow-IDs (`job_id`), Activity-Namen, Zeiten, Fehlertypen; Eingaben, Ergebnisse und Fehlermeldungen seit 1.0.1 nur verschlüsselt (`binary/encrypted`, `Encoded failure`) |
 
 Weitere Punkte:
