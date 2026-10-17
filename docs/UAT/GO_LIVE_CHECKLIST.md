@@ -1,4 +1,4 @@
-# Go-Live-Checkliste – eKI API v1.0.1
+# Go-Live-Checkliste – eKI API v1.0.2
 
 Abzuarbeiten nach abgenommenem UAT (`UAT_PROTOCOL_TEMPLATE.md` §5) und vor dem
 produktiven Freischalten im eProjekt. Verantwortlichkeiten: **IT** = IT-Betrieb
@@ -12,12 +12,13 @@ Ausführliche Anleitung: `docs/OPERATIONS_GUIDE.md`; alle Einstellungen: `docs/C
 ## A. Vorbedingungen
 
 - [ ] UAT abgenommen; offene Punkte §4 des Protokolls haben Termin und Verantwortlichen (eKI/IT)
-- [ ] Abnahmetests 2–7 wurden auf dem aktuellen Stand (Release 1.0.1, Migrations-Head
+- [ ] Abnahmetests 2–7 wurden auf dem aktuellen Stand (Release 1.0.2, Migrations-Head
       `c4e6a8b0d2f1`) ausgeführt; vor Migration `a7c9e1f3b5d2` scheiterte auf PostgreSQL die
       Zustellphase (`HANDOVER.md` §1.1) (eKI)
 - [ ] Supportvertrag geschlossen (Pflichtenheft §14, spätestens mit M10) (IT/eKI)
-- [ ] Release-Tag `v1.0.1` gesetzt und GHCR-Images vorhanden, Digest im Protokoll; **nicht** die
-      `v1.0.0`-Images verwenden (ohne die Korrekturen, noch mit echten Drehbüchern) (eKI)
+- [ ] Release-Tag `v1.0.2` gesetzt und GHCR-Images vorhanden, Digest im Protokoll; **nicht** die
+      `v1.0.0`-Images verwenden (ohne die Korrekturen, noch mit echten Drehbüchern) und nicht mehr
+      `v1.0.1` (ohne Dokument-Limit) (eKI)
 - [ ] eKI-Host: Docker ≥ 24 mit **Docker Compose ≥ 2.24** (das Prod-Overlay nutzt `!reset`) (IT)
 - [ ] Externe Ollama-Instanz bereit (`OPERATIONS_GUIDE.md` §4.11): GPU ≥ 24 GB VRAM, NVIDIA-Treiber
       bzw. Container Toolkit auf dem Ollama-Host, `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_KEEP_ALIVE=30m`

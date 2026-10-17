@@ -1,4 +1,4 @@
-# Übergabedokument – eKI API v1.0.1
+# Übergabedokument – eKI API v1.0.2
 
 Pflichtenheft §9 M12 „UAT-Paket (Testskripte, Protokolle, OpenAPI v1.0, Betriebsdoku),
 Go-Live-Checkliste, Schulungsunterlagen" und §12 „Rechte & Eigentum".
@@ -61,10 +61,21 @@ Dazu kommen die Projektentscheidungen vom 16.10.2026, umgesetzt in **Release 1.0
 - Inferenz auf externer Ollama-Instanz (kein Ollama-Dienst mehr im Stack), Redis auf 7.2
   gepinnt, ungenutzte Abhängigkeiten entfernt, mypy (strict) als blockierendes CI-Gate.
 
-Für den Go-Live ist **1.0.1** vorgesehen: GHCR-Images, die aus dem Tag `v1.0.0` gebaut wurden,
-enthalten weder die Korrekturen noch die Entscheidungen (und noch echte Drehbücher). Das
-Release-Tag muss zu `core/version.py` passen, sonst bricht der CI-Release-Job ab. Die
-Abnahmetests 2–7 sind auf diesem Stand erneut auszuführen (`UAT_TESTPLAN.md`).
+Am 17.10.2026 folgte **1.0.2** (Details: `CHANGELOG.md`):
+
+- Dokument-Limit mit Warteschlange (`MAX_CONCURRENT_DOCUMENTS`, Standard 1) und Höchstwartezeit, weil
+  mehrere gleichzeitig verarbeitete Drehbücher die externe Ollama-Instanz so ausbremsten, dass keines
+  fertig wurde; Heartbeats in den KI-Schritten. Ausführlich: `docs/LASTSTEUERUNG.md`;
+- Drehbücher ohne erkennbare Szene enden mit `failed` statt mit einem leeren Report; nicht geprüfte
+  Teile (Seiten über `MAX_PDF_PAGES`, Seiten ohne lesbaren Text, Titeltext) nennt der Report unter
+  „Hinweise zur Vollständigkeit“ und in `report.metadata.analysis_complete`/`coverage_notes`;
+- FDX ohne Szenennummern, Konfidenzwerte über 1 (Report-Abruf mit 500) und „AUßEN“ mit ß behoben;
+- Faktencheck der gesamten Betriebs- und Schnittstellendoku gegen den Code.
+
+Für den Go-Live ist **1.0.2** vorgesehen: GHCR-Images aus dem Tag `v1.0.0` enthalten weder die
+Korrekturen noch die Entscheidungen (und noch echte Drehbücher), Images aus `v1.0.1` haben kein
+Dokument-Limit. Das Release-Tag muss zu `core/version.py` passen, sonst bricht der CI-Release-Job ab.
+Die Abnahmetests 2–7 sind auf diesem Stand erneut auszuführen (`UAT_TESTPLAN.md`).
 
 ## 2. Meilenstein-Nachweise
 
@@ -136,7 +147,7 @@ Verhaltensänderung seit M12 (für ePro relevant):
   (Darstellung von `failed`, `cancelled` und 410 als „keine automatische Bewertung“, Umgang mit
   den Webhook-Gründen) ist vertagt und vor dem Go-Live nachzuholen (`GO_LIVE_CHECKLIST.md` E).
 
-API und Verhalten (Stand 1.0.1):
+API und Verhalten (Stand 1.0.2):
 
 - Einziger Prüf-Endpunkt ist `POST /v1/security/check:async`; der synchrone M01-Stub
   `POST /v1/security/check` ist entfernt und antwortet mit 404.

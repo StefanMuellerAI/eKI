@@ -146,7 +146,7 @@ Bei einem extern betriebenen Temporal-Cluster müssen dessen Betreiber die beide
 
 ## 3. Alle Einstellungen aus `api/config.py`
 
-Spalte „Gelesen in“: Module, die den Wert verwenden (Stand 1.0.1, per `grep` ermittelt).
+Spalte „Gelesen in“: Module, die den Wert verwenden (Stand 1.0.2, per `grep` ermittelt).
 „ungenutzt (reserviert)“: das Feld existiert, wird aber nirgends gelesen – Setzen hat
 keine Wirkung.
 
