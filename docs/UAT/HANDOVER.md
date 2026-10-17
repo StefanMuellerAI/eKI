@@ -15,7 +15,7 @@ Go-Live-Checkliste, Schulungsunterlagen" und §12 „Rechte & Eigentum".
 | OpenAPI-Doku | 1.0.1 | `openapi/eki-api-v1.0.yaml` (verbindlich); Swagger/ReDoc nur bei `DEBUG=true` |
 | Container-Setup | fertig | `docker/`, `docker-compose*.yml` (Ollama extern; optionales Overlay `docker-compose.ollama.yml` für Entwicklung), `.dockerignore`, GHCR-Images bei `v*`-Tags; Abhängigkeiten gepinnt in `requirements.lock` / `requirements-dev.lock` |
 | Monitoring-Dashboards | fertig | `docker/observability/`, `docs/M09_SLO.md` |
-| Betriebsdoku | fertig | `docs/OPERATIONS_GUIDE.md` (Installation, Updates, Backups, Runbooks, Troubleshooting), `docs/CONFIGURATION.md` (alle Einstellungen), `docs/M10_FAILOVER_RUNBOOK.md` |
+| Betriebsdoku | fertig | `docs/OPERATIONS_GUIDE.md` (Installation, Updates, Backups, Runbooks, Troubleshooting), `docs/CONFIGURATION.md` (alle Einstellungen), `docs/LASTSTEUERUNG.md` (Last, Parallelität, Zeitlimits, Ollama-Server), `docs/M10_FAILOVER_RUNBOOK.md` |
 | Datenschutz-Inventar | fertig | `docs/DATENSCHUTZ.md` |
 | Tests und Testanleitung | fertig | `tests/`, `docs/TESTING_GUIDE.md` |
 | Schnittstellenbeschreibung für ePro | fertig | `docs/EPRO_INTEGRATION_GUIDE.md` |

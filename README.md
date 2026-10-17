@@ -206,6 +206,7 @@ Veroeffentlicht werden nur Port 8000 (API) und im Entwicklungs-Stack 8080 (Tempo
 | `CHANGELOG.md` | Aenderungsprotokoll je Version |
 | `docs/OPERATIONS_GUIDE.md` | Betrieb: Installation, Updates, Migrationen, Backup/Restore, Runbooks, Troubleshooting |
 | `docs/CONFIGURATION.md` | Referenz aller Einstellungen (`.env.local`, Compose-Variablen) |
+| `docs/LASTSTEUERUNG.md` | Last, Parallelität und Zeitlimits im Detail: Dokument-Limit, Ollama-Grenzen, Ollama-Server, Profile |
 | `docs/TESTING_GUIDE.md` | Testebenen, lokale Ausfuehrung, CI-Pipeline |
 | `docs/EPRO_INTEGRATION_GUIDE.md` | Schnittstelle fuer das eProjekt-Team |
 | `docs/DATENSCHUTZ.md` | Datenhaltung: was wo wie lange gespeichert wird |

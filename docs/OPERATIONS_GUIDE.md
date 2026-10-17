@@ -6,6 +6,7 @@ Zielgruppe: IT-Betrieb der Filmakademie. Maßgebliches Betriebsdokument; das fr�
 [`M09_SLO.md`](M09_SLO.md) (Monitoring, Alerts),
 [`M10_FAILOVER_RUNBOOK.md`](M10_FAILOVER_RUNBOOK.md) (Zustellstörungen),
 [`EPRO_INTEGRATION_GUIDE.md`](EPRO_INTEGRATION_GUIDE.md) (Schnittstelle),
+[`LASTSTEUERUNG.md`](LASTSTEUERUNG.md) (Last, Parallelität, Zeitlimits, Ollama-Server),
 [`DATENSCHUTZ.md`](DATENSCHUTZ.md) (Datenhaltung) und
 [`../secrets/README.md`](../secrets/README.md) (Secrets).
 
@@ -199,6 +200,8 @@ Vollständige Referenz: [`CONFIGURATION.md`](CONFIGURATION.md). `.env.local` gil
    `GET /v1/ops/jobs?status=failed` prüfen (§5.4, §8).
 
 ### 4.2 Skalierung
+
+Alle Stellschrauben mit Wechselwirkungen und Profilen: [`LASTSTEUERUNG.md`](LASTSTEUERUNG.md).
 
 - **Dokument-Limit** (`MAX_CONCURRENT_DOCUMENTS`, Standard 1): so viele Jobs nutzen gleichzeitig die
   KI, alle weiteren warten als `pending` (§5.12). Erhöhen nur, wenn die Ollama-Instanz parallele
